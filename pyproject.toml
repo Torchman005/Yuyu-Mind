@@ -1,0 +1,21 @@
+[project]
+name = "mochi-ai"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.10,<3.12"
+dependencies = [
+    "aiohttp>=3.13.5",
+    "edge-tts>=7.2.8",
+    "openai>=2.36.0",
+    "ormsgpack>=1.12.2",
+    "pillow>=12.2.0",
+    "pygame>=2.6.1",
+    "pyside6>=6.11.0",
+    "python-dotenv>=1.2.2",
+    "pyttsx3>=2.99",
+    "pyyaml>=6.0.3",
+    "requests>=2.34.2",
+    "speechrecognition>=3.16.1",
+    "websockets>=16.0",
+]

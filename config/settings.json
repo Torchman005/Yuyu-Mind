@@ -1,0 +1,24 @@
+{
+    "active_personality": "chino",
+    "active_skin": "chino",
+    "api_keys": {
+        "openai": "your_openai_key_here",
+        "deepseek": "sk-b0375b1de7e64e20850281e23b8eb564",
+        "fishaudio": "93ad32774cdd49dcb9e14c1f0c71608d"
+    },
+    "api_urls": {
+        "openai": "https://api.openai.com/v1",
+        "deepseek": "https://api.deepseek.com",
+        "fishaudio": "https://api.fish.audio/v1/tts"
+    },
+    "tts_config": {
+        "provider": "fishaudio",
+        "voice_id": "b1d53adbac3a4bba87beb57a68a0273f"
+    },
+    "voice_enabled": true,
+    "random_action_interval": 30,
+    "base_size": {
+        "width": 300,
+        "height": 300
+    }
+}
