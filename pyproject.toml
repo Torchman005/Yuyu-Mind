@@ -7,9 +7,11 @@ requires-python = ">=3.10,<3.12"
 dependencies = [
     "aiohttp>=3.13.5",
     "edge-tts>=7.2.8",
+    "faster-whisper>=1.2.1",
     "openai>=2.36.0",
     "ormsgpack>=1.12.2",
     "pillow>=12.2.0",
+    "pyaudio>=0.2.14",
     "pygame>=2.6.1",
     "pyside6>=6.11.0",
     "python-dotenv>=1.2.2",

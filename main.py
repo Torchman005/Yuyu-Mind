@@ -60,16 +60,21 @@ def main():
         logger.info(f"User Chat: {text}")
         
     pet.chat_requested.connect(on_chat_requested)
-    pet.voice_requested.connect(lambda: (
-        pet.say("正在听..."),
+    def on_voice_requested():
+        pet.say("正在听...")
+        QApplication.processEvents() # 强制立刻刷新UI，显示气泡
         voice_engine.listen()
-    ))
+        
+    pet.voice_requested.connect(on_voice_requested)
     
     # 绑定语音识别
+    voice_engine.speech_processing.connect(lambda: pet.say("正在思考..."))
+    
     voice_engine.speech_recognized.connect(lambda text: (
         ai_chat.ask(text),
         logger.info(f"User Voice: {text}")
     ))
+    voice_engine.speech_recognition_failed.connect(pet._on_say_finished)
     
     # 绑定动画控制器
     anim_controller.state_changed.connect(pet.set_state)

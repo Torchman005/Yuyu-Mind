@@ -62,19 +62,17 @@ class PetWindow(QWidget):
             self.base_size = QSize(200, 200)
 
     def init_ui(self):
-        # 彻底解决边框：使用 Qt.Window 明确这是一个顶级窗口，
-        # 并显式添加 Qt.WindowTransparentForInput 确保在没有 Mask 的地方系统不绘制任何焦点框
+        # 彻底解决边框：仅仅使用 FramelessWindowHint 和 WindowStaysOnTopHint
+        # 不要使用 Tool 类型，因为 Tool 窗口在 Windows 11 默认会有一层细边框
         self.setWindowFlags(
-            Qt.WindowType.Window |
             Qt.WindowType.FramelessWindowHint | 
-            Qt.WindowType.WindowStaysOnTopHint | 
-            Qt.WindowType.Tool
+            Qt.WindowType.WindowStaysOnTopHint
         )
         
         # 核心设置：开启透明背景支持
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         # 明确告诉系统这个部件不要绘制系统背景
-        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         
         # 使用布局管理，防止边缘留白
         self.layout = QVBoxLayout(self)
@@ -84,13 +82,21 @@ class PetWindow(QWidget):
         self.pet_label = QLabel(self)
         self.pet_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.pet_label.setScaledContents(True)
-        self.pet_label.setStyleSheet("background: transparent; border: none; outline: none;")
+        # 彻底移除 QLabel 可能带有的框架
+        from PySide6.QtWidgets import QFrame
+        self.pet_label.setFrameShape(QFrame.Shape.NoFrame)
+        self.pet_label.setStyleSheet("background: transparent; border: none; outline: none; margin: 0px; padding: 0px;")
         self.pet_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         
         self.layout.addWidget(self.pet_label)
         
         self.dragging = False
         self.drag_pos = QPoint()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 窗口首次显示时，由于尺寸刚刚计算完毕，强制更新一次掩码，防止部分图片被截断
+        QTimer.singleShot(50, self.update_mask)
 
     def paintEvent(self, event):
         """
@@ -110,9 +116,12 @@ class PetWindow(QWidget):
             pixmap = self.pet_label.pixmap()
             
         if pixmap and not pixmap.isNull() and self.size().width() > 0 and self.size().height() > 0:
+            # 修复：获取真实的物理尺寸
+            actual_size = self.pet_label.size()
+            
             # 关键：确保掩码生成时的尺寸与当前窗口物理尺寸 100% 对应
             mask_pixmap = pixmap.scaled(
-                self.size(), 
+                actual_size, 
                 Qt.AspectRatioMode.IgnoreAspectRatio, 
                 Qt.TransformationMode.SmoothTransformation
             )
@@ -224,19 +233,21 @@ class PetWindow(QWidget):
             
         if not success:
             self.pet_label.setText(f"Error: {state}")
-            self.pet_label.setStyleSheet("background-color: rgba(255,0,0,150); color: white; border: none;")
+            self.pet_label.setStyleSheet("background-color: rgba(255,0,0,150); color: white; border: none; margin: 0px; padding: 0px;")
         else:
             self.pet_label.setText("")
-            self.pet_label.setStyleSheet("background: transparent; border: none;")
-            # 成功加载图片后，立即更新一次掩码，防止窗口被错误剪裁
-            self.update_mask()
-
-        # 强制界面刷新
-        self.update()
+            self.pet_label.setStyleSheet("background: transparent; border: none; outline: none; margin: 0px; padding: 0px;")
 
         # 调整窗口和标签大小为计算后的目标尺寸
         self.setFixedSize(target_size)
         self.pet_label.setFixedSize(target_size)
+
+        # 强制界面刷新
+        self.update()
+
+        if success:
+            # 必须在尺寸调整完成后，延迟一丁点时间再更新掩码，否则可能会按旧尺寸裁剪导致图片显示不全
+            QTimer.singleShot(10, self.update_mask)
 
     def random_position(self):
         screen = QApplication.primaryScreen().geometry()
@@ -379,6 +390,8 @@ class PetWindow(QWidget):
         # 按回车键或 C 键快速打开聊天
         if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_C):
             self.open_chat_dialog()
+        elif event.key() == Qt.Key.Key_V:
+            self.voice_requested.emit()
         elif event.key() == Qt.Key.Key_Escape:
             self.is_continuous_chat = False # 按 ESC 退出连续对话
             self.chat_input.hide()
