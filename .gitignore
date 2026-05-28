@@ -3,6 +3,11 @@ node_modules
 frontend/dist
 data/
 .env
+frontend/.env
 __pycache__/
 *.pyc
 frontend/package.json.md5
+CubismSdkForWeb-5-r.5/
+frontend/public/live2d/cubism5/
+frontend/public/models/yumi/yumi.8192/
+frontend/public/models/yumi/yumi.model3.json

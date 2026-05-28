@@ -4,6 +4,24 @@ html {
     color: white;
 }
 
+.boot-error {
+    position: fixed;
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    z-index: 9999;
+    margin: 0;
+    max-height: 30vh;
+    overflow: auto;
+    padding: 12px;
+    border: 1px solid #f4c2bd;
+    border-radius: 6px;
+    color: #ffd8d2;
+    background: #1b2636;
+    white-space: pre-wrap;
+    font-family: Consolas, monospace;
+}
+
 body {
     margin: 0;
     color: white;

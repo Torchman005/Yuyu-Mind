@@ -1,6 +1,7 @@
 import {FormEvent, useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
 import {GetState, SendMessage} from '../wailsjs/go/main/App';
+import {Live2DStage} from './components/Live2DStage';
 
 type Message = {
     id: number;
@@ -15,6 +16,8 @@ const emotionLabel: Record<string, string> = {
     happy: '开心',
     focused: '专注',
     thinking: '思考',
+    sad: '低落',
+    surprised: '惊讶',
 };
 
 function App() {
@@ -22,13 +25,15 @@ function App() {
     const [draft, setDraft] = useState('');
     const [emotion, setEmotion] = useState('neutral');
     const [agentStatus, setAgentStatus] = useState('offline');
+    const [agentProvider, setAgentProvider] = useState('unknown');
+    const [providerError, setProviderError] = useState('');
     const [isSending, setIsSending] = useState(false);
     const [error, setError] = useState('');
     const feedRef = useRef<HTMLDivElement>(null);
 
     const assistantLine = useMemo(() => {
         const last = [...messages].reverse().find((message) => message.role === 'assistant');
-        return last?.content ?? '你好，我是 Mochi。今天先从文字聊天和长期记忆开始。';
+        return last?.content ?? '你好，我是 Mochi。现在可以通过文字聊天和你互动。';
     }, [messages]);
 
     useEffect(() => {
@@ -37,6 +42,8 @@ function App() {
                 setMessages(state.messages ?? []);
                 setEmotion(state.emotion || 'neutral');
                 setAgentStatus(state.agentStatus || 'offline');
+                setAgentProvider(state.agentProvider || 'unknown');
+                setProviderError(state.providerError || '');
             })
             .catch((reason) => setError(String(reason)));
     }, []);
@@ -64,6 +71,8 @@ function App() {
             setMessages(response.messages ?? []);
             setEmotion(response.emotion || response.reply?.emotion || 'neutral');
             setAgentStatus(response.agentStatus || 'offline');
+            setAgentProvider(response.agentProvider || 'unknown');
+            setProviderError(response.providerError || '');
         } catch (reason) {
             setError(String(reason));
         } finally {
@@ -73,24 +82,13 @@ function App() {
 
     return (
         <main className="app-shell">
-            <section className="stage" aria-label="Mochi live2d stage">
+            <section className="stage" aria-label="Mochi Live2D 舞台">
                 <div className="status-bar">
                     <span>Mochi AI</span>
-                    <span>{emotionLabel[emotion] ?? emotion} · Agent {agentStatus}</span>
+                    <span>{emotionLabel[emotion] ?? emotion} · Agent {agentStatus} · {agentProvider}</span>
                 </div>
 
-                <div className={`avatar ${emotion}`}>
-                    <div className="hair hair-left"/>
-                    <div className="hair hair-right"/>
-                    <div className="face">
-                        <div className="eye left"/>
-                        <div className="eye right"/>
-                        <div className="blush left"/>
-                        <div className="blush right"/>
-                        <div className="mouth"/>
-                    </div>
-                    <div className="body"/>
-                </div>
+                <Live2DStage emotion={emotion}/>
 
                 <div className="speech-bubble">
                     <p>{assistantLine}</p>
@@ -110,7 +108,7 @@ function App() {
                         <p className="eyebrow">Desktop Companion MVP</p>
                         <h1>文字聊天与本地记忆</h1>
                     </div>
-                    <span className={`pill agent-${agentStatus}`}>Agent {agentStatus}</span>
+                    <span className={`pill agent-${agentStatus}`}>Agent {agentStatus} · {agentProvider}</span>
                 </header>
 
                 <div className="message-feed" ref={feedRef}>
@@ -129,6 +127,7 @@ function App() {
                     ))}
                 </div>
 
+                {providerError && <div className="error">Provider fallback: {providerError}</div>}
                 {error && <div className="error">{error}</div>}
 
                 <form className="composer" onSubmit={sendMessage}>

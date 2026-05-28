@@ -24,6 +24,8 @@ export namespace main {
 	    messages: Message[];
 	    emotion: string;
 	    agentStatus: string;
+	    agentProvider: string;
+	    providerError: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppState(source);
@@ -34,6 +36,8 @@ export namespace main {
 	        this.messages = this.convertValues(source["messages"], Message);
 	        this.emotion = source["emotion"];
 	        this.agentStatus = source["agentStatus"];
+	        this.agentProvider = source["agentProvider"];
+	        this.providerError = source["providerError"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -59,6 +63,8 @@ export namespace main {
 	    reply: Message;
 	    emotion: string;
 	    agentStatus: string;
+	    agentProvider: string;
+	    providerError: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new ChatReply(source);
@@ -70,6 +76,8 @@ export namespace main {
 	        this.reply = this.convertValues(source["reply"], Message);
 	        this.emotion = source["emotion"];
 	        this.agentStatus = source["agentStatus"];
+	        this.agentProvider = source["agentProvider"];
+	        this.providerError = source["providerError"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

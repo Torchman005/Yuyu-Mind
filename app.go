@@ -25,16 +25,20 @@ type Message struct {
 }
 
 type ChatReply struct {
-	Messages    []Message `json:"messages"`
-	Reply       Message   `json:"reply"`
-	Emotion     string    `json:"emotion"`
-	AgentStatus string    `json:"agentStatus"`
+	Messages      []Message `json:"messages"`
+	Reply         Message   `json:"reply"`
+	Emotion       string    `json:"emotion"`
+	AgentStatus   string    `json:"agentStatus"`
+	AgentProvider string    `json:"agentProvider"`
+	ProviderError string    `json:"providerError"`
 }
 
 type AppState struct {
-	Messages    []Message `json:"messages"`
-	Emotion     string    `json:"emotion"`
-	AgentStatus string    `json:"agentStatus"`
+	Messages      []Message `json:"messages"`
+	Emotion       string    `json:"emotion"`
+	AgentStatus   string    `json:"agentStatus"`
+	AgentProvider string    `json:"agentProvider"`
+	ProviderError string    `json:"providerError"`
 }
 
 type agentRequest struct {
@@ -47,22 +51,29 @@ type agentResponse struct {
 	Text             string   `json:"text"`
 	Emotion          string   `json:"emotion"`
 	MemoryCandidates []string `json:"memoryCandidates"`
+	Provider         string   `json:"provider"`
+	ProviderError    string   `json:"providerError"`
 }
 
 type App struct {
-	ctx         context.Context
-	db          *sql.DB
-	httpClient  *http.Client
-	agentURL    string
-	agentStatus string
-	agentCmd    *exec.Cmd
+	ctx          context.Context
+	db           *sql.DB
+	healthClient *http.Client
+	chatClient   *http.Client
+	agentURL     string
+	agentStatus  string
+	provider     string
+	providerErr  string
+	agentCmd     *exec.Cmd
 }
 
 func NewApp() *App {
 	return &App{
-		httpClient:  &http.Client{Timeout: 3 * time.Second},
-		agentURL:    "http://127.0.0.1:8765",
-		agentStatus: "offline",
+		healthClient: &http.Client{Timeout: 3 * time.Second},
+		chatClient:   &http.Client{Timeout: 90 * time.Second},
+		agentURL:     "http://127.0.0.1:8765",
+		agentStatus:  "offline",
+		provider:     "unknown",
 	}
 }
 
@@ -191,7 +202,7 @@ func (a *App) pingAgent() bool {
 	if err != nil {
 		return false
 	}
-	response, err := a.httpClient.Do(request)
+	response, err := a.healthClient.Do(request)
 	if err != nil {
 		return false
 	}
@@ -219,9 +230,11 @@ func (a *App) GetState() (AppState, error) {
 	}
 
 	return AppState{
-		Messages:    messages,
-		Emotion:     emotion,
-		AgentStatus: a.agentStatus,
+		Messages:      messages,
+		Emotion:       emotion,
+		AgentStatus:   a.agentStatus,
+		AgentProvider: a.provider,
+		ProviderError: a.providerErr,
 	}, nil
 }
 
@@ -253,8 +266,15 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 	if err != nil {
 		agentReply = a.generateFallbackReply(content)
 		a.agentStatus = "offline"
+		a.provider = "go-fallback"
+		a.providerErr = err.Error()
 	} else {
 		a.agentStatus = "online"
+		a.provider = strings.TrimSpace(agentReply.Provider)
+		a.providerErr = strings.TrimSpace(agentReply.ProviderError)
+		if a.provider == "" {
+			a.provider = "agent"
+		}
 	}
 
 	reply, err := a.saveMessage("assistant", agentReply.Text, normalizedEmotion(agentReply.Emotion))
@@ -271,10 +291,12 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 	}
 
 	return ChatReply{
-		Messages:    messages,
-		Reply:       reply,
-		Emotion:     reply.Emotion,
-		AgentStatus: a.agentStatus,
+		Messages:      messages,
+		Reply:         reply,
+		Emotion:       reply.Emotion,
+		AgentStatus:   a.agentStatus,
+		AgentProvider: a.provider,
+		ProviderError: a.providerErr,
 	}, nil
 }
 
@@ -288,7 +310,7 @@ func (a *App) askAgent(content string, history []Message, memories []string) (ag
 		return agentResponse{}, err
 	}
 
-	response, err := a.httpClient.Post(a.agentURL+"/chat", "application/json", bytes.NewReader(payload))
+	response, err := a.chatClient.Post(a.agentURL+"/chat", "application/json", bytes.NewReader(payload))
 	if err != nil {
 		return agentResponse{}, err
 	}

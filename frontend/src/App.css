@@ -1,14 +1,15 @@
 .app-shell {
-    min-height: 100vh;
+    height: 100vh;
     display: grid;
     grid-template-columns: minmax(320px, 0.92fr) minmax(420px, 1.08fr);
     background: #f4f0e8;
     color: #1e2528;
+    overflow: hidden;
 }
 
 .stage {
     position: relative;
-    min-height: 100vh;
+    height: 100vh;
     display: grid;
     grid-template-rows: auto 1fr auto auto;
     padding: 24px;
@@ -62,12 +63,53 @@
     cursor: default;
 }
 
-.avatar {
+.live2d-stage {
     position: relative;
     align-self: end;
     justify-self: center;
     width: min(52vw, 330px);
     height: min(58vh, 430px);
+    display: block;
+}
+
+.live2d-canvas {
+    position: relative;
+    display: block;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    z-index: 1;
+    touch-action: none;
+    vertical-align: top;
+}
+
+.live2d-canvas.ready {
+    opacity: 1;
+}
+
+.live2d-status {
+    position: absolute;
+    left: 50%;
+    bottom: 6px;
+    z-index: 3;
+    display: grid;
+    gap: 3px;
+    width: min(92%, 360px);
+    border: 1px solid rgba(30, 37, 40, 0.12);
+    border-radius: 6px;
+    padding: 6px 8px;
+    background: rgba(255, 255, 255, 0.72);
+    color: #536164;
+    font-size: 12px;
+    line-height: 1.35;
+    transform: translateX(-50%);
+    overflow-wrap: anywhere;
+}
+
+.avatar {
+    position: relative;
+    width: 100%;
+    height: 100%;
     display: grid;
     justify-items: center;
     align-items: end;
@@ -199,12 +241,14 @@
 }
 
 .chat-panel {
-    min-height: 100vh;
+    height: 100vh;
+    min-height: 0;
     display: grid;
     grid-template-rows: auto 1fr auto auto;
     gap: 16px;
     padding: 28px;
     background: #fbfaf7;
+    overflow: hidden;
 }
 
 .chat-panel header {
@@ -231,6 +275,7 @@ h1 {
 
 .message-feed {
     overflow-y: auto;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     gap: 12px;
@@ -336,14 +381,18 @@ h1 {
 @media (max-width: 860px) {
     .app-shell {
         grid-template-columns: 1fr;
+        height: auto;
+        min-height: 100vh;
+        overflow: visible;
     }
 
     .stage,
     .chat-panel {
+        height: auto;
         min-height: auto;
     }
 
-    .avatar {
+    .live2d-stage {
         width: 260px;
         height: 350px;
     }
