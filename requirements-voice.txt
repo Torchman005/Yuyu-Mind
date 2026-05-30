@@ -1,0 +1,25 @@
+-r requirements.txt
+
+# Optional local voice pipeline dependencies.
+# 可选：本地语音流水线依赖。
+#
+# Install this file only when you start implementing local ASR/VAD,
+# microphone capture, or local TTS fallback.
+# 只有开始做本地 ASR/VAD、麦克风录音或本地 TTS 兜底时才需要安装本文件。
+
+edge-tts>=7.2.8
+openai>=2.0.0
+python-dotenv>=1.0.0
+pyyaml>=6.0.0
+speechrecognition>=3.14.0
+websockets>=12.0
+
+# Heavy / platform-sensitive packages from the reference Mochi-AI project.
+# 参考 Mochi-AI 项目中的重依赖 / 平台敏感依赖。
+# Uncomment only when the corresponding feature is implemented.
+# 只有实现对应功能时再取消注释。
+#
+# faster-whisper>=1.2.0
+# pyaudio>=0.2.14
+# pygame>=2.6.0
+# pyttsx3>=2.99

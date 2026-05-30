@@ -2,6 +2,8 @@ import {useEffect, useRef, useState} from 'react';
 
 type Live2DStageProps = {
     emotion: string;
+    isSpeaking?: boolean;
+    petScale?: number;
 };
 
 type RendererStatus = 'ready' | 'fallback' | 'loading';
@@ -33,11 +35,22 @@ const legacyCubismCoreUrl = import.meta.env.VITE_LIVE2D_CUBISM_CORE_URL as strin
 const cubism2CoreUrl = (import.meta.env.VITE_LIVE2D_CUBISM2_CORE_URL as string | undefined) || '/live2d/live2d.min.js';
 const live2dDebug = (import.meta.env.VITE_LIVE2D_DEBUG as string | undefined) === 'true';
 
-const legacyMotionByEmotion: Record<string, string> = {
-    happy: 'Idle',
-    focused: 'Idle',
-    thinking: 'Idle',
-    neutral: 'Idle',
+const expressionByEmotion: Record<string, string | null> = {
+    happy: 'happy',
+    focused: 'focused',
+    thinking: 'thinking',
+    neutral: null,
+    sad: 'sad',
+    surprised: 'surprised',
+};
+
+const motionByEmotion: Record<string, string | null> = {
+    happy: null,
+    focused: null,
+    thinking: null,
+    neutral: null,
+    sad: null,
+    surprised: null,
 };
 
 declare global {
@@ -108,11 +121,25 @@ function syncCanvasDisplaySize(canvas: HTMLCanvasElement, container: HTMLDivElem
     const width = container.clientWidth || 1;
     const height = container.clientHeight || 1;
 
+    canvas.style.background = 'transparent';
     canvas.style.width = `${width}px`;
     canvas.style.height = `${height}px`;
     canvas.style.minWidth = `${width}px`;
     canvas.style.minHeight = `${height}px`;
     canvas.style.display = 'block';
+}
+
+function clearPixiBackground(app: any) {
+    app.renderer.backgroundAlpha = 0;
+    app.renderer.backgroundColor = 0x000000;
+
+    const gl = app.renderer?.gl as WebGLRenderingContext | undefined;
+    if (!gl) {
+        return;
+    }
+
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
 }
 
 function timeoutAfter<T>(promise: Promise<T> | T, timeoutMs: number, label: string): Promise<T> {
@@ -122,6 +149,69 @@ function timeoutAfter<T>(promise: Promise<T> | T, timeoutMs: number, label: stri
             window.setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
         }),
     ]);
+}
+
+function resetPixiExpression(model: any) {
+    model?.internalModel?.motionManager?.expressionManager?.resetExpression?.();
+}
+
+function stopPixiMotions(model: any) {
+    model?.internalModel?.motionManager?.stopAllMotions?.();
+}
+
+function applyPixiEmotion(model: any, emotion: string) {
+    const expression = expressionByEmotion[emotion] ?? null;
+    const motion = motionByEmotion[emotion] ?? null;
+
+    stopPixiMotions(model);
+
+    if (expression) {
+        model.expression?.(expression)?.catch?.(() => undefined);
+    } else {
+        resetPixiExpression(model);
+    }
+
+    if (motion) {
+        model.motion?.(motion)?.catch?.(() => undefined);
+    }
+}
+
+function setModelParameter(model: any, id: string, value: number, weight = 1) {
+    const coreModel = model?.internalModel?.coreModel;
+    const parameterIndex = coreModel?.getParameterIndex?.(id);
+
+    coreModel?.setParameterValueById?.(id, value, weight);
+    coreModel?.setParamFloat?.(id, value, weight);
+
+    if (typeof parameterIndex === 'number' && parameterIndex >= 0) {
+        coreModel?.setParameterValueByIndex?.(parameterIndex, value, weight);
+    }
+}
+
+function holdForwardGaze(model: any) {
+    [
+        'ParamEyeBallX',
+        'ParamEyeBallY',
+        'ParamhitomiX',
+        'ParamhitomiY',
+        'ParamAngleX',
+        'ParamAngleY',
+        'ParamAngleZ',
+    ].forEach((id) => setModelParameter(model, id, 0, 0.85));
+}
+
+function applyLipSync(model: any, isSpeaking: boolean, elapsedMs: number) {
+    if (!isSpeaking) {
+        setModelParameter(model, 'ParamMouthOpenY', 0, 0.8);
+        setModelParameter(model, 'ParamJawOpen', 0, 0.8);
+        return;
+    }
+
+    const pulse = Math.abs(Math.sin(elapsedMs / 78));
+    const secondary = Math.abs(Math.sin(elapsedMs / 137));
+    const openness = Math.min(1, 0.18 + pulse * 0.72 + secondary * 0.18);
+    setModelParameter(model, 'ParamMouthOpenY', openness, 1);
+    setModelParameter(model, 'ParamJawOpen', openness * 0.45, 1);
 }
 
 function FallbackAvatar({emotion}: Live2DStageProps) {
@@ -151,13 +241,15 @@ function initialStatusText() {
     return `Loading ${avatarRenderer}`;
 }
 
-export function Live2DStage({emotion}: Live2DStageProps) {
+export function Live2DStage({emotion, isSpeaking = false, petScale = 1}: Live2DStageProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const appRef = useRef<any>(null);
     const modelRef = useRef<any>(null);
     const controllerRef = useRef<AvatarController | null>(null);
     const bootIdRef = useRef(0);
+    const lastEmotionRef = useRef('');
+    const isSpeakingRef = useRef(isSpeaking);
     const [status, setStatus] = useState<RendererStatus>(avatarRenderer === 'css' ? 'fallback' : 'loading');
     const [statusText, setStatusText] = useState(initialStatusText);
     const [debugInfo, setDebugInfo] = useState<DebugInfo>({
@@ -205,6 +297,10 @@ export function Live2DStage({emotion}: Live2DStageProps) {
         setDebugInfo({phase, detail});
         (window as any).__MOCHI_LIVE2D_STATUS = {phase, ...info};
     }
+
+    useEffect(() => {
+        isSpeakingRef.current = isSpeaking;
+    }, [isSpeaking]);
 
     useEffect(() => {
         const bootId = bootIdRef.current + 1;
@@ -336,15 +432,34 @@ export function Live2DStage({emotion}: Live2DStageProps) {
             });
             const {Live2DModel} = await import('pixi-live2d-display');
             Live2DModel.registerTicker?.(PIXI.Ticker);
+            const context =
+                canvasRef.current.getContext('webgl2', {
+                    alpha: true,
+                    premultipliedAlpha: false,
+                    preserveDrawingBuffer: true,
+                    antialias: true,
+                }) ||
+                canvasRef.current.getContext('webgl', {
+                    alpha: true,
+                    premultipliedAlpha: false,
+                    preserveDrawingBuffer: true,
+                    antialias: true,
+                });
             const app = new PIXI.Application({
                 view: canvasRef.current,
+                context: (context || undefined) as any,
                 resizeTo: containerRef.current,
                 transparent: true,
+                useContextAlpha: 'notMultiplied',
+                premultipliedAlpha: false,
+                preserveDrawingBuffer: true,
+                clearBeforeRender: true,
+                backgroundColor: 0x000000,
                 backgroundAlpha: 0,
                 antialias: true,
                 autoStart: true,
                 resolution: window.devicePixelRatio || 1,
-            });
+            } as any);
             localApp = app;
             if (!isCurrentBoot()) {
                 localApp.destroy(false);
@@ -353,6 +468,7 @@ export function Live2DStage({emotion}: Live2DStageProps) {
             appRef.current = localApp;
             syncCanvasDisplaySize(canvasRef.current, containerRef.current);
             app.renderer.resize(containerRef.current.clientWidth || 1, containerRef.current.clientHeight || 1);
+            clearPixiBackground(app);
             const gl = (app.renderer as any).gl as WebGLRenderingContext | undefined;
             updateDebug('pixi-ready', {
                 maxTexture: gl?.getParameter?.(gl.MAX_TEXTURE_SIZE) ?? 'unknown',
@@ -362,7 +478,7 @@ export function Live2DStage({emotion}: Live2DStageProps) {
 
             setStatusText('Loading Live2D model');
             updateDebug('loading-model');
-            const model = await Live2DModel.from(resolvedModelUrl, {autoInteract: true});
+            const model = await Live2DModel.from(resolvedModelUrl, {autoInteract: false});
             localModel = model;
             if (!isCurrentBoot()) {
                 app.destroy(false);
@@ -378,10 +494,19 @@ export function Live2DStage({emotion}: Live2DStageProps) {
                 throw new Error('Live2D model loaded, but Pixi stage did not retain it');
             }
             modelRef.current = model;
+            let elapsedMs = 0;
+            app.ticker.add((delta: number) => {
+                elapsedMs += app.ticker.deltaMS || delta * 16.67;
+                holdForwardGaze(model);
+                applyLipSync(model, isSpeakingRef.current, elapsedMs);
+            });
             syncCanvasDisplaySize(canvasRef.current, containerRef.current);
             fitPixiModel(model, containerRef.current);
             app.renderer.resize(containerRef.current.clientWidth || 1, containerRef.current.clientHeight || 1);
+            clearPixiBackground(app);
             app.render();
+            lastEmotionRef.current = emotion;
+            applyPixiEmotion(model, emotion);
             updateDebug('ready', {
                 maxTexture: gl?.getParameter?.(gl.MAX_TEXTURE_SIZE) ?? 'unknown',
                 maxTextureUnits: gl?.getParameter?.(gl.MAX_TEXTURE_IMAGE_UNITS) ?? 'unknown',
@@ -395,6 +520,7 @@ export function Live2DStage({emotion}: Live2DStageProps) {
                         appRef.current.stage.addChild(modelRef.current);
                     }
                     fitPixiModel(modelRef.current, containerRef.current);
+                    clearPixiBackground(appRef.current);
                     appRef.current?.render?.();
                     updateDebug('ready-after-frame', {
                         maxTexture: gl?.getParameter?.(gl.MAX_TEXTURE_SIZE) ?? 'unknown',
@@ -433,8 +559,12 @@ export function Live2DStage({emotion}: Live2DStageProps) {
             return;
         }
 
-        const motion = legacyMotionByEmotion[emotion] ?? legacyMotionByEmotion.neutral;
-        model.motion?.(motion)?.catch?.(() => undefined);
+        if (lastEmotionRef.current === emotion) {
+            return;
+        }
+
+        lastEmotionRef.current = emotion;
+        applyPixiEmotion(model, emotion);
     }, [emotion, status]);
 
     useEffect(() => {
@@ -446,6 +576,7 @@ export function Live2DStage({emotion}: Live2DStageProps) {
                 }
                 fitPixiModel(modelRef.current, containerRef.current);
                 appRef.current?.renderer?.resize?.(containerRef.current.clientWidth || 1, containerRef.current.clientHeight || 1);
+                clearPixiBackground(appRef.current);
                 updateDebug('resize');
             }
         }
@@ -454,8 +585,22 @@ export function Live2DStage({emotion}: Live2DStageProps) {
         return () => window.removeEventListener('resize', onResize);
     }, []);
 
+    useEffect(() => {
+        controllerRef.current?.resize?.();
+        if (modelRef.current && containerRef.current) {
+            if (canvasRef.current) {
+                syncCanvasDisplaySize(canvasRef.current, containerRef.current);
+            }
+            fitPixiModel(modelRef.current, containerRef.current);
+            appRef.current?.renderer?.resize?.(containerRef.current.clientWidth || 1, containerRef.current.clientHeight || 1);
+            clearPixiBackground(appRef.current);
+            appRef.current?.render?.();
+            updateDebug('scale');
+        }
+    }, [petScale, status]);
+
     return (
-        <div className="live2d-stage" ref={containerRef}>
+        <div className="live2d-stage" ref={containerRef} style={{'--pet-scale': petScale} as any}>
             <canvas className={status === 'ready' ? 'live2d-canvas ready' : 'live2d-canvas'} ref={canvasRef}/>
             {status !== 'ready' && <FallbackAvatar emotion={emotion}/>}
             {avatarRenderer !== 'css' && (live2dDebug || status !== 'ready') && (

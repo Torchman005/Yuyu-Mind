@@ -112,6 +112,25 @@ def current_api_key() -> str:
     return os.environ.get(provider.api_key_env, "").strip()
 
 
+def reply_language() -> str:
+    return os.environ.get("MOCHI_REPLY_LANGUAGE", "zh_ja").strip().lower() or "zh_ja"
+
+
+def desktop_pet_name() -> str:
+    return os.environ.get("MOCHI_DESKTOP_PET_NAME", "Mochi").strip() or "Mochi"
+
+
+def persona_prompt() -> str:
+    name = desktop_pet_name()
+    default_persona = (
+        f"{name} is a cute anime-style desktop companion. "
+        "She is warm, playful, slightly shy, loyal, and practical. "
+        "She talks like a gentle Japanese anime assistant, with natural charm but not exaggerated roleplay. "
+        "She can help with coding and desktop tasks while keeping a soft companion tone."
+    )
+    return os.environ.get("MOCHI_PERSONA", default_persona).strip() or default_persona
+
+
 def detect_emotion(message: str) -> str:
     text = message.lower()
     if any(word in message for word in ("开心", "喜欢", "太好了", "谢谢")):
@@ -124,31 +143,45 @@ def detect_emotion(message: str) -> str:
 
 
 def build_rule_reply(message: str, memories: list[str]) -> dict[str, Any]:
+    name = desktop_pet_name()
     emotion = detect_emotion(message)
+    dual_language = reply_language() in {"zh_ja", "zh-ja", "dual", "bilingual"}
+    use_japanese = reply_language().startswith("ja")
     memory_hint = f"\n\n我还记得你之前提到过：{memories[0]}" if memories else ""
+    speech_memory_hint = f"\n\n前に話してくれたことも、ちゃんと覚えてるよ：{memories[0]}" if memories else ""
 
     if any(word in message for word in ("记住", "喜欢")):
-        text = "好，我会把这条作为长期记忆候选保存下来。后面接入记忆萃取器后，我会帮你区分偏好、事实和项目状态。"
+        text = "好，我会把这条作为长期记忆候选保存下来。后面会帮你区分偏好、事实和项目状态。"
+        speech_text = "うん、覚えておくね。大事なこととして、あとでちゃんと整理できるようにしておくよ。"
         candidates = [message]
         emotion = "happy"
     elif any(word in message for word in ("代码", "项目", "报错")):
-        text = "可以。Python Agent 已经接进桌面端了，下一步就能把代码搜索、文件读取、补丁生成和测试执行做成工具。"
+        text = "可以。代码相关问题我会先帮你稳定分析，后面可以继续接入文件读取、补丁生成和测试执行。"
+        speech_text = "任せて。コードのことなら、落ち着いて一緒に見ていこうね。必要なら原因も順番に探せるよ。"
         candidates = []
         emotion = "focused"
     elif any(word in message for word in ("屏幕", "看一下", "截图")):
-        text = "屏幕读取适合放在工具层：先截图和 OCR，再把当前窗口上下文交给 Agent。这个能力可以作为下一阶段接入。"
+        text = "屏幕读取可以作为下一阶段能力：先截图和 OCR，再把当前窗口上下文交给 Agent。"
+        speech_text = "画面を見られるようにすると、もっとそばで手伝えるね。スクリーン読み取りは次の機能としてつなげられるよ。"
         candidates = []
         emotion = "thinking"
     elif any(word in message for word in ("你好", "hello", "hi")):
-        text = "你好，我是 Mochi。现在我会按 `.env` 选择模型厂商；模型不可用时会回到本地兜底。"
+        text = f"你好，我是 {name}。今天也会在桌面上陪你一起处理事情。"
+        speech_text = f"こんにちは、{name}だよ。今日もそばで、ちゃんとお手伝いするね。"
         candidates = []
         emotion = "happy"
     else:
-        text = "收到。我会先保持对话、情绪和记忆链路稳定，再逐步接入工具调用、语音管线和屏幕读取。"
+        text = "收到。我会先保持对话、情绪和记忆链路稳定，再逐步接入更多助手能力。"
+        speech_text = "うん、わかったよ。少しずつ一緒に整えていこうね。"
         candidates = []
+
+    if use_japanese and not dual_language:
+        text = speech_text
+        memory_hint = speech_memory_hint
 
     return {
         "text": text + (memory_hint if not candidates else ""),
+        "speechText": speech_text + (speech_memory_hint if not candidates else ""),
         "emotion": emotion,
         "memoryCandidates": candidates,
         "provider": "local",
@@ -168,25 +201,49 @@ def build_context(message: str, history: list[dict[str, Any]], memories: list[st
         ],
         "memories": memories[:12],
         "userMessage": message,
+        "replyLanguage": reply_language(),
     }
 
 
 def build_system_prompt() -> str:
-    return """
-You are Mochi, a warm desktop companion and practical coding assistant.
-Reply in the user's language by default.
-Be concise, natural, and emotionally aware.
+    language = reply_language()
+    name = desktop_pet_name()
+    if language in {"zh_ja", "zh-ja", "dual", "bilingual"}:
+        language_instruction = (
+            "Return Chinese text for UI display in the `text` field. "
+            "Return natural Japanese text for voice synthesis in the `speechText` field. "
+            "`speechText` should carry the same meaning as `text`, but it must be Japanese and suitable for TTS."
+        )
+    elif language.startswith("ja"):
+        language_instruction = (
+            "Reply in natural Japanese in both `text` and `speechText`, regardless of the user's input language. "
+            "Keep the text suitable for Japanese TTS."
+        )
+    else:
+        language_instruction = "Reply in the user's language in `text`; provide a natural TTS version in `speechText`."
+    return f"""
+You are {name}.
+Persona:
+{persona_prompt()}
+
+{language_instruction}
+Your name is exactly "{name}". If the user asks your name, say you are "{name}", not Mochi or any other name.
+Be concise, natural, cute, and emotionally aware.
+Avoid heavy honorific overacting; sound like a believable anime desktop companion.
+The `text` field must follow the reply language instruction.
 Return only valid JSON with this schema:
-{
-  "text": "assistant reply",
+{{
+  "text": "Chinese UI reply or assistant reply",
+  "speechText": "Japanese TTS reply",
   "emotion": "neutral|happy|focused|thinking|sad|surprised",
   "memoryCandidates": ["short durable facts or preferences worth remembering"]
-}
+}}
 Only include memory candidates for stable user preferences, identity facts, project facts, or explicit remember requests.
 """.strip()
 
 
 def call_llm(message: str, history: list[dict[str, Any]], memories: list[str]) -> dict[str, Any]:
+    load_dotenv()
     provider = get_provider()
     if provider.mode == "responses":
         return call_responses_api(provider, message, history, memories)
@@ -251,6 +308,7 @@ def call_responses_api(
                     "additionalProperties": False,
                     "properties": {
                         "text": {"type": "string"},
+                        "speechText": {"type": "string"},
                         "emotion": {
                             "type": "string",
                             "enum": ["neutral", "happy", "focused", "thinking", "sad", "surprised"],
@@ -261,7 +319,7 @@ def call_responses_api(
                             "maxItems": 5,
                         },
                     },
-                    "required": ["text", "emotion", "memoryCandidates"],
+                    "required": ["text", "speechText", "emotion", "memoryCandidates"],
                 },
                 "strict": True,
             }
@@ -345,8 +403,13 @@ def normalize_reply(reply: dict[str, Any]) -> dict[str, Any]:
     if not text:
         text = "我刚才没有组织好回复，但我还在。你可以再说一遍，我继续处理。"
 
+    speech_text = str(reply.get("speechText", "")).strip()
+    if not speech_text:
+        speech_text = text
+
     return {
         "text": text,
+        "speechText": speech_text,
         "emotion": emotion,
         "memoryCandidates": [str(item).strip() for item in candidates if str(item).strip()],
         "provider": str(reply.get("provider", "local")),
@@ -364,6 +427,7 @@ class AgentHandler(BaseHTTPRequestHandler):
                     "provider": get_provider_name(),
                     "model": current_model(),
                     "baseUrl": current_base_url(),
+                    "capabilities": ["chat", "speechText"],
                     "supportedProviders": sorted(PROVIDERS.keys()),
                 }
             )

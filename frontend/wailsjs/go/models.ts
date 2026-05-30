@@ -61,6 +61,7 @@ export namespace main {
 	export class ChatReply {
 	    messages: Message[];
 	    reply: Message;
+	    speechText: string;
 	    emotion: string;
 	    agentStatus: string;
 	    agentProvider: string;
@@ -74,6 +75,7 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.messages = this.convertValues(source["messages"], Message);
 	        this.reply = this.convertValues(source["reply"], Message);
+	        this.speechText = source["speechText"];
 	        this.emotion = source["emotion"];
 	        this.agentStatus = source["agentStatus"];
 	        this.agentProvider = source["agentProvider"];
@@ -99,5 +101,21 @@ export namespace main {
 		}
 	}
 
-}
+	export class SpeechReply {
+	    audioBase64: string;
+	    contentType: string;
+	    provider: string;
 
+	    static createFrom(source: any = {}) {
+	        return new SpeechReply(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.audioBase64 = source["audioBase64"];
+	        this.contentType = source["contentType"];
+	        this.provider = source["provider"];
+	    }
+	}
+
+}

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -27,6 +28,7 @@ type Message struct {
 type ChatReply struct {
 	Messages      []Message `json:"messages"`
 	Reply         Message   `json:"reply"`
+	SpeechText    string    `json:"speechText"`
 	Emotion       string    `json:"emotion"`
 	AgentStatus   string    `json:"agentStatus"`
 	AgentProvider string    `json:"agentProvider"`
@@ -41,6 +43,12 @@ type AppState struct {
 	ProviderError string    `json:"providerError"`
 }
 
+type SpeechReply struct {
+	AudioBase64 string `json:"audioBase64"`
+	ContentType string `json:"contentType"`
+	Provider    string `json:"provider"`
+}
+
 type agentRequest struct {
 	Message  string    `json:"message"`
 	History  []Message `json:"history"`
@@ -49,6 +57,7 @@ type agentRequest struct {
 
 type agentResponse struct {
 	Text             string   `json:"text"`
+	SpeechText       string   `json:"speechText"`
 	Emotion          string   `json:"emotion"`
 	MemoryCandidates []string `json:"memoryCandidates"`
 	Provider         string   `json:"provider"`
@@ -64,7 +73,6 @@ type App struct {
 	agentStatus  string
 	provider     string
 	providerErr  string
-	agentCmd     *exec.Cmd
 }
 
 func NewApp() *App {
@@ -79,19 +87,58 @@ func NewApp() *App {
 
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
+	loadDotenv()
 	if value := strings.TrimSpace(os.Getenv("MOCHI_AGENT_URL")); value != "" {
 		a.agentURL = strings.TrimRight(value, "/")
 	}
 	if err := a.openDatabase(); err != nil {
 		println("database startup error:", err.Error())
 	}
-	a.startAgentIfAvailable()
+	a.refreshAgentStatus()
+}
+
+func loadDotenv() {
+	candidates := []string{".env", filepath.Join("..", ".env"), filepath.Join("..", "..", ".env")}
+	if executable, err := os.Executable(); err == nil {
+		executableDir := filepath.Dir(executable)
+		candidates = append(candidates,
+			filepath.Join(executableDir, ".env"),
+			filepath.Join(executableDir, "..", ".env"),
+			filepath.Join(executableDir, "..", "..", ".env"),
+		)
+	}
+
+	var content []byte
+	for _, candidate := range candidates {
+		data, err := os.ReadFile(candidate)
+		if err == nil {
+			content = data
+			break
+		}
+	}
+	if len(content) == 0 {
+		return
+	}
+
+	for _, rawLine := range strings.Split(string(content), "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimSpace(key)
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		if key == "" {
+			continue
+		}
+		_ = os.Setenv(key, value)
+	}
 }
 
 func (a *App) shutdown(ctx context.Context) {
-	if a.agentCmd != nil && a.agentCmd.Process != nil {
-		_ = a.agentCmd.Process.Kill()
-	}
 	if a.db != nil {
 		_ = a.db.Close()
 	}
@@ -131,70 +178,13 @@ CREATE TABLE IF NOT EXISTS memories (
 	return nil
 }
 
-func (a *App) startAgentIfAvailable() {
+func (a *App) refreshAgentStatus() {
 	if a.pingAgent() {
 		a.agentStatus = "online"
 		return
 	}
 
-	scriptPath, ok := findAgentScript()
-	if !ok {
-		a.agentStatus = "offline"
-		return
-	}
-
-	cmd := exec.CommandContext(a.ctx, "python", scriptPath)
-	cmd.Dir = filepath.Dir(filepath.Dir(scriptPath))
-	if err := cmd.Start(); err != nil {
-		a.agentStatus = "offline"
-		return
-	}
-
-	a.agentCmd = cmd
-	a.agentStatus = "starting"
-	go func() {
-		_ = cmd.Wait()
-		if a.agentStatus == "online" {
-			a.agentStatus = "offline"
-		}
-	}()
-
-	for i := 0; i < 20; i++ {
-		if a.pingAgent() {
-			a.agentStatus = "online"
-			return
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-}
-
-func findAgentScript() (string, bool) {
-	candidates := []string{
-		filepath.Join("agent", "main.py"),
-		filepath.Join("..", "agent", "main.py"),
-		filepath.Join("..", "..", "agent", "main.py"),
-	}
-
-	if executable, err := os.Executable(); err == nil {
-		executableDir := filepath.Dir(executable)
-		candidates = append(candidates,
-			filepath.Join(executableDir, "agent", "main.py"),
-			filepath.Join(executableDir, "..", "agent", "main.py"),
-			filepath.Join(executableDir, "..", "..", "agent", "main.py"),
-		)
-	}
-
-	for _, candidate := range candidates {
-		absolute, err := filepath.Abs(candidate)
-		if err != nil {
-			continue
-		}
-		if _, err := os.Stat(absolute); err == nil {
-			return absolute, true
-		}
-	}
-
-	return "", false
+	a.agentStatus = "offline"
 }
 
 func (a *App) pingAgent() bool {
@@ -238,6 +228,139 @@ func (a *App) GetState() (AppState, error) {
 	}, nil
 }
 
+func (a *App) ClearChat() (AppState, error) {
+	if a.db == nil {
+		return AppState{}, errors.New("database is not ready")
+	}
+
+	if _, err := a.db.Exec("DELETE FROM messages"); err != nil {
+		return AppState{}, err
+	}
+
+	return AppState{
+		Messages:      []Message{},
+		Emotion:       "neutral",
+		AgentStatus:   a.agentStatus,
+		AgentProvider: a.provider,
+		ProviderError: a.providerErr,
+	}, nil
+}
+
+func (a *App) SynthesizeSpeech(text string) (SpeechReply, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return SpeechReply{}, errors.New("speech text cannot be empty")
+	}
+
+	if reply, err := a.askPythonSpeech(text); err == nil {
+		return reply, nil
+	} else {
+		return SpeechReply{}, err
+	}
+}
+
+func (a *App) askPythonSpeech(text string) (SpeechReply, error) {
+	scriptPath, ok := findFishTTSScript()
+	if !ok {
+		return SpeechReply{}, errors.New("agent/tts_fish.py was not found")
+	}
+
+	cmd := exec.CommandContext(a.ctx, findFishPythonExecutable(), scriptPath)
+	cmd.Dir = filepath.Dir(filepath.Dir(scriptPath))
+	cmd.Stdin = strings.NewReader(text)
+	cmd.Env = append(os.Environ(), "PYTHONIOENCODING=utf-8")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = err.Error()
+		}
+		return SpeechReply{}, fmt.Errorf("Python Fish Audio TTS failed: %s", detail)
+	}
+
+	var reply SpeechReply
+	if err := json.Unmarshal(stdout.Bytes(), &reply); err != nil {
+		return SpeechReply{}, err
+	}
+	if strings.TrimSpace(reply.AudioBase64) == "" {
+		return SpeechReply{}, errors.New("Python Fish Audio TTS returned empty audio")
+	}
+	if strings.TrimSpace(reply.ContentType) == "" {
+		reply.ContentType = "audio/mpeg"
+	}
+	if strings.TrimSpace(reply.Provider) == "" {
+		reply.Provider = "fish-audio-python-script"
+	}
+	return reply, nil
+}
+
+func findFishPythonExecutable() string {
+	if value := strings.TrimSpace(os.Getenv("FISH_AUDIO_PYTHON_PATH")); value != "" {
+		if _, err := os.Stat(value); err == nil {
+			return value
+		}
+	}
+
+	candidates := []string{
+		filepath.Join(".venv", "Scripts", "python.exe"),
+		filepath.Join("..", ".venv", "Scripts", "python.exe"),
+		filepath.Join("..", "..", ".venv", "Scripts", "python.exe"),
+	}
+	if executable, err := os.Executable(); err == nil {
+		executableDir := filepath.Dir(executable)
+		candidates = append(candidates,
+			filepath.Join(executableDir, ".venv", "Scripts", "python.exe"),
+			filepath.Join(executableDir, "..", ".venv", "Scripts", "python.exe"),
+			filepath.Join(executableDir, "..", "..", ".venv", "Scripts", "python.exe"),
+		)
+	}
+	for _, candidate := range candidates {
+		absolute, err := filepath.Abs(candidate)
+		if err != nil {
+			continue
+		}
+		if _, err := os.Stat(absolute); err == nil {
+			return absolute
+		}
+	}
+
+	return "python"
+}
+
+func findFishTTSScript() (string, bool) {
+	candidates := []string{
+		filepath.Join("agent", "tts_fish.py"),
+		filepath.Join("..", "agent", "tts_fish.py"),
+		filepath.Join("..", "..", "agent", "tts_fish.py"),
+	}
+
+	if executable, err := os.Executable(); err == nil {
+		executableDir := filepath.Dir(executable)
+		candidates = append(candidates,
+			filepath.Join(executableDir, "agent", "tts_fish.py"),
+			filepath.Join(executableDir, "..", "agent", "tts_fish.py"),
+			filepath.Join(executableDir, "..", "..", "agent", "tts_fish.py"),
+		)
+	}
+
+	for _, candidate := range candidates {
+		absolute, err := filepath.Abs(candidate)
+		if err != nil {
+			continue
+		}
+		if _, err := os.Stat(absolute); err == nil {
+			return absolute, true
+		}
+	}
+
+	return "", false
+}
+
 func (a *App) SendMessage(content string) (ChatReply, error) {
 	if a.db == nil {
 		return ChatReply{}, errors.New("database is not ready")
@@ -275,6 +398,9 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 		if a.provider == "" {
 			a.provider = "agent"
 		}
+		if expectsDualLanguageSpeech() && strings.TrimSpace(agentReply.SpeechText) == "" {
+			a.providerErr = "Agent did not return speechText. Please stop the old python agent/main.py process and restart MochiAI."
+		}
 	}
 
 	reply, err := a.saveMessage("assistant", agentReply.Text, normalizedEmotion(agentReply.Emotion))
@@ -293,6 +419,7 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 	return ChatReply{
 		Messages:      messages,
 		Reply:         reply,
+		SpeechText:    chooseSpeechText(agentReply, reply.Content),
 		Emotion:       reply.Emotion,
 		AgentStatus:   a.agentStatus,
 		AgentProvider: a.provider,
@@ -404,15 +531,54 @@ LIMIT 12`)
 }
 
 func (a *App) generateFallbackReply(content string) agentResponse {
+	name := desktopPetName()
 	lower := strings.ToLower(content)
+	useJapanese := strings.HasPrefix(strings.ToLower(strings.TrimSpace(os.Getenv("MOCHI_REPLY_LANGUAGE"))), "ja")
 
 	switch {
 	case strings.Contains(lower, "remember"):
+		if useJapanese {
+			return agentResponse{Text: "好，我会记住这件事。", SpeechText: "うん、覚えておくね。大事なこととして、ちゃんと残しておくよ。", Emotion: "happy"}
+		}
 		return agentResponse{Text: "I saved that as a memory candidate. The Python Agent is offline, so this is the Go fallback path.", Emotion: "happy"}
 	case strings.Contains(lower, "code"):
+		if useJapanese {
+			return agentResponse{Text: "这是代码相关问题。当前是本地兜底模式，我会先尽量帮你分析。", SpeechText: "コードのことだね。今はローカルの予備モードだけど、できるところから一緒に見ていくよ。", Emotion: "focused"}
+		}
 		return agentResponse{Text: "The code tool path will live in the Python Agent. Right now the desktop shell is keeping the chat and memory loop stable.", Emotion: "focused"}
 	default:
+		if useJapanese {
+			return agentResponse{Text: "Python Agent 似乎暂时离线了，请重启应用或手动启动 Agent。", SpeechText: fmt.Sprintf("今はPython Agentが少しお休み中みたい。%sはここにいるから、もう一度起動してみてね。", name), Emotion: "neutral"}
+		}
 		return agentResponse{Text: "The Python Agent is offline, so I am answering from the Go fallback. Start the agent with python agent/main.py or relaunch the app.", Emotion: "neutral"}
+	}
+}
+
+func desktopPetName() string {
+	name := strings.TrimSpace(os.Getenv("MOCHI_DESKTOP_PET_NAME"))
+	if name == "" {
+		return "Mochi"
+	}
+	return name
+}
+
+func chooseSpeechText(reply agentResponse, fallback string) string {
+	speechText := strings.TrimSpace(reply.SpeechText)
+	if speechText != "" {
+		return speechText
+	}
+	if expectsDualLanguageSpeech() {
+		return "ごめんね。音声用の日本語テキストがまだ届いていないみたい。画面の返事を確認してね。"
+	}
+	return strings.TrimSpace(fallback)
+}
+
+func expectsDualLanguageSpeech() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("MOCHI_REPLY_LANGUAGE"))) {
+	case "zh_ja", "zh-ja", "dual", "bilingual":
+		return true
+	default:
+		return false
 	}
 }
 

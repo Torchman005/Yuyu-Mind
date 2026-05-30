@@ -6,7 +6,33 @@
             "yumi.4096/texture_00.png"
         ],
         "Physics": "yumi.physics3.json",
-        "DisplayInfo": "yumi.cdi3.json"
+        "DisplayInfo": "yumi.cdi3.json",
+        "Expressions": [
+            {
+                "Name": "happy",
+                "File": "爱心眼.exp3.json"
+            },
+            {
+                "Name": "sparkle",
+                "File": "星星眼.exp3.json"
+            },
+            {
+                "Name": "thinking",
+                "File": "歪嘴.exp3.json"
+            },
+            {
+                "Name": "focused",
+                "File": "抬手右.exp3.json"
+            },
+            {
+                "Name": "sad",
+                "File": "泪汪汪.exp3.json"
+            },
+            {
+                "Name": "surprised",
+                "File": "蚊香眼.exp3.json"
+            }
+        ]
     },
     "Groups": [
         {

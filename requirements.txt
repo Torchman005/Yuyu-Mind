@@ -1,0 +1,5 @@
+# Core Python Agent + Fish Audio TTS dependencies.
+# 基础 Python Agent + Fish Audio TTS 依赖。
+requests>=2.32.0
+urllib3>=2.0.0
+certifi>=2024.0.0
