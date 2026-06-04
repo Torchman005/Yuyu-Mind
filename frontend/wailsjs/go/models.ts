@@ -106,11 +106,11 @@ export namespace main {
 	    events: string[];
 	    elapsedMs: number;
 	    audioSize: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new FishLiveProbeResult(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ok = source["ok"];
@@ -120,7 +120,7 @@ export namespace main {
 	        this.audioSize = source["audioSize"];
 	    }
 	}
-
+	
 	export class PetHitTestState {
 	    enabled: boolean;
 	    controlsOpen: boolean;
@@ -128,11 +128,11 @@ export namespace main {
 	    y: number;
 	    width: number;
 	    height: number;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new PetHitTestState(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
@@ -147,11 +147,11 @@ export namespace main {
 	    audioBase64: string;
 	    contentType: string;
 	    provider: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SpeechReply(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.audioBase64 = source["audioBase64"];
@@ -163,11 +163,11 @@ export namespace main {
 	    sessionId: string;
 	    contentType: string;
 	    provider: string;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new SpeechStreamStart(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.sessionId = source["sessionId"];
@@ -177,3 +177,4 @@ export namespace main {
 	}
 
 }
+

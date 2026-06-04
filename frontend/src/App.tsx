@@ -585,10 +585,10 @@ function App() {
                 resolveStreamStarted(false);
             }
             if (allowBufferedFallback && !firstChunkSeen) {
-                cloudVoiceFallback(message, text);
+                console.warn('Fish Audio streaming failed before audio, falling back to buffered TTS:', message);
                 return;
             }
-            console.warn('Realtime speech failed, falling back to chat reply speech:', message);
+            console.warn('Fish Audio streaming ended after audio started:', message);
             finishSpeaking(playbackId);
         };
 

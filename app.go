@@ -458,7 +458,8 @@ func (a *App) streamFishSpeech(sessionID string, text string) {
 		Provider:    "fish-audio-websocket",
 	})
 
-	for attempt := 0; attempt < 2; attempt++ {
+	attempts := fishAudioStreamRetries()
+	for attempt := 0; attempt < attempts; attempt++ {
 		receivedAudio, err := a.streamFishSpeechOnce(sessionID, text, emit)
 		if err == nil {
 			emit("mochi:speech:done", SpeechStreamEvent{SessionID: sessionID, Provider: "fish-audio-websocket"})
@@ -468,13 +469,14 @@ func (a *App) streamFishSpeech(sessionID string, text string) {
 			emit("mochi:speech:done", SpeechStreamEvent{SessionID: sessionID, Provider: "fish-audio-websocket"})
 			return
 		}
-		if !receivedAudio && errors.Is(err, io.EOF) && attempt == 0 {
+		if !receivedAudio && errors.Is(err, io.EOF) && attempt+1 < attempts {
 			emit("mochi:speech:metric", SpeechStreamEvent{
 				SessionID: sessionID,
 				Provider:  "fish-audio-websocket",
 				Phase:     "fish-eof-retry",
-				Detail:    "retrying Fish live stream after EOF before audio",
+				Detail:    fmt.Sprintf("retry %d/%d after EOF before audio", attempt+1, attempts),
 			})
+			time.Sleep(time.Duration(180+attempt*220) * time.Millisecond)
 			continue
 		}
 		emit("mochi:speech:error", SpeechStreamEvent{SessionID: sessionID, Error: err.Error()})
@@ -1529,6 +1531,21 @@ func fishAudioStreamTimeout() time.Duration {
 		return 30 * time.Second
 	}
 	return time.Duration(seconds * float64(time.Second))
+}
+
+func fishAudioStreamRetries() int {
+	value := strings.TrimSpace(os.Getenv("FISH_AUDIO_STREAM_RETRIES"))
+	if value == "" {
+		return 3
+	}
+	retries, err := strconv.Atoi(value)
+	if err != nil || retries < 1 {
+		return 3
+	}
+	if retries > 5 {
+		return 5
+	}
+	return retries
 }
 
 func firstFishAudioTimeout() time.Duration {
