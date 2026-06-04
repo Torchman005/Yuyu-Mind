@@ -134,6 +134,36 @@ FISH_AUDIO_AUTO_PROXY=false
 
 The app asks the Go backend to run `agent/tts_fish.py`; Python then calls Fish Audio and passes the generated audio back to the frontend. By default, it prefers this project's `.venv\Scripts\python.exe`; set `FISH_AUDIO_PYTHON_PATH` only when you need a custom Python executable. `FISH_AUDIO_PROXY` can explicitly set a proxy, for example `http://127.0.0.1:7890`; set it to `direct` to force direct access. The script does not blindly scan local ports by default; it only tries common local proxy ports when `FISH_AUDIO_AUTO_PROXY=true`. If TTS fails, the frontend temporarily falls back to system speech synthesis.
 
+For Fish Audio live TTS, keep the frontend in cloud streaming mode:
+
+```text
+TTS_PROVIDER=fish
+VITE_SPEECH_OUTPUT_MODE=cloud
+VITE_ENABLE_STREAMING_TTS=true
+VITE_REALTIME_SPEECH=true
+FISH_AUDIO_WS_URL=wss://api.fish.audio/v1/tts/live
+FISH_AUDIO_STREAM_CHUNK_LENGTH=300
+FISH_AUDIO_END_SILENCE_SECONDS=2
+```
+
+Set `VITE_SHOW_SPEECH_DEBUG=true` in `frontend/.env` to show the speech timing panel and the Fish live probe button.
+
+## GPT-SoVITS TTS / Local Voice Clone
+
+MochiAI also supports GPT-SoVITS through a local HTTP API. Set `TTS_PROVIDER=gpt-sovits`, start the GPT-SoVITS `api_v2.py` server, and point `GPT_SOVITS_URL` to its `/tts` endpoint.
+
+```text
+TTS_PROVIDER=gpt-sovits
+GPT_SOVITS_URL=http://127.0.0.1:9880/tts
+GPT_SOVITS_API_STYLE=v2
+GPT_SOVITS_REF_AUDIO_PATH=D:\voices\yuyu_ref.wav
+GPT_SOVITS_PROMPT_TEXT=这里填写参考音频里真实说出的原文
+GPT_SOVITS_PROMPT_LANG=zh
+GPT_SOVITS_TEXT_LANG=zh
+```
+
+Full setup notes are in `docs/gpt-sovits-tts.md`.
+
 ## Avatar / Live2D 配置
 
 前端 Avatar 渲染由 `frontend/.env` 控制。复制模板：

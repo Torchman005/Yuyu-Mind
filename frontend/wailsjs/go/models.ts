@@ -100,7 +100,49 @@ export namespace main {
 		    return a;
 		}
 	}
+	export class FishLiveProbeResult {
+	    ok: boolean;
+	    error?: string;
+	    events: string[];
+	    elapsedMs: number;
+	    audioSize: number;
 
+	    static createFrom(source: any = {}) {
+	        return new FishLiveProbeResult(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ok = source["ok"];
+	        this.error = source["error"];
+	        this.events = source["events"];
+	        this.elapsedMs = source["elapsedMs"];
+	        this.audioSize = source["audioSize"];
+	    }
+	}
+
+	export class PetHitTestState {
+	    enabled: boolean;
+	    controlsOpen: boolean;
+	    x: number;
+	    y: number;
+	    width: number;
+	    height: number;
+
+	    static createFrom(source: any = {}) {
+	        return new PetHitTestState(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.controlsOpen = source["controlsOpen"];
+	        this.x = source["x"];
+	        this.y = source["y"];
+	        this.width = source["width"];
+	        this.height = source["height"];
+	    }
+	}
 	export class SpeechReply {
 	    audioBase64: string;
 	    contentType: string;
@@ -113,6 +155,22 @@ export namespace main {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.audioBase64 = source["audioBase64"];
+	        this.contentType = source["contentType"];
+	        this.provider = source["provider"];
+	    }
+	}
+	export class SpeechStreamStart {
+	    sessionId: string;
+	    contentType: string;
+	    provider: string;
+
+	    static createFrom(source: any = {}) {
+	        return new SpeechStreamStart(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.sessionId = source["sessionId"];
 	        this.contentType = source["contentType"];
 	        this.provider = source["provider"];
 	    }

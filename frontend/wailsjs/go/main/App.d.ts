@@ -6,6 +6,14 @@ export function ClearChat():Promise<main.AppState>;
 
 export function GetState():Promise<main.AppState>;
 
+export function ProbeFishLive():Promise<main.FishLiveProbeResult>;
+
 export function SendMessage(arg1:string):Promise<main.ChatReply>;
 
+export function StartRealtimeSpeech(arg1:string):Promise<main.SpeechStreamStart>;
+
 export function SynthesizeSpeech(arg1:string):Promise<main.SpeechReply>;
+
+export function SynthesizeSpeechStream(arg1:string):Promise<main.SpeechStreamStart>;
+
+export function UpdatePetHitTest(arg1:main.PetHitTestState):Promise<void>;

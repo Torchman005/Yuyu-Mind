@@ -10,10 +10,26 @@ export function GetState() {
   return window['go']['main']['App']['GetState']();
 }
 
+export function ProbeFishLive() {
+  return window['go']['main']['App']['ProbeFishLive']();
+}
+
 export function SendMessage(arg1) {
   return window['go']['main']['App']['SendMessage'](arg1);
 }
 
+export function StartRealtimeSpeech(arg1) {
+  return window['go']['main']['App']['StartRealtimeSpeech'](arg1);
+}
+
 export function SynthesizeSpeech(arg1) {
   return window['go']['main']['App']['SynthesizeSpeech'](arg1);
+}
+
+export function SynthesizeSpeechStream(arg1) {
+  return window['go']['main']['App']['SynthesizeSpeechStream'](arg1);
+}
+
+export function UpdatePetHitTest(arg1) {
+  return window['go']['main']['App']['UpdatePetHitTest'](arg1);
 }

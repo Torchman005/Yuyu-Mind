@@ -3,6 +3,7 @@ import {useEffect, useRef, useState} from 'react';
 type Live2DStageProps = {
     emotion: string;
     isSpeaking?: boolean;
+    mouthLevel?: number;
     petScale?: number;
 };
 
@@ -11,6 +12,16 @@ type RendererStatus = 'ready' | 'fallback' | 'loading';
 type DebugInfo = {
     phase: string;
     detail: string;
+};
+
+type NaturalPresenceState = {
+    gazeX: number;
+    gazeY: number;
+    targetX: number;
+    targetY: number;
+    nextGazeShiftAt: number;
+    nextBlinkAt: number;
+    blinkUntil: number;
 };
 
 type AvatarController = {
@@ -188,28 +199,89 @@ function setModelParameter(model: any, id: string, value: number, weight = 1) {
     }
 }
 
-function holdForwardGaze(model: any) {
-    [
-        'ParamEyeBallX',
-        'ParamEyeBallY',
-        'ParamhitomiX',
-        'ParamhitomiY',
-        'ParamAngleX',
-        'ParamAngleY',
-        'ParamAngleZ',
-    ].forEach((id) => setModelParameter(model, id, 0, 0.85));
+function createNaturalPresenceState(): NaturalPresenceState {
+    return {
+        gazeX: 0,
+        gazeY: 0,
+        targetX: 0,
+        targetY: 0.02,
+        nextGazeShiftAt: 0,
+        nextBlinkAt: 1200 + Math.random() * 1800,
+        blinkUntil: 0,
+    };
 }
 
-function applyLipSync(model: any, isSpeaking: boolean, elapsedMs: number) {
-    if (!isSpeaking) {
+function emotionPresenceOffset(emotion: string) {
+    switch (emotion) {
+        case 'happy':
+            return {x: 0.01, y: 0.04, mouth: 0.25};
+        case 'focused':
+        case 'thinking':
+            return {x: -0.015, y: 0.015, mouth: 0.02};
+        case 'sad':
+            return {x: 0, y: -0.035, mouth: -0.28};
+        case 'surprised':
+            return {x: 0.02, y: 0.03, mouth: 0.1};
+        default:
+            return {x: 0, y: 0.015, mouth: 0.08};
+    }
+}
+
+function applyNaturalPresence(
+    model: any,
+    state: NaturalPresenceState,
+    isSpeaking: boolean,
+    mouthLevel: number,
+    emotion: string,
+    elapsedMs: number,
+) {
+    if (elapsedMs >= state.nextGazeShiftAt) {
+        state.targetX = (Math.random() - 0.5) * 0.18;
+        state.targetY = 0.02 + (Math.random() - 0.5) * 0.1;
+        state.nextGazeShiftAt = elapsedMs + 1800 + Math.random() * 2800;
+    }
+
+    const offset = emotionPresenceOffset(emotion);
+    state.gazeX += (state.targetX + offset.x - state.gazeX) * 0.025;
+    state.gazeY += (state.targetY + offset.y - state.gazeY) * 0.025;
+
+    const microX = Math.sin(elapsedMs / 1850) * 0.012 + Math.sin(elapsedMs / 4300) * 0.008;
+    const microY = Math.sin(elapsedMs / 2600) * 0.01;
+    const activeSpeech = isSpeaking && mouthLevel > 0.015;
+    const talkBob = activeSpeech ? Math.sin(elapsedMs / 190) * Math.min(1, mouthLevel * 2.4) : 0;
+    const lookX = state.gazeX + microX;
+    const lookY = state.gazeY + microY;
+
+    setModelParameter(model, 'ParamEyeBallX', lookX, 0.72);
+    setModelParameter(model, 'ParamEyeBallY', lookY, 0.72);
+    setModelParameter(model, 'ParamhitomiX', lookX, 0.72);
+    setModelParameter(model, 'ParamhitomiY', lookY, 0.72);
+    setModelParameter(model, 'ParamAngleX', lookX * 12 + talkBob * 0.55, 0.58);
+    setModelParameter(model, 'ParamAngleY', lookY * 9 + (activeSpeech ? Math.sin(elapsedMs / 310) * 0.35 : 0), 0.58);
+    setModelParameter(model, 'ParamAngleZ', Math.sin(elapsedMs / 3400) * 0.45 + (activeSpeech ? Math.sin(elapsedMs / 480) * 0.25 : 0), 0.45);
+    setModelParameter(model, 'ParamBodyAngleX', lookX * 2.2, 0.25);
+    setModelParameter(model, 'ParamMouthForm', offset.mouth + (activeSpeech ? 0.08 : 0), 0.22);
+
+    if (elapsedMs >= state.nextBlinkAt) {
+        state.blinkUntil = elapsedMs + 125;
+        state.nextBlinkAt = elapsedMs + 2400 + Math.random() * 4200;
+    }
+    const blinkProgress = state.blinkUntil > elapsedMs ? 1 - (state.blinkUntil - elapsedMs) / 125 : 1;
+    const blinkAmount = state.blinkUntil > elapsedMs ? Math.sin(Math.PI * blinkProgress) : 0;
+    const eyeOpen = Math.max(0.08, 1 - blinkAmount * 0.92);
+    setModelParameter(model, 'ParamEyeLOpen', eyeOpen, 0.72);
+    setModelParameter(model, 'ParamEyeROpen', eyeOpen, 0.72);
+}
+
+function applyLipSync(model: any, isSpeaking: boolean, mouthLevel: number, elapsedMs: number) {
+    if (!isSpeaking || mouthLevel <= 0.012) {
         setModelParameter(model, 'ParamMouthOpenY', 0, 0.8);
         setModelParameter(model, 'ParamJawOpen', 0, 0.8);
         return;
     }
 
-    const pulse = Math.abs(Math.sin(elapsedMs / 78));
-    const secondary = Math.abs(Math.sin(elapsedMs / 137));
-    const openness = Math.min(1, 0.18 + pulse * 0.72 + secondary * 0.18);
+    const pulse = Math.abs(Math.sin(elapsedMs / 92));
+    const openness = Math.min(1, Math.max(0, mouthLevel * 1.9 + pulse * mouthLevel * 0.55));
     setModelParameter(model, 'ParamMouthOpenY', openness, 1);
     setModelParameter(model, 'ParamJawOpen', openness * 0.45, 1);
 }
@@ -241,7 +313,7 @@ function initialStatusText() {
     return `Loading ${avatarRenderer}`;
 }
 
-export function Live2DStage({emotion, isSpeaking = false, petScale = 1}: Live2DStageProps) {
+export function Live2DStage({emotion, isSpeaking = false, mouthLevel = 0, petScale = 1}: Live2DStageProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const appRef = useRef<any>(null);
@@ -249,7 +321,9 @@ export function Live2DStage({emotion, isSpeaking = false, petScale = 1}: Live2DS
     const controllerRef = useRef<AvatarController | null>(null);
     const bootIdRef = useRef(0);
     const lastEmotionRef = useRef('');
+    const emotionRef = useRef(emotion);
     const isSpeakingRef = useRef(isSpeaking);
+    const mouthLevelRef = useRef(mouthLevel);
     const [status, setStatus] = useState<RendererStatus>(avatarRenderer === 'css' ? 'fallback' : 'loading');
     const [statusText, setStatusText] = useState(initialStatusText);
     const [debugInfo, setDebugInfo] = useState<DebugInfo>({
@@ -299,8 +373,16 @@ export function Live2DStage({emotion, isSpeaking = false, petScale = 1}: Live2DS
     }
 
     useEffect(() => {
+        emotionRef.current = emotion;
+    }, [emotion]);
+
+    useEffect(() => {
         isSpeakingRef.current = isSpeaking;
     }, [isSpeaking]);
+
+    useEffect(() => {
+        mouthLevelRef.current = mouthLevel;
+    }, [mouthLevel]);
 
     useEffect(() => {
         const bootId = bootIdRef.current + 1;
@@ -495,10 +577,11 @@ export function Live2DStage({emotion, isSpeaking = false, petScale = 1}: Live2DS
             }
             modelRef.current = model;
             let elapsedMs = 0;
+            const presenceState = createNaturalPresenceState();
             app.ticker.add((delta: number) => {
                 elapsedMs += app.ticker.deltaMS || delta * 16.67;
-                holdForwardGaze(model);
-                applyLipSync(model, isSpeakingRef.current, elapsedMs);
+                applyNaturalPresence(model, presenceState, isSpeakingRef.current, mouthLevelRef.current, emotionRef.current, elapsedMs);
+                applyLipSync(model, isSpeakingRef.current, mouthLevelRef.current, elapsedMs);
             });
             syncCanvasDisplaySize(canvasRef.current, containerRef.current);
             fitPixiModel(model, containerRef.current);

@@ -385,9 +385,39 @@ def build_reply(message: str, history: list[dict[str, Any]], memories: list[str]
     try:
         reply = call_llm(message, history, memories)
     except Exception as error:
-        reply = build_rule_reply(message, memories)
+        reply = build_provider_error_reply(error)
         reply["providerError"] = str(error)
     return normalize_reply(reply)
+
+
+def build_provider_error_reply(error: Exception) -> dict[str, Any]:
+    provider = get_provider_name()
+    model = current_model()
+    detail = str(error).strip()
+    if len(detail) > 180:
+        detail = detail[:180] + "..."
+
+    if reply_language() in {"zh_ja", "zh-ja", "dual", "bilingual"}:
+        return {
+            "text": f"现在不是我只会固定回复，而是 {provider} 的 {model} 调用失败了。请检查模型名、余额、API Key 或网络代理。错误：{detail}",
+            "speechText": "今は固定返答しかできないわけじゃなくて、LLMの呼び出しが失敗しているみたい。モデル名、残高、APIキー、ネットワーク設定を確認してね。",
+            "emotion": "thinking",
+            "memoryCandidates": [],
+            "provider": provider,
+        }
+
+    if reply_language().startswith("ja"):
+        text = f"今は固定返答しかできないわけじゃなくて、{provider} の {model} 呼び出しが失敗しているみたい。モデル名、残高、APIキー、ネットワーク設定を確認してね。"
+    else:
+        text = f"现在不是我只会固定回复，而是 {provider} 的 {model} 调用失败了。请检查模型名、余额、API Key 或网络代理。错误：{detail}"
+
+    return {
+        "text": text,
+        "speechText": text,
+        "emotion": "thinking",
+        "memoryCandidates": [],
+        "provider": provider,
+    }
 
 
 def normalize_reply(reply: dict[str, Any]) -> dict[str, Any]:

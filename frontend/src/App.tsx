@@ -1,7 +1,23 @@
 import {FormEvent, WheelEvent, useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
-import {ClearChat, GetState, SendMessage, SynthesizeSpeech} from '../wailsjs/go/main/App';
-import {Quit, WindowCenter, WindowMinimise, WindowSetAlwaysOnTop, WindowSetBackgroundColour, WindowSetSize} from '../wailsjs/runtime/runtime';
+import {
+    ClearChat,
+    GetState,
+    ProbeFishLive,
+    SendMessage,
+    SynthesizeSpeech,
+    SynthesizeSpeechStream,
+    UpdatePetHitTest,
+} from '../wailsjs/go/main/App';
+import {
+    EventsOn,
+    Quit,
+    WindowCenter,
+    WindowMinimise,
+    WindowSetAlwaysOnTop,
+    WindowSetBackgroundColour,
+    WindowSetSize,
+} from '../wailsjs/runtime/runtime';
 import {Live2DStage} from './components/Live2DStage';
 
 type Message = {
@@ -22,6 +38,31 @@ type ChatResponse = {
     providerError?: string;
 };
 
+type SpeechStreamEvent = {
+    sessionId?: string;
+    audioBase64?: string;
+    contentType?: string;
+    error?: string;
+    provider?: string;
+    phase?: string;
+    elapsedMs?: number;
+    detail?: string;
+};
+
+type SpeechMetric = {
+    phase: string;
+    elapsedMs?: number;
+    detail?: string;
+};
+
+type FishLiveProbeResult = {
+    ok?: boolean;
+    error?: string;
+    events?: string[];
+    elapsedMs?: number;
+    audioSize?: number;
+};
+
 const emotionLabel: Record<string, string> = {
     neutral: '待机',
     happy: '开心',
@@ -39,7 +80,16 @@ const PET_BASE_HEIGHT = 560;
 const PET_MIN_SCALE = 0.6;
 const PET_MAX_SCALE = 1.8;
 const PET_SCALE_STEP = 0.08;
+const PET_HIT_INSET_X = 0.06;
+const PET_HIT_INSET_TOP = 0.02;
+const PET_HIT_INSET_BOTTOM = 0.02;
 const DESKTOP_PET_NAME = (import.meta.env.VITE_DESKTOP_PET_NAME as string | undefined)?.trim() || 'Mochi';
+const SPEECH_OUTPUT_MODE = ((import.meta.env.VITE_SPEECH_OUTPUT_MODE as string | undefined) || 'cloud').trim().toLowerCase();
+const ALLOW_SYSTEM_TTS_FALLBACK = ((import.meta.env.VITE_ALLOW_SYSTEM_TTS_FALLBACK as string | undefined) || 'false').trim().toLowerCase() === 'true';
+const ENABLE_STREAMING_TTS = ((import.meta.env.VITE_ENABLE_STREAMING_TTS as string | undefined) || 'false').trim().toLowerCase() === 'true';
+const ENABLE_REALTIME_SPEECH = ((import.meta.env.VITE_REALTIME_SPEECH as string | undefined) || 'false').trim().toLowerCase() === 'true';
+const SHOW_SPEECH_DEBUG = ((import.meta.env.VITE_SHOW_SPEECH_DEBUG as string | undefined) || 'false').trim().toLowerCase() === 'true';
+const VOICE_RELISTEN_DELAY_MS = 280;
 
 function canUseWailsRuntime() {
     return Boolean((window as any).runtime);
@@ -62,6 +112,22 @@ function isEditableTarget(target: EventTarget | null) {
     return Boolean(element?.closest('input, textarea, [contenteditable="true"]'));
 }
 
+function decodeBase64Audio(base64: string) {
+    const binary = window.atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+}
+
+function isInterruptedPlaybackError(reason: unknown) {
+    const message = String(reason instanceof Error ? reason.message : reason);
+    return reason instanceof DOMException && reason.name === 'AbortError'
+        || message.includes('play() request was interrupted')
+        || message.includes('AbortError');
+}
+
 function App() {
     const [messages, setMessages] = useState<Message[]>([]);
     const [draft, setDraft] = useState('');
@@ -73,6 +139,8 @@ function App() {
     const [error, setError] = useState('');
     const [voiceStatus, setVoiceStatus] = useState('idle');
     const [voiceError, setVoiceError] = useState('');
+    const [mouthLevel, setMouthLevel] = useState(0);
+    const [speechMetrics, setSpeechMetrics] = useState<SpeechMetric[]>([]);
     const [isPetMode, setIsPetMode] = useState(() => localStorage.getItem(PET_MODE_KEY) === 'true');
     const [petScale, setPetScale] = useState(readStoredPetScale);
     const [isPetControlsOpen, setIsPetControlsOpen] = useState(false);
@@ -81,6 +149,11 @@ function App() {
     const composerInputRef = useRef<HTMLInputElement>(null);
     const recognitionRef = useRef<any>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
+    const playbackIdRef = useRef(0);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const lipSyncCleanupRef = useRef<(() => void) | null>(null);
+    const voiceLoopRef = useRef(false);
+    const relistenTimerRef = useRef<number | null>(null);
 
     const assistantLine = useMemo(() => {
         if (isSending || voiceStatus === 'thinking') {
@@ -110,6 +183,10 @@ function App() {
         });
     }, [messages]);
 
+    function addSpeechMetric(metric: SpeechMetric) {
+        setSpeechMetrics((items) => [...items.slice(-11), metric]);
+    }
+
     useEffect(() => {
         localStorage.setItem(PET_MODE_KEY, String(isPetMode));
         localStorage.setItem(PET_SCALE_KEY, String(petScale));
@@ -136,8 +213,68 @@ function App() {
     }, [isPetMode, petScale]);
 
     useEffect(() => {
+        if (!canUseWailsRuntime()) {
+            return;
+        }
+
+        let isDisposed = false;
+        let frame = 0;
+
+        const reportPetHitTest = () => {
+            window.cancelAnimationFrame(frame);
+            frame = window.requestAnimationFrame(() => {
+                if (isDisposed) {
+                    return;
+                }
+                if (!isPetMode) {
+                    void UpdatePetHitTest({enabled: false, controlsOpen: false, x: 0, y: 0, width: 0, height: 0});
+                    return;
+                }
+
+                const stage = document.querySelector<HTMLElement>('.live2d-stage');
+                const rect = stage?.getBoundingClientRect();
+                if (!rect || rect.width <= 0 || rect.height <= 0) {
+                    return;
+                }
+
+                const x = rect.left + rect.width * PET_HIT_INSET_X;
+                const y = rect.top + rect.height * PET_HIT_INSET_TOP;
+                const width = rect.width * (1 - PET_HIT_INSET_X * 2);
+                const height = rect.height * (1 - PET_HIT_INSET_TOP - PET_HIT_INSET_BOTTOM);
+                void UpdatePetHitTest({
+                    enabled: true,
+                    controlsOpen: isPetControlsOpen,
+                    x,
+                    y,
+                    width,
+                    height,
+                });
+            });
+        };
+
+        reportPetHitTest();
+        const interval = window.setInterval(reportPetHitTest, 250);
+        window.addEventListener('resize', reportPetHitTest);
+        return () => {
+            isDisposed = true;
+            window.cancelAnimationFrame(frame);
+            window.clearInterval(interval);
+            window.removeEventListener('resize', reportPetHitTest);
+            void UpdatePetHitTest({enabled: false, controlsOpen: false, x: 0, y: 0, width: 0, height: 0});
+        };
+    }, [isPetMode, petScale, isPetControlsOpen]);
+
+    useEffect(() => {
         function onKeyDown(event: KeyboardEvent) {
             if (event.key === 'Escape') {
+                voiceLoopRef.current = false;
+                if (relistenTimerRef.current) {
+                    window.clearTimeout(relistenTimerRef.current);
+                }
+                recognitionRef.current?.abort?.();
+                audioRef.current?.pause();
+                window.speechSynthesis?.cancel?.();
+                setVoiceStatus('idle');
                 setIsPetControlsOpen(false);
                 setIsTextInputOpen(false);
                 return;
@@ -152,7 +289,20 @@ function App() {
                 !isEditableTarget(event.target)
             ) {
                 event.preventDefault();
-                if (!isSending && voiceStatus !== 'thinking' && voiceStatus !== 'speaking') {
+                if (voiceStatus === 'listening') {
+                    voiceLoopRef.current = false;
+                    recognitionRef.current?.stop?.();
+                    setVoiceStatus('idle');
+                    return;
+                }
+                if (voiceStatus === 'speaking') {
+                    audioRef.current?.pause();
+                    window.speechSynthesis?.cancel?.();
+                    setVoiceStatus('idle');
+                    startVoiceInput();
+                    return;
+                }
+                if (!isSending && voiceStatus !== 'thinking') {
                     startVoiceInput();
                 }
                 return;
@@ -185,6 +335,9 @@ function App() {
     useEffect(() => {
         return () => {
             recognitionRef.current?.abort?.();
+            if (relistenTimerRef.current) {
+                window.clearTimeout(relistenTimerRef.current);
+            }
             audioRef.current?.pause();
             window.speechSynthesis?.cancel?.();
             document.documentElement.classList.remove('pet-window');
@@ -192,9 +345,104 @@ function App() {
         };
     }, []);
 
+    function finishSpeaking(playbackId?: number) {
+        if (playbackId !== undefined && playbackId !== playbackIdRef.current) {
+            return;
+        }
+        lipSyncCleanupRef.current?.();
+        lipSyncCleanupRef.current = null;
+        setMouthLevel(0);
+        setVoiceStatus('idle');
+        if (!voiceLoopRef.current) {
+            return;
+        }
+
+        if (relistenTimerRef.current) {
+            window.clearTimeout(relistenTimerRef.current);
+        }
+        relistenTimerRef.current = window.setTimeout(() => {
+            if (!voiceLoopRef.current || recognitionRef.current) {
+                return;
+            }
+            startVoiceInput(true);
+        }, VOICE_RELISTEN_DELAY_MS);
+    }
+
+    function stopCurrentAudio() {
+        playbackIdRef.current += 1;
+        lipSyncCleanupRef.current?.();
+        lipSyncCleanupRef.current = null;
+        setMouthLevel(0);
+        const audio = audioRef.current;
+        if (audio) {
+            audio.onended = null;
+            audio.onerror = null;
+            audio.pause();
+            audio.removeAttribute('src');
+            audio.load();
+            audioRef.current = null;
+        }
+        window.speechSynthesis?.cancel?.();
+    }
+
+    function attachLipSync(audio: HTMLAudioElement, playbackId: number) {
+        const AudioContextConstructor = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioContextConstructor) {
+            return;
+        }
+
+        try {
+            const audioContext = audioContextRef.current ?? new AudioContextConstructor();
+            audioContextRef.current = audioContext;
+            const source = audioContext.createMediaElementSource(audio);
+            const analyser = audioContext.createAnalyser();
+            analyser.fftSize = 512;
+            analyser.smoothingTimeConstant = 0.45;
+            source.connect(analyser);
+            analyser.connect(audioContext.destination);
+
+            const samples = new Uint8Array(analyser.fftSize);
+            let frame = 0;
+            let active = true;
+            let lastLevel = 0;
+            const tick = () => {
+                if (!active || playbackId !== playbackIdRef.current) {
+                    return;
+                }
+                analyser.getByteTimeDomainData(samples);
+                let sum = 0;
+                for (const sample of samples) {
+                    const centered = (sample - 128) / 128;
+                    sum += centered * centered;
+                }
+                const rms = Math.sqrt(sum / samples.length);
+                const nextLevel = Math.min(1, Math.max(0, rms * 4.8));
+                lastLevel += (nextLevel - lastLevel) * 0.55;
+                setMouthLevel(lastLevel < 0.018 ? 0 : lastLevel);
+                frame = window.requestAnimationFrame(tick);
+            };
+
+            lipSyncCleanupRef.current?.();
+            lipSyncCleanupRef.current = () => {
+                active = false;
+                if (frame) {
+                    window.cancelAnimationFrame(frame);
+                }
+                setMouthLevel(0);
+                source.disconnect();
+                analyser.disconnect();
+            };
+
+            void audioContext.resume?.();
+            tick();
+        } catch (error) {
+            console.warn('Lip sync analyser unavailable:', error);
+        }
+    }
+
     function speakWithSystemVoice(text: string) {
         if (!('speechSynthesis' in window) || !text.trim()) {
-            setVoiceStatus('idle');
+            finishSpeaking();
             return;
         }
 
@@ -213,9 +461,292 @@ function App() {
         }
 
         utterance.onstart = () => setVoiceStatus('speaking');
-        utterance.onend = () => setVoiceStatus('idle');
-        utterance.onerror = () => setVoiceStatus('idle');
+        utterance.onend = () => finishSpeaking();
+        utterance.onerror = () => finishSpeaking();
         window.speechSynthesis.speak(utterance);
+    }
+
+    function cloudVoiceFallback(message: string, content: string) {
+        if (ALLOW_SYSTEM_TTS_FALLBACK) {
+            speakWithSystemVoice(content);
+            return;
+        }
+        void speakWithBufferedCloudVoice(content, message);
+    }
+
+    async function speakWithBufferedCloudVoice(content: string, fallbackMessage?: string) {
+        const playbackId = playbackIdRef.current;
+        audioRef.current?.pause();
+        const startedAt = performance.now();
+        addSpeechMetric({
+            phase: 'buffered-request-start',
+            elapsedMs: 0,
+            detail: 'Fish ordinary TTS',
+        });
+
+        try {
+            const speech = await SynthesizeSpeech(content);
+            addSpeechMetric({
+                phase: 'buffered-audio-ready',
+                elapsedMs: Math.round(performance.now() - startedAt),
+                detail: speech.provider || speech.contentType || '',
+            });
+            if (playbackId !== playbackIdRef.current) {
+                return true;
+            }
+            const audio = new Audio(`data:${speech.contentType || 'audio/mpeg'};base64,${speech.audioBase64}`);
+            audioRef.current = audio;
+            attachLipSync(audio, playbackId);
+            audio.onended = () => finishSpeaking(playbackId);
+            audio.onerror = () => {
+                if (playbackId !== playbackIdRef.current) {
+                    return;
+                }
+                if (!ALLOW_SYSTEM_TTS_FALLBACK) {
+                    setVoiceError('云端 TTS 音频播放失败，已停止播放。');
+                    finishSpeaking(playbackId);
+                    return;
+                }
+                setVoiceError('云端 TTS 音频播放失败，已切换到系统朗读。');
+                speakWithSystemVoice(content);
+            };
+            await audio.play();
+            addSpeechMetric({
+                phase: 'buffered-play-started',
+                elapsedMs: Math.round(performance.now() - startedAt),
+            });
+            return true;
+        } catch (reason) {
+            if (playbackId !== playbackIdRef.current) {
+                return true;
+            }
+            if (isInterruptedPlaybackError(reason)) {
+                finishSpeaking(playbackId);
+                return true;
+            }
+            if (!ALLOW_SYSTEM_TTS_FALLBACK) {
+                console.warn('Cloud TTS failed:', reason);
+                setVoiceError(fallbackMessage || '云端 TTS 暂时连不上，已停止播放。请检查 TTS_PROVIDER、API Key 或网络。');
+                finishSpeaking(playbackId);
+                return false;
+            }
+            setVoiceError(`云端 TTS 失败：${String(reason)}`);
+            speakWithSystemVoice(content);
+            return true;
+        }
+    }
+
+    async function speakWithStreamedCloudVoice(
+        text: string,
+        startStream: () => Promise<any> = () => SynthesizeSpeechStream(text),
+        allowBufferedFallback = true,
+    ) {
+        const playbackId = playbackIdRef.current;
+        const frontendStartedAt = performance.now();
+        const MediaSourceConstructor = (window as any).MediaSource;
+        if (!MediaSourceConstructor || !MediaSourceConstructor.isTypeSupported?.('audio/mpeg')) {
+            return false;
+        }
+
+        const mediaSource = new MediaSourceConstructor();
+        const audio = new Audio(URL.createObjectURL(mediaSource));
+        audioRef.current = audio;
+        attachLipSync(audio, playbackId);
+
+        let streamSessionId = '';
+        let sourceBuffer: SourceBuffer | null = null;
+        let streamDone = false;
+        let failed = false;
+        let firstChunkSeen = false;
+        const queue: Uint8Array[] = [];
+        const unsubs: Array<() => void> = [];
+        let resolveFirstChunkOrFailure: ((started: boolean) => void) | null = null;
+        const firstChunkOrFailure = new Promise<boolean>((resolve) => {
+            resolveFirstChunkOrFailure = resolve;
+        });
+
+        const addSpeechMetric = (metric: SpeechMetric) => {
+            setSpeechMetrics((items) => [...items.slice(-11), metric]);
+        };
+
+        const resolveStreamStarted = (started: boolean) => {
+            if (!resolveFirstChunkOrFailure) {
+                return;
+            }
+            resolveFirstChunkOrFailure(started);
+            resolveFirstChunkOrFailure = null;
+        };
+
+        const handleStreamFailure = (message: string) => {
+            if (playbackId !== playbackIdRef.current) {
+                return;
+            }
+            if (!firstChunkSeen) {
+                resolveStreamStarted(false);
+            }
+            if (allowBufferedFallback && !firstChunkSeen) {
+                cloudVoiceFallback(message, text);
+                return;
+            }
+            console.warn('Realtime speech failed, falling back to chat reply speech:', message);
+            finishSpeaking(playbackId);
+        };
+
+        const cleanup = () => {
+            unsubs.forEach((unsubscribe) => unsubscribe());
+            URL.revokeObjectURL(audio.src);
+        };
+
+        const appendNext = () => {
+            if (playbackId !== playbackIdRef.current) {
+                queue.length = 0;
+                return;
+            }
+            if (!sourceBuffer || sourceBuffer.updating || queue.length === 0) {
+                if (streamDone && sourceBuffer && !sourceBuffer.updating && mediaSource.readyState === 'open') {
+                    try {
+                        mediaSource.endOfStream();
+                    } catch {
+                        // MediaSource may already be closed by the browser.
+                    }
+                }
+                return;
+            }
+
+            const next = queue.shift();
+            if (!next) {
+                return;
+            }
+            try {
+                sourceBuffer.appendBuffer(next);
+            } catch {
+                failed = true;
+                cleanup();
+                handleStreamFailure('Fish Audio 流式音频拼接失败。');
+            }
+        };
+
+        mediaSource.addEventListener('sourceopen', () => {
+            try {
+                const buffer = mediaSource.addSourceBuffer('audio/mpeg');
+                sourceBuffer = buffer;
+                buffer.addEventListener('updateend', appendNext);
+                appendNext();
+            } catch {
+                failed = true;
+                cleanup();
+                handleStreamFailure('当前 WebView 不支持 Fish Audio 流式播放。');
+            }
+        }, {once: true});
+
+        audio.onended = () => {
+            cleanup();
+            finishSpeaking(playbackId);
+        };
+        audio.onerror = () => {
+            if (playbackId !== playbackIdRef.current) {
+                return;
+            }
+            if (failed) {
+                return;
+            }
+            failed = true;
+            cleanup();
+            handleStreamFailure('Fish Audio 流式音频播放失败。');
+        };
+
+        unsubs.push(EventsOn('mochi:speech:start', (event: SpeechStreamEvent) => {
+            if (playbackId !== playbackIdRef.current) {
+                return;
+            }
+            if (streamSessionId || !event?.sessionId) {
+                return;
+            }
+            streamSessionId = event.sessionId;
+        }));
+        unsubs.push(EventsOn('mochi:speech:chunk', (event: SpeechStreamEvent) => {
+            if (playbackId !== playbackIdRef.current) {
+                return;
+            }
+            if (!event?.audioBase64 || (streamSessionId && event.sessionId !== streamSessionId)) {
+                return;
+            }
+            if (!streamSessionId && event.sessionId) {
+                streamSessionId = event.sessionId;
+            }
+            if (!firstChunkSeen) {
+                firstChunkSeen = true;
+                resolveStreamStarted(true);
+                addSpeechMetric({
+                    phase: 'frontend-first-chunk',
+                    elapsedMs: Math.round(performance.now() - frontendStartedAt),
+                    detail: event.provider,
+                });
+            }
+            queue.push(decodeBase64Audio(event.audioBase64));
+            appendNext();
+        }));
+        unsubs.push(EventsOn('mochi:speech:metric', (event: SpeechStreamEvent) => {
+            if (playbackId !== playbackIdRef.current) {
+                return;
+            }
+            if (streamSessionId && event?.sessionId !== streamSessionId) {
+                return;
+            }
+            addSpeechMetric({
+                phase: event?.phase || 'unknown',
+                elapsedMs: event?.elapsedMs,
+                detail: event?.detail,
+            });
+        }));
+        unsubs.push(EventsOn('mochi:speech:done', (event: SpeechStreamEvent) => {
+            if (playbackId !== playbackIdRef.current) {
+                return;
+            }
+            if (streamSessionId && event?.sessionId !== streamSessionId) {
+                return;
+            }
+            streamDone = true;
+            if (!firstChunkSeen) {
+                resolveStreamStarted(false);
+            }
+            appendNext();
+        }));
+        unsubs.push(EventsOn('mochi:speech:error', (event: SpeechStreamEvent) => {
+            if (playbackId !== playbackIdRef.current) {
+                return;
+            }
+            if (streamSessionId && event?.sessionId !== streamSessionId) {
+                return;
+            }
+            failed = true;
+            cleanup();
+            console.warn('Fish Audio streaming failed:', event?.error || 'unknown error');
+            handleStreamFailure(`Fish Audio 流式 TTS 失败：${event?.error || '请检查网络或 Fish 配置。'}`);
+        }));
+
+        try {
+            const stream = await startStream();
+            if (playbackId !== playbackIdRef.current) {
+                cleanup();
+                return true;
+            }
+            streamSessionId = stream.sessionId;
+            await audio.play();
+            setVoiceStatus('speaking');
+            return await firstChunkOrFailure;
+        } catch (error) {
+            cleanup();
+            if (playbackId !== playbackIdRef.current) {
+                return true;
+            }
+            if (isInterruptedPlaybackError(error)) {
+                finishSpeaking(playbackId);
+                return true;
+            }
+            resolveStreamStarted(false);
+            throw error;
+        }
     }
 
     async function speakText(text: string) {
@@ -225,22 +756,38 @@ function App() {
             return;
         }
 
-        try {
-            setVoiceStatus('speaking');
-            audioRef.current?.pause();
-            window.speechSynthesis?.cancel?.();
+        stopCurrentAudio();
+        const playbackId = playbackIdRef.current;
+        setVoiceStatus('speaking');
 
-            const speech = await SynthesizeSpeech(content);
-            const audio = new Audio(`data:${speech.contentType || 'audio/mpeg'};base64,${speech.audioBase64}`);
-            audioRef.current = audio;
-            audio.onended = () => setVoiceStatus('idle');
-            audio.onerror = () => {
-                setVoiceError('Fish Audio 音频播放失败，已切换到系统朗读。');
-                speakWithSystemVoice(content);
-            };
-            await audio.play();
+        if (SPEECH_OUTPUT_MODE === 'system') {
+            speakWithSystemVoice(content);
+            return;
+        }
+
+        try {
+            if (SPEECH_OUTPUT_MODE === 'cloud' && ENABLE_STREAMING_TTS) {
+                const streamingStarted = await speakWithStreamedCloudVoice(content);
+                if (streamingStarted) {
+                    return;
+                }
+            }
+            await speakWithBufferedCloudVoice(content);
         } catch (reason) {
-            setVoiceError(`Fish Audio TTS 失败：${String(reason)}`);
+            if (playbackId !== playbackIdRef.current) {
+                return;
+            }
+            if (isInterruptedPlaybackError(reason)) {
+                finishSpeaking(playbackId);
+                return;
+            }
+            if (!ALLOW_SYSTEM_TTS_FALLBACK) {
+                console.warn('Cloud TTS failed:', reason);
+                setVoiceError('云端 TTS 暂时连不上，已停止播放。请检查 TTS_PROVIDER、API Key 或网络。');
+                finishSpeaking(playbackId);
+                return;
+            }
+            setVoiceError(`云端 TTS 失败：${String(reason)}`);
             speakWithSystemVoice(content);
         }
     }
@@ -257,8 +804,19 @@ function App() {
         setIsSending(true);
         setError('');
         setVoiceError('');
+        setSpeechMetrics([{
+            phase: 'frontend-mode',
+            elapsedMs: 0,
+            detail: `mode=${SPEECH_OUTPUT_MODE}, streaming=${ENABLE_STREAMING_TTS}, realtime=${ENABLE_REALTIME_SPEECH}`,
+        }]);
         setVoiceStatus('thinking');
         setEmotion('focused');
+
+        setSpeechMetrics((items) => [...items, {
+            phase: 'realtime-disabled',
+            elapsedMs: 0,
+            detail: `mode=${SPEECH_OUTPUT_MODE}, streaming=${ENABLE_STREAMING_TTS}, realtime=${ENABLE_REALTIME_SPEECH}; using reply speechText`,
+        }]);
 
         try {
             const response = await SendMessage(content) as ChatResponse;
@@ -312,15 +870,53 @@ function App() {
         }
     }
 
-    function startVoiceInput() {
+    async function probeFishLive() {
+        setVoiceError('');
+        setSpeechMetrics([{phase: 'probe-start', elapsedMs: 0, detail: 'Fish live minimal probe'}]);
+        try {
+            const result = await ProbeFishLive() as FishLiveProbeResult;
+            const rows: SpeechMetric[] = [
+                {
+                    phase: result.ok ? 'probe-ok' : 'probe-failed',
+                    elapsedMs: result.elapsedMs,
+                    detail: result.ok ? `audio=${result.audioSize || 0} bytes` : (result.error || 'unknown error'),
+                },
+                ...((result.events || []).slice(-10).map((event) => ({
+                    phase: 'probe-event',
+                    detail: event,
+                }))),
+            ];
+            setSpeechMetrics(rows);
+            if (!result.ok && result.error) {
+                setVoiceError(`Fish live probe failed: ${result.error}`);
+            }
+        } catch (reason) {
+            setVoiceError(String(reason));
+            setSpeechMetrics((items) => [...items, {phase: 'probe-error', detail: String(reason)}]);
+        }
+    }
+
+    function startVoiceInput(fromLoop = false) {
+        if (!fromLoop) {
+            voiceLoopRef.current = true;
+        }
+        if (relistenTimerRef.current) {
+            window.clearTimeout(relistenTimerRef.current);
+            relistenTimerRef.current = null;
+        }
+
         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
         if (!SpeechRecognition) {
             setVoiceError('当前 WebView 不支持浏览器语音识别，可以先继续使用文字输入。');
             setIsTextInputOpen(true);
+            voiceLoopRef.current = false;
             return;
         }
 
         if (voiceStatus === 'listening') {
+            if (!fromLoop) {
+                voiceLoopRef.current = false;
+            }
             recognitionRef.current?.stop?.();
             return;
         }
@@ -350,12 +946,14 @@ function App() {
             }
             latestTranscript = (finalTranscript || interimTranscript).trim();
             setDraft(latestTranscript);
-            if (latestTranscript) {
+            if (latestTranscript && !isPetMode) {
                 setIsTextInputOpen(true);
             }
         };
 
         recognition.onerror = (event: any) => {
+            recognitionRef.current = null;
+            voiceLoopRef.current = false;
             setVoiceStatus('idle');
             setVoiceError(event.error ? `语音识别失败：${event.error}` : '语音识别失败。');
         };
@@ -366,6 +964,9 @@ function App() {
             if (!content) {
                 setVoiceStatus('idle');
                 setEmotion('neutral');
+                if (voiceLoopRef.current) {
+                    finishSpeaking();
+                }
                 return;
             }
             void sendContent(content);
@@ -396,8 +997,15 @@ function App() {
             <button
                 type="button"
                 className={`voice-button voice-${voiceStatus}`}
-                onClick={startVoiceInput}
-                disabled={isSending || voiceStatus === 'thinking' || voiceStatus === 'speaking'}
+                onClick={() => {
+                    if (voiceStatus === 'speaking') {
+                        audioRef.current?.pause();
+                        window.speechSynthesis?.cancel?.();
+                        setVoiceStatus('idle');
+                    }
+                    startVoiceInput();
+                }}
+                disabled={isSending || voiceStatus === 'thinking'}
             >
                 {voiceStatus === 'listening' ? '停止' : '语音'}
             </button>
@@ -419,11 +1027,23 @@ function App() {
                     </div>
                 )}
 
-                <Live2DStage emotion={emotion} isSpeaking={voiceStatus === 'speaking'} petScale={petScale}/>
+                <Live2DStage emotion={emotion} isSpeaking={voiceStatus === 'speaking'} mouthLevel={mouthLevel} petScale={petScale}/>
+
+                {SHOW_SPEECH_DEBUG && speechMetrics.length > 0 && (
+                    <div className="speech-metrics" aria-label="Speech timing log">
+                        <strong>Speech timing</strong>
+                        {speechMetrics.map((metric, index) => (
+                            <div className="speech-metric-row" key={`${metric.phase}-${index}`}>
+                                <span>{metric.phase}</span>
+                                <b>{typeof metric.elapsedMs === 'number' ? `${metric.elapsedMs}ms` : '-'}</b>
+                                {metric.detail && <small>{metric.detail}</small>}
+                            </div>
+                        ))}
+                    </div>
+                )}
 
                 {isPetMode && voiceStatus === 'speaking' && assistantLine.trim() && (
                     <div className="pet-subtitle" aria-live="polite">
-                        <span>{DESKTOP_PET_NAME}</span>
                         <p>{assistantLine}</p>
                     </div>
                 )}
@@ -488,6 +1108,16 @@ function App() {
                             >
                                 桌宠模式
                             </button>
+                            {SHOW_SPEECH_DEBUG && (
+                                <button
+                                    type="button"
+                                    className="ghost-button"
+                                    onClick={probeFishLive}
+                                    disabled={isSending || voiceStatus === 'speaking'}
+                                >
+                                    Fish Live Test
+                                </button>
+                            )}
                             <button
                                 type="button"
                                 className="ghost-button"
