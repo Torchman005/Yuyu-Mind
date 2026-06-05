@@ -6,6 +6,10 @@ export function ClearChat() {
   return window['go']['main']['App']['ClearChat']();
 }
 
+export function GenerateProactiveMessage(arg1) {
+  return window['go']['main']['App']['GenerateProactiveMessage'](arg1);
+}
+
 export function GetState() {
   return window['go']['main']['App']['GetState']();
 }

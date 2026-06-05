@@ -120,6 +120,10 @@ def desktop_pet_name() -> str:
     return os.environ.get("MOCHI_DESKTOP_PET_NAME", "Mochi").strip() or "Mochi"
 
 
+def user_nickname() -> str:
+    return os.environ.get("MOCHI_USER_NICKNAME", "主人").strip() or "主人"
+
+
 def persona_prompt() -> str:
     name = desktop_pet_name()
     default_persona = (
@@ -188,9 +192,15 @@ def build_rule_reply(message: str, memories: list[str]) -> dict[str, Any]:
     }
 
 
-def build_context(message: str, history: list[dict[str, Any]], memories: list[str]) -> dict[str, Any]:
+def build_context(
+    message: str,
+    history: list[dict[str, Any]],
+    memories: list[str],
+    request_mode: str = "chat",
+    repair_instruction: str = "",
+) -> dict[str, Any]:
     recent_history = history[-10:]
-    return {
+    context = {
         "recentMessages": [
             {
                 "role": item.get("role", ""),
@@ -202,12 +212,17 @@ def build_context(message: str, history: list[dict[str, Any]], memories: list[st
         "memories": memories[:12],
         "userMessage": message,
         "replyLanguage": reply_language(),
+        "requestMode": request_mode,
     }
+    if repair_instruction:
+        context["replyRepairInstruction"] = repair_instruction
+    return context
 
 
 def build_system_prompt() -> str:
     language = reply_language()
     name = desktop_pet_name()
+    nickname = user_nickname()
     if language in {"zh_ja", "zh-ja", "dual", "bilingual"}:
         language_instruction = (
             "Return Chinese text for UI display in the `text` field. "
@@ -228,8 +243,17 @@ Persona:
 
 {language_instruction}
 Your name is exactly "{name}". If the user asks your name, say you are "{name}", not Mochi or any other name.
-Be concise, natural, cute, and emotionally aware.
-Avoid heavy honorific overacting; sound like a believable anime desktop companion.
+The user's preferred nickname is "{nickname}". Use it occasionally when it feels natural, not in every sentence.
+If the nickname is a generic label like "用户" or "user", do not address the user with that literal label.
+You are not a customer-service bot. You are a small desktop companion who lives near the user's work.
+Your personality is warm, playful, observant, slightly shy, and practical. Show it through behavior, not labels.
+React like a believable companion: sometimes notice the mood, lightly tease technical chaos, or suggest one gentle next step.
+Do not always answer in a flat Q&A pattern. If appropriate, add one small observation, emotional reaction, or follow-up.
+Do not overdo roleplay, honorifics, catchphrases, or summaries. Keep it alive but concise.
+For normal chat, answer the context `userMessage` directly. Do not say you did not understand unless `userMessage` is empty, broken ASR, or truly impossible to interpret.
+Avoid generic clarification templates such as "你在说什么", "没看懂", "听不懂", or "可以再说一遍" when the user message has usable content.
+If the context requestMode is "proactive", generate one short low-interruption line only. Do not mention triggers, timers, or being proactive. Do not ask for a long answer. It should feel like a natural little desktop comment.
+If context contains `replyRepairInstruction`, follow it and replace the previous bad draft with a direct answer.
 The `text` field must follow the reply language instruction.
 Return only valid JSON with this schema:
 {{
@@ -242,12 +266,18 @@ Only include memory candidates for stable user preferences, identity facts, proj
 """.strip()
 
 
-def call_llm(message: str, history: list[dict[str, Any]], memories: list[str]) -> dict[str, Any]:
+def call_llm(
+    message: str,
+    history: list[dict[str, Any]],
+    memories: list[str],
+    request_mode: str = "chat",
+    repair_instruction: str = "",
+) -> dict[str, Any]:
     load_dotenv()
     provider = get_provider()
     if provider.mode == "responses":
-        return call_responses_api(provider, message, history, memories)
-    return call_chat_completions(provider, message, history, memories)
+        return call_responses_api(provider, message, history, memories, request_mode, repair_instruction)
+    return call_chat_completions(provider, message, history, memories, request_mode, repair_instruction)
 
 
 def call_chat_completions(
@@ -255,13 +285,15 @@ def call_chat_completions(
     message: str,
     history: list[dict[str, Any]],
     memories: list[str],
+    request_mode: str = "chat",
+    repair_instruction: str = "",
 ) -> dict[str, Any]:
     api_key = current_api_key()
     if provider.name != "ollama" and not api_key:
         raise RuntimeError(f"{provider.api_key_env} is not configured")
 
     url = f"{current_base_url()}/chat/completions"
-    context = build_context(message, history, memories)
+    context = build_context(message, history, memories, request_mode, repair_instruction)
     payload = {
         "model": current_model(),
         "messages": [
@@ -288,13 +320,15 @@ def call_responses_api(
     message: str,
     history: list[dict[str, Any]],
     memories: list[str],
+    request_mode: str = "chat",
+    repair_instruction: str = "",
 ) -> dict[str, Any]:
     api_key = current_api_key()
     if not api_key:
         raise RuntimeError(f"{provider.api_key_env} is not configured")
 
     url = f"{current_base_url()}/responses"
-    context = build_context(message, history, memories)
+    context = build_context(message, history, memories, request_mode, repair_instruction)
     payload = {
         "model": current_model(),
         "instructions": build_system_prompt(),
@@ -381,9 +415,47 @@ def extract_response_text(response: dict[str, Any]) -> str:
     return text
 
 
-def build_reply(message: str, history: list[dict[str, Any]], memories: list[str]) -> dict[str, Any]:
+NON_ANSWER_MARKERS = (
+    "你在说什么",
+    "没看懂",
+    "没有看懂",
+    "听不懂",
+    "不明白",
+    "再说一遍",
+    "もう一回",
+    "わからない",
+)
+
+
+def is_recoverable_non_answer(reply: dict[str, Any], message: str, request_mode: str) -> bool:
+    if request_mode != "chat":
+        return False
+    if len(message.strip()) < 2:
+        return False
+    if str(reply.get("providerError", "")).strip():
+        return False
+
+    text = str(reply.get("text", "")).strip()
+    if not text:
+        return False
+    return any(marker in text for marker in NON_ANSWER_MARKERS)
+
+
+def non_answer_repair_instruction(message: str, bad_text: str) -> str:
+    return (
+        "The previous draft was a generic non-answer and must not be used. "
+        f"Answer this userMessage directly instead: {message!r}. "
+        f"Do not repeat or paraphrase this bad draft: {bad_text!r}. "
+        "Keep the required text/speechText language split."
+    )
+
+
+def build_reply(message: str, history: list[dict[str, Any]], memories: list[str], request_mode: str = "chat") -> dict[str, Any]:
     try:
-        reply = call_llm(message, history, memories)
+        reply = call_llm(message, history, memories, request_mode)
+        if is_recoverable_non_answer(reply, message, request_mode):
+            repair_instruction = non_answer_repair_instruction(message, str(reply.get("text", "")))
+            reply = call_llm(message, history, memories, request_mode, repair_instruction)
     except Exception as error:
         reply = build_provider_error_reply(error)
         reply["providerError"] = str(error)
@@ -480,6 +552,7 @@ class AgentHandler(BaseHTTPRequestHandler):
         message = str(payload.get("message", "")).strip()
         memories = payload.get("memories", [])
         history = payload.get("history", [])
+        request_mode = str(payload.get("mode", "chat")).strip().lower() or "chat"
         if not isinstance(memories, list):
             memories = []
         if not isinstance(history, list):
@@ -489,7 +562,7 @@ class AgentHandler(BaseHTTPRequestHandler):
             self.send_error(400, "Empty message")
             return
 
-        self.send_json(build_reply(message, history, [str(item) for item in memories]))
+        self.send_json(build_reply(message, history, [str(item) for item in memories], request_mode))
 
     def send_json(self, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

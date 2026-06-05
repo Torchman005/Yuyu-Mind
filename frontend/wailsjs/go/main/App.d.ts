@@ -4,6 +4,8 @@ import {main} from '../models';
 
 export function ClearChat():Promise<main.AppState>;
 
+export function GenerateProactiveMessage(arg1:string):Promise<main.ChatReply>;
+
 export function GetState():Promise<main.AppState>;
 
 export function ProbeFishLive():Promise<main.FishLiveProbeResult>;

@@ -232,6 +232,12 @@
     cursor: not-allowed;
 }
 
+.ghost-button[aria-pressed="true"] {
+    background: #dff0ec;
+    color: #194f48;
+    border-color: #9bcac0;
+}
+
 .live2d-stage {
     position: relative;
     align-self: end;

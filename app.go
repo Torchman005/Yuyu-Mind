@@ -97,6 +97,7 @@ type agentRequest struct {
 	Message  string    `json:"message"`
 	History  []Message `json:"history"`
 	Memories []string  `json:"memories"`
+	Mode     string    `json:"mode,omitempty"`
 }
 
 type agentResponse struct {
@@ -2086,11 +2087,77 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 	}, nil
 }
 
+func (a *App) GenerateProactiveMessage(trigger string) (ChatReply, error) {
+	if a.db == nil {
+		return ChatReply{}, errors.New("database is not ready")
+	}
+
+	trigger = strings.TrimSpace(trigger)
+	if trigger == "" {
+		trigger = "idle"
+	}
+
+	history, err := a.fetchMessages()
+	if err != nil {
+		return ChatReply{}, err
+	}
+	memories, err := a.fetchMemories()
+	if err != nil {
+		return ChatReply{}, err
+	}
+
+	content := buildProactivePrompt(trigger, history)
+	agentReply, err := a.askAgentWithMode(content, history, memories, "proactive")
+	if err != nil {
+		agentReply = agentResponse{
+			Text:       "我还在这边。刚才有点没连上模型，所以先不打扰你太久。",
+			SpeechText: "まだここにいるよ。さっき少しモデルにつながりにくかったみたいだから、長くは邪魔しないね。",
+			Emotion:    "thinking",
+		}
+		a.agentStatus = "offline"
+		a.provider = "go-fallback"
+		a.providerErr = err.Error()
+	} else {
+		a.agentStatus = "online"
+		a.provider = strings.TrimSpace(agentReply.Provider)
+		a.providerErr = strings.TrimSpace(agentReply.ProviderError)
+		if a.provider == "" {
+			a.provider = "agent"
+		}
+	}
+
+	reply, err := a.saveMessage("assistant", agentReply.Text, normalizedEmotion(agentReply.Emotion))
+	if err != nil {
+		return ChatReply{}, err
+	}
+	a.saveMemoryCandidates(agentReply.MemoryCandidates, reply.ID)
+
+	messages, err := a.fetchMessages()
+	if err != nil {
+		return ChatReply{}, err
+	}
+
+	return ChatReply{
+		Messages:      messages,
+		Reply:         reply,
+		SpeechText:    chooseSpeechText(agentReply, reply.Content),
+		Emotion:       reply.Emotion,
+		AgentStatus:   a.agentStatus,
+		AgentProvider: a.provider,
+		ProviderError: a.providerErr,
+	}, nil
+}
+
 func (a *App) askAgent(content string, history []Message, memories []string) (agentResponse, error) {
+	return a.askAgentWithMode(content, history, memories, "chat")
+}
+
+func (a *App) askAgentWithMode(content string, history []Message, memories []string, mode string) (agentResponse, error) {
 	payload, err := json.Marshal(agentRequest{
 		Message:  content,
 		History:  history,
 		Memories: memories,
+		Mode:     mode,
 	})
 	if err != nil {
 		return agentResponse{}, err
@@ -2114,6 +2181,34 @@ func (a *App) askAgent(content string, history []Message, memories []string) (ag
 		return agentResponse{}, errors.New("agent returned an empty reply")
 	}
 	return reply, nil
+}
+
+func buildProactivePrompt(trigger string, history []Message) string {
+	var recent strings.Builder
+	start := len(history) - 6
+	if start < 0 {
+		start = 0
+	}
+	for _, message := range history[start:] {
+		content := strings.TrimSpace(message.Content)
+		if content == "" {
+			continue
+		}
+		recent.WriteString(message.Role)
+		recent.WriteString(": ")
+		recent.WriteString(content)
+		recent.WriteString("\n")
+	}
+	return fmt.Sprintf(`Generate one short proactive desktop companion line.
+Trigger: %s
+Recent context:
+%s
+Rules:
+- One sentence, or two very short sentences at most.
+- Low interruption. Do not demand an answer.
+- If recent context is technical, gently refer to it.
+- If there is no useful context, simply check in warmly.
+- Do not mention timers, idle detection, triggers, or internal state.`, trigger, strings.TrimSpace(recent.String()))
 }
 
 func (a *App) saveMessage(role string, content string, emotion string) (Message, error) {
