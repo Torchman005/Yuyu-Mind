@@ -5,6 +5,21 @@ type Live2DStageProps = {
     isSpeaking?: boolean;
     mouthLevel?: number;
     petScale?: number;
+    performance?: AvatarPerformance;
+};
+
+export type AvatarPerformance = {
+    key: string;
+    mood: 'calm' | 'cheer' | 'curious' | 'confident' | 'comfort' | 'surprised' | 'playful';
+    energy: number;
+    lean: number;
+    headTilt: number;
+    eyeSmile: number;
+    sparkle: number;
+    blush: number;
+    tears: number;
+    puff: number;
+    hand: 'none' | 'left' | 'right' | 'both';
 };
 
 type RendererStatus = 'ready' | 'fallback' | 'loading';
@@ -22,6 +37,19 @@ type NaturalPresenceState = {
     nextGazeShiftAt: number;
     nextBlinkAt: number;
     blinkUntil: number;
+    gesture: GesturePhrase | null;
+    lastGestureKey: string;
+};
+
+type GestureKind = 'none' | 'bounce' | 'tilt' | 'lean' | 'playfulSway' | 'surprisePop' | 'comfortNod';
+
+type GesturePhrase = {
+    key: string;
+    kind: GestureKind;
+    startedAt: number;
+    duration: number;
+    intensity: number;
+    direction: number;
 };
 
 type AvatarController = {
@@ -208,6 +236,8 @@ function createNaturalPresenceState(): NaturalPresenceState {
         nextGazeShiftAt: 0,
         nextBlinkAt: 1200 + Math.random() * 1800,
         blinkUntil: 0,
+        gesture: null,
+        lastGestureKey: '',
     };
 }
 
@@ -227,14 +257,266 @@ function emotionPresenceOffset(emotion: string) {
     }
 }
 
+const defaultPerformance: AvatarPerformance = {
+    key: 'idle',
+    mood: 'calm',
+    energy: 0.25,
+    lean: 0,
+    headTilt: 0,
+    eyeSmile: 0,
+    sparkle: 0,
+    blush: 0,
+    tears: 0,
+    puff: 0,
+    hand: 'none',
+};
+
+function performanceTargets(performance: AvatarPerformance, emotion: string) {
+    const energy = Math.min(1, Math.max(0, performance.energy));
+    const moodBoost = {
+        calm: {smile: 0.08, brow: 0, mouth: 0.02},
+        cheer: {smile: 0.48, brow: 0.14, mouth: 0.18},
+        curious: {smile: 0.16, brow: 0.28, mouth: 0.05},
+        confident: {smile: 0.28, brow: 0.05, mouth: 0.1},
+        comfort: {smile: 0.24, brow: -0.08, mouth: 0.04},
+        surprised: {smile: 0.02, brow: 0.42, mouth: 0.16},
+        playful: {smile: 0.4, brow: 0.18, mouth: 0.2},
+    }[performance.mood] ?? {smile: 0, brow: 0, mouth: 0};
+
+    return {
+        energy,
+        eyeSmile: Math.max(performance.eyeSmile, moodBoost.smile),
+        browY: moodBoost.brow + (emotion === 'sad' ? -0.2 : 0),
+        mouthForm: moodBoost.mouth,
+        lean: performance.lean,
+        headTilt: performance.headTilt,
+        sparkle: performance.sparkle,
+        blush: performance.blush,
+        tears: performance.tears,
+        puff: performance.puff,
+        hand: performance.hand,
+    };
+}
+
+function clamp01(value: number) {
+    return Math.max(0, Math.min(1, value));
+}
+
+function easeOutBack(t: number) {
+    const c1 = 1.70158;
+    const c3 = c1 + 1;
+    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+}
+
+function easeInOutSine(t: number) {
+    return -(Math.cos(Math.PI * t) - 1) / 2;
+}
+
+function gestureKindForPerformance(performance: AvatarPerformance, emotion: string): GestureKind {
+    if (performance.mood === 'surprised' || emotion === 'surprised') {
+        return 'surprisePop';
+    }
+    if (performance.mood === 'cheer' && performance.energy > 0.55) {
+        return 'bounce';
+    }
+    if (performance.mood === 'playful') {
+        return 'playfulSway';
+    }
+    if (performance.mood === 'curious') {
+        return 'tilt';
+    }
+    if (performance.mood === 'confident') {
+        return 'lean';
+    }
+    if (performance.mood === 'comfort') {
+        return 'comfortNod';
+    }
+    return 'none';
+}
+
+function gestureDuration(kind: GestureKind, energy: number) {
+    switch (kind) {
+        case 'bounce':
+            return 1150 + energy * 260;
+        case 'playfulSway':
+            return 1550 + energy * 320;
+        case 'surprisePop':
+            return 900;
+        case 'tilt':
+            return 1300;
+        case 'lean':
+            return 1450;
+        case 'comfortNod':
+            return 1500;
+        default:
+            return 0;
+    }
+}
+
+function updateGesturePhrase(state: NaturalPresenceState, performance: AvatarPerformance, emotion: string, elapsedMs: number) {
+    const key = `${performance.key}:${performance.mood}:${Math.round(performance.energy * 10)}:${Math.round(performance.headTilt * 10)}:${performance.hand}:${emotion}`;
+    const kind = gestureKindForPerformance(performance, emotion);
+    if (kind !== 'none' && key !== state.lastGestureKey) {
+        state.gesture = {
+            key,
+            kind,
+            startedAt: elapsedMs,
+            duration: gestureDuration(kind, performance.energy),
+            intensity: Math.min(1, Math.max(0.18, performance.energy)),
+            direction: performance.headTilt < 0 ? -1 : 1,
+        };
+        state.lastGestureKey = key;
+        return;
+    }
+    if (state.gesture && elapsedMs - state.gesture.startedAt > state.gesture.duration) {
+        state.gesture = null;
+    }
+}
+
+function gestureValues(state: NaturalPresenceState, elapsedMs: number) {
+    const gesture = state.gesture;
+    if (!gesture) {
+        return {bodyX: 0, bodyY: 0, bodyZ: 0, headX: 0, headY: 0, headZ: 0, eyeX: 0, eyeY: 0, brow: 0};
+    }
+
+    const t = clamp01((elapsedMs - gesture.startedAt) / gesture.duration);
+    const attack = clamp01(t / 0.38);
+    const release = clamp01((t - 0.38) / 0.62);
+    const holdThenReturn = attack < 1 ? easeOutBack(attack) : 1 - easeInOutSine(release);
+    const pulse = Math.sin(Math.PI * t);
+    const doublePulse = Math.sin(Math.PI * t * 2);
+    const i = gesture.intensity;
+    const d = gesture.direction || 1;
+
+    switch (gesture.kind) {
+        case 'bounce':
+            return {
+                bodyX: doublePulse * 2.8 * i,
+                bodyY: -Math.abs(pulse) * 4.2 * i,
+                bodyZ: doublePulse * 4.6 * i,
+                headX: -doublePulse * 1.8 * i,
+                headY: Math.abs(pulse) * 1.8 * i,
+                headZ: -doublePulse * 2.2 * i,
+                eyeX: doublePulse * 0.08 * i,
+                eyeY: 0.04 * i,
+                brow: 0.12 * i,
+            };
+        case 'playfulSway':
+            return {
+                bodyX: Math.sin(Math.PI * t * 2.2) * 5.2 * i * d,
+                bodyY: 0,
+                bodyZ: Math.sin(Math.PI * t * 2.2) * 6.4 * i * d,
+                headX: -Math.sin(Math.PI * t * 2.2) * 2.4 * i * d,
+                headY: 0.6 * i,
+                headZ: -Math.sin(Math.PI * t * 2.2) * 3.8 * i * d,
+                eyeX: Math.sin(Math.PI * t * 2.2) * 0.12 * i * d,
+                eyeY: 0.02,
+                brow: 0.08 * i,
+            };
+        case 'surprisePop':
+            return {
+                bodyX: 0,
+                bodyY: -holdThenReturn * 5.5 * i,
+                bodyZ: -holdThenReturn * 2.4 * d,
+                headX: 0,
+                headY: holdThenReturn * 4.2 * i,
+                headZ: holdThenReturn * 2.2 * d,
+                eyeX: 0.02 * d,
+                eyeY: 0.1 * i,
+                brow: 0.35 * i,
+            };
+        case 'tilt':
+            return {
+                bodyX: holdThenReturn * 1.2 * d,
+                bodyY: 0,
+                bodyZ: holdThenReturn * 3.2 * d,
+                headX: holdThenReturn * 1.4 * d,
+                headY: holdThenReturn * 0.8,
+                headZ: holdThenReturn * 5.4 * d,
+                eyeX: -holdThenReturn * 0.08 * d,
+                eyeY: 0.03,
+                brow: 0.16 * i,
+            };
+        case 'lean':
+            return {
+                bodyX: 0,
+                bodyY: holdThenReturn * 4.5 * i,
+                bodyZ: holdThenReturn * 1.1 * d,
+                headX: 0,
+                headY: holdThenReturn * -1.5 * i,
+                headZ: -holdThenReturn * 0.8 * d,
+                eyeX: 0,
+                eyeY: -0.035 * i,
+                brow: 0.04,
+            };
+        case 'comfortNod':
+            return {
+                bodyX: 0,
+                bodyY: Math.sin(Math.PI * t * 2) * 1.6 * i,
+                bodyZ: 0.8 * d * holdThenReturn,
+                headX: 0,
+                headY: -Math.sin(Math.PI * t * 2) * 2.8 * i,
+                headZ: -0.8 * d * holdThenReturn,
+                eyeX: 0,
+                eyeY: -0.02,
+                brow: -0.08 * i,
+            };
+        default:
+            return {bodyX: 0, bodyY: 0, bodyZ: 0, headX: 0, headY: 0, headZ: 0, eyeX: 0, eyeY: 0, brow: 0};
+    }
+}
+
+function setPairedParameter(model: any, left: string, right: string, value: number, weight = 1) {
+    setModelParameter(model, left, value, weight);
+    setModelParameter(model, right, value, weight);
+}
+
+function applyPerformancePresence(
+    model: any,
+    performance: AvatarPerformance,
+    emotion: string,
+    isSpeaking: boolean,
+    elapsedMs: number,
+    gesture: ReturnType<typeof gestureValues>,
+) {
+    const target = performanceTargets(performance, emotion);
+    const speechPulse = isSpeaking ? Math.max(0, Math.sin(elapsedMs / 240)) * target.energy : 0;
+    const idlePulse = Math.sin(elapsedMs / 1550) * 0.5 + 0.5;
+
+    setPairedParameter(model, 'ParamEyeSmileL', 'ParamEyeSmileR', target.eyeSmile + speechPulse * 0.18, 0.22);
+    setPairedParameter(model, 'ParamBrowYL', 'ParamBrowYR', target.browY + gesture.brow + speechPulse * 0.12, 0.2);
+    setPairedParameter(model, 'ParamBrowAngleL', 'ParamBrowAngleR', target.headTilt * 0.18, 0.18);
+    setPairedParameter(model, 'ParamBrowFormL', 'ParamBrowFormR', target.browY * 0.45, 0.18);
+
+    setModelParameter(model, 'ParamMouthForm', target.mouthForm + target.eyeSmile * 0.18, 0.16);
+    setModelParameter(model, 'ParamMouthShrug', performance.mood === 'playful' ? 0.3 + idlePulse * 0.18 : 0, 0.12);
+    setModelParameter(model, 'ParamMouthpucker', performance.mood === 'curious' ? 0.16 + speechPulse * 0.1 : 0, 0.12);
+
+    setModelParameter(model, 'Paramxingxing', target.sparkle, 0.22);
+    setModelParameter(model, 'Paramheart', target.blush > 0.7 ? target.blush : 0, 0.18);
+    setModelParameter(model, 'Paramtear', target.tears, 0.2);
+    setModelParameter(model, 'Paramleiwangwang', target.tears * 0.8, 0.2);
+    setModelParameter(model, 'ParamCheekpuff', target.puff, 0.18);
+    setModelParameter(model, 'Paramxiaogou', performance.mood === 'playful' ? 0.7 : 0, 0.08);
+
+    const liftLeft = target.hand === 'left' || target.hand === 'both';
+    const liftRight = target.hand === 'right' || target.hand === 'both';
+    setModelParameter(model, 'ParamarmupL', liftLeft ? 1 : 0, 0.35);
+    setModelParameter(model, 'ParamarmupR', liftRight ? 1 : 0, 0.35);
+}
+
 function applyNaturalPresence(
     model: any,
     state: NaturalPresenceState,
     isSpeaking: boolean,
     mouthLevel: number,
     emotion: string,
+    performance: AvatarPerformance,
     elapsedMs: number,
 ) {
+    updateGesturePhrase(state, performance, emotion, elapsedMs);
+    const gesture = gestureValues(state, elapsedMs);
+
     if (elapsedMs >= state.nextGazeShiftAt) {
         state.targetX = (Math.random() - 0.5) * 0.18;
         state.targetY = 0.02 + (Math.random() - 0.5) * 0.1;
@@ -245,22 +527,26 @@ function applyNaturalPresence(
     state.gazeX += (state.targetX + offset.x - state.gazeX) * 0.025;
     state.gazeY += (state.targetY + offset.y - state.gazeY) * 0.025;
 
-    const microX = Math.sin(elapsedMs / 1850) * 0.012 + Math.sin(elapsedMs / 4300) * 0.008;
-    const microY = Math.sin(elapsedMs / 2600) * 0.01;
+    const targets = performanceTargets(performance, emotion);
+    const microX = Math.sin(elapsedMs / 1850) * (0.012 + targets.energy * 0.01) + Math.sin(elapsedMs / 4300) * 0.008;
+    const microY = Math.sin(elapsedMs / 2600) * (0.01 + targets.energy * 0.008);
     const activeSpeech = isSpeaking && mouthLevel > 0.015;
     const talkBob = activeSpeech ? Math.sin(elapsedMs / 190) * Math.min(1, mouthLevel * 2.4) : 0;
-    const lookX = state.gazeX + microX;
-    const lookY = state.gazeY + microY;
+    const lookX = state.gazeX + microX + gesture.eyeX;
+    const lookY = state.gazeY + microY + gesture.eyeY;
 
     setModelParameter(model, 'ParamEyeBallX', lookX, 0.72);
     setModelParameter(model, 'ParamEyeBallY', lookY, 0.72);
     setModelParameter(model, 'ParamhitomiX', lookX, 0.72);
     setModelParameter(model, 'ParamhitomiY', lookY, 0.72);
-    setModelParameter(model, 'ParamAngleX', lookX * 12 + talkBob * 0.55, 0.58);
-    setModelParameter(model, 'ParamAngleY', lookY * 9 + (activeSpeech ? Math.sin(elapsedMs / 310) * 0.35 : 0), 0.58);
-    setModelParameter(model, 'ParamAngleZ', Math.sin(elapsedMs / 3400) * 0.45 + (activeSpeech ? Math.sin(elapsedMs / 480) * 0.25 : 0), 0.45);
-    setModelParameter(model, 'ParamBodyAngleX', lookX * 2.2, 0.25);
+    setModelParameter(model, 'ParamAngleX', lookX * 12 + gesture.headX + talkBob * 0.55, 0.58);
+    setModelParameter(model, 'ParamAngleY', lookY * 9 + gesture.headY + (activeSpeech ? Math.sin(elapsedMs / 310) * 0.35 : 0), 0.58);
+    setModelParameter(model, 'ParamAngleZ', Math.sin(elapsedMs / 3400) * 0.45 + targets.headTilt * 4 + gesture.headZ + (activeSpeech ? Math.sin(elapsedMs / 480) * 0.25 : 0), 0.45);
+    setModelParameter(model, 'ParamBodyAngleX', lookX * 2.2 + gesture.bodyX, 0.25);
+    setModelParameter(model, 'ParamBodyAngleY', targets.lean * 4 + gesture.bodyY + Math.sin(elapsedMs / 2200) * targets.energy * 1.4, 0.2);
+    setModelParameter(model, 'ParamBodyAngleZ', targets.headTilt * 4 + gesture.bodyZ + Math.sin(elapsedMs / 1800) * targets.energy * 1.1, 0.2);
     setModelParameter(model, 'ParamMouthForm', offset.mouth + (activeSpeech ? 0.08 : 0), 0.22);
+    applyPerformancePresence(model, performance, emotion, isSpeaking, elapsedMs, gesture);
 
     if (elapsedMs >= state.nextBlinkAt) {
         state.blinkUntil = elapsedMs + 125;
@@ -269,6 +555,8 @@ function applyNaturalPresence(
     const blinkProgress = state.blinkUntil > elapsedMs ? 1 - (state.blinkUntil - elapsedMs) / 125 : 1;
     const blinkAmount = state.blinkUntil > elapsedMs ? Math.sin(Math.PI * blinkProgress) : 0;
     const eyeOpen = Math.max(0.08, 1 - blinkAmount * 0.92);
+    setModelParameter(model, 'ParamEyeOpenL', eyeOpen, 0.72);
+    setModelParameter(model, 'ParamEyeOpenR', eyeOpen, 0.72);
     setModelParameter(model, 'ParamEyeLOpen', eyeOpen, 0.72);
     setModelParameter(model, 'ParamEyeROpen', eyeOpen, 0.72);
 }
@@ -313,7 +601,7 @@ function initialStatusText() {
     return `Loading ${avatarRenderer}`;
 }
 
-export function Live2DStage({emotion, isSpeaking = false, mouthLevel = 0, petScale = 1}: Live2DStageProps) {
+export function Live2DStage({emotion, isSpeaking = false, mouthLevel = 0, petScale = 1, performance}: Live2DStageProps) {
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const appRef = useRef<any>(null);
@@ -324,6 +612,7 @@ export function Live2DStage({emotion, isSpeaking = false, mouthLevel = 0, petSca
     const emotionRef = useRef(emotion);
     const isSpeakingRef = useRef(isSpeaking);
     const mouthLevelRef = useRef(mouthLevel);
+    const performanceRef = useRef<AvatarPerformance>(defaultPerformance);
     const [status, setStatus] = useState<RendererStatus>(avatarRenderer === 'css' ? 'fallback' : 'loading');
     const [statusText, setStatusText] = useState(initialStatusText);
     const [debugInfo, setDebugInfo] = useState<DebugInfo>({
@@ -383,6 +672,10 @@ export function Live2DStage({emotion, isSpeaking = false, mouthLevel = 0, petSca
     useEffect(() => {
         mouthLevelRef.current = mouthLevel;
     }, [mouthLevel]);
+
+    useEffect(() => {
+        performanceRef.current = performance ?? defaultPerformance;
+    }, [performance]);
 
     useEffect(() => {
         const bootId = bootIdRef.current + 1;
@@ -580,7 +873,15 @@ export function Live2DStage({emotion, isSpeaking = false, mouthLevel = 0, petSca
             const presenceState = createNaturalPresenceState();
             app.ticker.add((delta: number) => {
                 elapsedMs += app.ticker.deltaMS || delta * 16.67;
-                applyNaturalPresence(model, presenceState, isSpeakingRef.current, mouthLevelRef.current, emotionRef.current, elapsedMs);
+                applyNaturalPresence(
+                    model,
+                    presenceState,
+                    isSpeakingRef.current,
+                    mouthLevelRef.current,
+                    emotionRef.current,
+                    performanceRef.current,
+                    elapsedMs,
+                );
                 applyLipSync(model, isSpeakingRef.current, mouthLevelRef.current, elapsedMs);
             });
             syncCanvasDisplaySize(canvasRef.current, containerRef.current);

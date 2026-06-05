@@ -19,7 +19,7 @@ import {
     WindowSetBackgroundColour,
     WindowSetSize,
 } from '../wailsjs/runtime/runtime';
-import {Live2DStage} from './components/Live2DStage';
+import {AvatarPerformance, Live2DStage} from './components/Live2DStage';
 
 type Message = {
     id: number;
@@ -180,6 +180,59 @@ function textSimilarity(left: string, right: string) {
     return matches / Math.max(a.length, b.length);
 }
 
+function inferAvatarPerformance(text: string, emotion: string, isSpeaking: boolean): AvatarPerformance {
+    const line = text.trim();
+    const lower = line.toLowerCase();
+    const hasQuestion = /[?？]|\bwhy\b|\bhow\b|为什么|怎么|如何|什么/.test(lower);
+    const hasExcitement = /[!！]{1,}|太好了|好耶|厉害|不错|开心|喜欢|かわいい|すごい/.test(lower);
+    const hasComfort = /没事|别急|慢慢|辛苦|抱抱|安心|大丈夫|そばに/.test(lower);
+    const hasTechnical = /代码|报错|配置|接口|模型|延迟|tts|api|bug|日志|构建|测试/i.test(line);
+    const hasPlayful = /嘿|哼|欸|诶|嘛|呀|哦|ふふ|えへ|にゃ|喵|～|~/.test(line);
+    const hasSad = /抱歉|难过|低落|失败|崩|痛|泪|ごめん|かなしい/.test(lower);
+    const hasSurprise = /欸|诶|哇|竟然|真的|突然|surprise|えっ|びっくり/.test(lower);
+
+    let mood: AvatarPerformance['mood'] = 'calm';
+    if (emotion === 'surprised' || hasSurprise) {
+        mood = 'surprised';
+    } else if (emotion === 'happy' || hasExcitement) {
+        mood = 'cheer';
+    } else if (hasComfort || emotion === 'sad') {
+        mood = 'comfort';
+    } else if (hasQuestion || emotion === 'thinking') {
+        mood = 'curious';
+    } else if (hasTechnical || emotion === 'focused') {
+        mood = 'confident';
+    } else if (hasPlayful) {
+        mood = 'playful';
+    }
+
+    const energyBase = isSpeaking ? 0.42 : 0.2;
+    const energy = clamp(
+        energyBase +
+        (hasExcitement ? 0.22 : 0) +
+        (hasPlayful ? 0.16 : 0) +
+        (hasTechnical ? 0.08 : 0) +
+        (hasSad ? -0.08 : 0),
+        0.12,
+        0.92,
+    );
+    const tiltSeed = ((line.length % 7) - 3) / 3;
+
+    return {
+        key: `${line.slice(0, 18)}:${line.length}:${emotion}`,
+        mood,
+        energy,
+        lean: hasTechnical ? 0.32 : hasComfort ? -0.12 : hasPlayful ? 0.22 : 0,
+        headTilt: mood === 'curious' ? 0.42 : mood === 'playful' ? tiltSeed * 0.34 : mood === 'surprised' ? -0.18 : tiltSeed * 0.12,
+        eyeSmile: mood === 'cheer' || mood === 'playful' ? 0.55 : mood === 'comfort' ? 0.25 : 0.08,
+        sparkle: mood === 'cheer' || hasExcitement ? 0.8 : 0,
+        blush: mood === 'cheer' || mood === 'playful' ? 0.35 : 0,
+        tears: hasSad ? 0.55 : 0,
+        puff: mood === 'playful' && /哼|不嘛|才不|む/.test(lower) ? 0.45 : 0,
+        hand: hasExcitement ? 'left' : hasTechnical ? 'right' : hasComfort ? 'left' : 'none',
+    };
+}
+
 function App() {
     const [messages, setMessages] = useState<Message[]>([]);
     const [draft, setDraft] = useState('');
@@ -222,6 +275,10 @@ function App() {
         const last = [...messages].reverse().find((message) => message.role === 'assistant');
         return last?.content ?? `你好，我是 ${DESKTOP_PET_NAME}。现在可以通过文字聊天和你互动。`;
     }, [isSending, messages, voiceStatus]);
+    const avatarPerformance = useMemo(
+        () => inferAvatarPerformance(assistantLine, emotion, voiceStatus === 'speaking'),
+        [assistantLine, emotion, voiceStatus],
+    );
 
     useEffect(() => {
         GetState()
@@ -1296,7 +1353,13 @@ function App() {
                     </div>
                 )}
 
-                <Live2DStage emotion={emotion} isSpeaking={voiceStatus === 'speaking'} mouthLevel={mouthLevel} petScale={petScale}/>
+                <Live2DStage
+                    emotion={emotion}
+                    isSpeaking={voiceStatus === 'speaking'}
+                    mouthLevel={mouthLevel}
+                    petScale={petScale}
+                    performance={avatarPerformance}
+                />
 
                 {SHOW_SPEECH_DEBUG && speechMetrics.length > 0 && (
                     <div className="speech-metrics" aria-label="Speech timing log">
