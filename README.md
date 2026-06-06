@@ -1,56 +1,36 @@
-# MochiAI
+# Yuyu-Mind
 
-## 简介 / Overview
+Yuyu-Mind 是一个基于 Wails + React + Python Agent 的桌面智能体 / 桌宠助手项目。它围绕 Live2D 桌宠、语音对话、长期记忆、多模型接入和插件扩展构建，目标是让桌宠更像一个能陪伴、能观察、能协助工作的常驻伙伴。
 
-MochiAI 是一个基于 Wails + React + Python Agent 的桌面智能体女友 / 桌面助手 MVP。当前阶段聚焦文字聊天、角色舞台、情绪状态、本地记忆、多模型厂商接入和可插拔 Avatar 渲染。
+Yuyu-Mind is a Wails + React + Python Agent desktop companion. It focuses on Live2D desktop pet interaction, voice chat, memory, multi-provider LLM support, and a lightweight plugin framework.
 
-MochiAI is a Wails + React + Python Agent desktop companion / assistant MVP. This milestone focuses on text chat, a character stage, emotion states, local memory, multi-provider model support, and pluggable avatar rendering.
+## 功能
 
-当前已支持：
+- 桌面聊天界面与桌宠模式
+- Live2D Avatar 渲染，支持桌宠缩放、拖动和透明点击穿透
+- SQLite 持久化聊天记录与简单记忆候选
+- Python Agent 负责回复生成、情绪选择和记忆候选
+- DeepSeek / OpenAI / OpenRouter / Ollama 多模型厂商配置
+- Fish Audio / GPT-SoVITS 等 TTS 路径
+- 连续语音模式，包含噪声过滤、音量阈值门控和打断对话
+- 插件框架，具体插件可放在独立插件仓库中维护
 
-Current features:
+## 运行
 
-- 桌面聊天界面  
-  Desktop chat UI
-- SQLite 持久化聊天记录和简单记忆候选  
-  SQLite persistence for chat history and simple memory candidates
-- Python Agent 负责回复生成、情绪选择和记忆候选  
-  Python Agent service for reply generation, emotion selection, and memory candidates
-- DeepSeek / OpenAI / OpenRouter / Ollama 多模型厂商配置  
-  DeepSeek / OpenAI / OpenRouter / Ollama model provider configuration
-- 可插拔 Avatar 渲染：CSS fallback、legacy Pixi Live2D、Cubism 5 bridge  
-  Pluggable avatar rendering: CSS fallback, legacy Pixi Live2D, and Cubism 5 bridge
-
-## 运行 / Run
-
-首次运行建议先创建当前项目自己的 Python 虚拟环境，并安装 Agent/TTS 依赖：
-
-For the first run, create a Python virtual environment inside this project and install the Agent/TTS dependencies:
+首次运行建议创建项目自己的 Python 虚拟环境，并安装 Agent/TTS 依赖：
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-`requirements.txt` 只包含当前 Python Agent 和 Fish Audio TTS 需要的基础依赖。参考项目 `Mochi-AI` 里还有本地 ASR、麦克风录音、本地 TTS、GUI 等依赖；这些已单独放在 `requirements-voice.txt`，等实现本地语音流水线时再安装：
-
-`requirements.txt` only includes the dependencies needed by the current Python Agent and Fish Audio TTS path. The reference `Mochi-AI` project also includes local ASR, microphone capture, local TTS, GUI, and other dependencies; those optional voice-pipeline dependencies are listed separately in `requirements-voice.txt` and should be installed when those features are implemented:
-
-```powershell
-.\.venv\Scripts\python.exe -m pip install -r requirements-voice.txt
-```
-
-然后启动 Wails：
-
-Then start Wails:
+启动前端和桌面应用：
 
 ```powershell
 wails dev
 ```
 
-Go 桌面进程会尝试自动从 `agent/main.py` 启动 Python Agent。你也可以手动启动：
-
-The Go desktop process will try to start the Python Agent automatically from `agent/main.py`. You can also run it manually:
+如果需要单独启动 Python Agent：
 
 ```powershell
 .\.venv\Scripts\python.exe agent/main.py
@@ -58,17 +38,13 @@ The Go desktop process will try to start the Python Agent automatically from `ag
 
 Agent 默认监听：
 
-The Agent listens on:
-
 ```text
 http://127.0.0.1:8765
 ```
 
-## 模型 API 配置 / Model API Setup
+## 配置
 
-应用不配置 API Key 也可以运行，此时会使用本地规则兜底回复。默认 provider 是 DeepSeek。要启用真实模型回复，复制 `.env.example` 为 `.env`，然后填入对应厂商的 Key：
-
-The app works without an API key by using the local rule-based fallback. The default provider is DeepSeek. To enable real model replies, copy `.env.example` to `.env` and fill in the key for your selected provider:
+复制示例配置：
 
 ```powershell
 Copy-Item .env.example .env
@@ -76,68 +52,65 @@ Copy-Item .env.example .env
 
 DeepSeek 示例：
 
-DeepSeek example:
-
-```text
+```env
 LLM_PROVIDER=deepseek
 DEEPSEEK_API_KEY=your_deepseek_api_key_here
-DEEPSEEK_MODEL=deepseek-chat
+DEEPSEEK_MODEL=deepseek-v4-flash
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_THINKING=disabled
 ```
 
-切换 provider 只需要改 `LLM_PROVIDER` 和对应配置。
-
-To switch providers, update `LLM_PROVIDER` and the matching provider settings.
-
 支持的 provider：
-
-Supported providers:
 
 - `deepseek`
 - `openai`
 - `openrouter`
 - `ollama`
 
-## 人设与回复语言 / Persona and Reply Language
+## 人设与回复语言
 
-Mochi 默认是可爱的二次元桌面伙伴。默认模式是界面显示中文，语音朗读日语：Agent 会返回 `text` 作为中文 UI 文本，同时返回 `speechText` 作为日语 TTS 文本。
+默认桌宠名是 `Yuyu`。界面默认显示中文，语音默认可配置为日语 TTS 文本：
 
-Mochi is a cute anime-style desktop companion by default. The default mode displays Chinese in the UI and speaks Japanese: the Agent returns `text` for Chinese UI text and `speechText` for Japanese TTS text.
-
-```text
-MOCHI_REPLY_LANGUAGE=zh_ja
-MOCHI_PERSONA=Mochi is a cute anime-style desktop companion. She is warm, playful, slightly shy, loyal, and practical. She talks like a gentle Japanese anime assistant, with natural charm but not exaggerated roleplay. She can help with coding and desktop tasks while keeping a soft companion tone.
+```env
+YUYU_REPLY_LANGUAGE=zh_ja
+YUYU_DESKTOP_PET_NAME=Yuyu
+VITE_YUYU_DESKTOP_PET_NAME=Yuyu
+YUYU_USER_NICKNAME=主人
+YUYU_PERSONA=Yuyu is a cute anime-style desktop companion. She is warm, playful, slightly shy, loyal, and practical. She talks like a gentle Japanese anime assistant, with natural charm but not exaggerated roleplay. She can help with coding and desktop tasks while keeping a soft companion tone.
 ```
 
-如果想让界面和语音都用日语，可以把 `MOCHI_REPLY_LANGUAGE` 改成 `ja`。如果想临时回到跟随用户语言回复，可以改成 `auto`，并按需要改写 `MOCHI_PERSONA`。
+如果想让界面和语音都用日语，可以设置：
 
-To make both UI and voice Japanese, set `MOCHI_REPLY_LANGUAGE` to `ja`. To temporarily reply in the user's language, set it to `auto` and adjust `MOCHI_PERSONA` as needed.
+```env
+YUYU_REPLY_LANGUAGE=ja
+```
 
-## Fish Audio TTS 配置 / Fish Audio TTS Setup
+如果想跟随用户语言回复，可以设置：
 
-语音回复使用 Fish Audio。Key 只应写入本地 `.env`，不要提交到仓库：
+```env
+YUYU_REPLY_LANGUAGE=auto
+```
 
-Voice replies use Fish Audio. Keep the key in your local `.env` only, and do not commit it:
+旧的 `MOCHI_*` 环境变量仍然兼容，但新配置建议使用 `YUYU_*`。
 
-```text
+## Fish Audio TTS
+
+Fish Audio 配置示例：
+
+```env
+TTS_PROVIDER=fish
+TTS_TIMEOUT_SECONDS=12
 FISH_AUDIO_API_KEY=your_fish_audio_api_key_here
 FISH_AUDIO_REFERENCE_ID=your_cloned_voice_reference_id_here
 FISH_AUDIO_MODEL=s2-pro
 FISH_AUDIO_TTS_URL=https://api.fish.audio/v1/tts
-FISH_AUDIO_PYTHON_PATH=
 FISH_AUDIO_PROXY=
 FISH_AUDIO_AUTO_PROXY=false
 ```
 
-应用会通过 Go 后端调用 `agent/tts_fish.py`，再由 Python 请求 Fish Audio 并把音频交给前端播放。默认会优先使用当前项目的 `.venv\Scripts\python.exe`；如果你需要指定其它 Python，可填写 `FISH_AUDIO_PYTHON_PATH`。`FISH_AUDIO_PROXY` 可显式设置代理，例如 `http://127.0.0.1:7890`；如果想强制直连，可设为 `direct`。默认不盲扫本地端口，只有 `FISH_AUDIO_AUTO_PROXY=true` 时才会尝试常见本地代理端口。如果 TTS 失败，前端会临时回退到系统朗读。
+Fish Audio live / streaming 语音路径：
 
-The app asks the Go backend to run `agent/tts_fish.py`; Python then calls Fish Audio and passes the generated audio back to the frontend. By default, it prefers this project's `.venv\Scripts\python.exe`; set `FISH_AUDIO_PYTHON_PATH` only when you need a custom Python executable. `FISH_AUDIO_PROXY` can explicitly set a proxy, for example `http://127.0.0.1:7890`; set it to `direct` to force direct access. The script does not blindly scan local ports by default; it only tries common local proxy ports when `FISH_AUDIO_AUTO_PROXY=true`. If TTS fails, the frontend temporarily falls back to system speech synthesis.
-
-For Fish Audio live TTS, keep the frontend in cloud streaming mode:
-
-```text
-TTS_PROVIDER=fish
+```env
 VITE_SPEECH_OUTPUT_MODE=cloud
 VITE_ENABLE_STREAMING_TTS=true
 VITE_REALTIME_SPEECH=true
@@ -146,110 +119,108 @@ FISH_AUDIO_STREAM_CHUNK_LENGTH=300
 FISH_AUDIO_END_SILENCE_SECONDS=2
 ```
 
-Set `VITE_SHOW_SPEECH_DEBUG=true` in `frontend/.env` to show the speech timing panel and the Fish live probe button.
+调试语音耗时面板：
 
-## GPT-SoVITS TTS / Local Voice Clone
+```env
+VITE_SHOW_SPEECH_DEBUG=true
+```
 
-MochiAI also supports GPT-SoVITS through a local HTTP API. Set `TTS_PROVIDER=gpt-sovits`, start the GPT-SoVITS `api_v2.py` server, and point `GPT_SOVITS_URL` to its `/tts` endpoint.
+## 连续语音与噪声门控
 
-```text
+连续语音模式会在桌宠说完后自动重新等待用户说话。为了避免环境杂音被当成输入，前端支持音量阈值门控：
+
+```env
+VITE_VOICE_GATE_ENABLED=true
+VITE_VOICE_GATE_THRESHOLD=0.035
+VITE_VOICE_GATE_HOLD_MS=160
+VITE_VOICE_GATE_TIMEOUT_MS=12000
+```
+
+如果杂音仍会触发识别，可以提高 `VITE_VOICE_GATE_THRESHOLD`，例如 `0.045`。如果你正常说话不容易触发，可以降低到 `0.025` 或 `0.03`。
+
+## GPT-SoVITS
+
+Yuyu-Mind 支持通过本地 GPT-SoVITS API 进行语音克隆。先启动 GPT-SoVITS API：
+
+```powershell
+python api_v2.py -a 127.0.0.1 -p 9880 -c GPT_SoVITS/configs/tts_infer.yaml
+```
+
+然后配置：
+
+```env
 TTS_PROVIDER=gpt-sovits
 GPT_SOVITS_URL=http://127.0.0.1:9880/tts
 GPT_SOVITS_API_STYLE=v2
+GPT_SOVITS_MEDIA_TYPE=wav
 GPT_SOVITS_REF_AUDIO_PATH=D:\voices\yuyu_ref.wav
 GPT_SOVITS_PROMPT_TEXT=这里填写参考音频里真实说出的原文
 GPT_SOVITS_PROMPT_LANG=zh
 GPT_SOVITS_TEXT_LANG=zh
 ```
 
-Full setup notes are in `docs/gpt-sovits-tts.md`.
-
-## Avatar / Live2D 配置
-
-前端 Avatar 渲染由 `frontend/.env` 控制。复制模板：
-
-Avatar rendering is controlled by `frontend/.env`. Copy the template:
-
-```powershell
-Copy-Item frontend/.env.example frontend/.env
-```
-
-### CSS fallback
-
-默认模式是 CSS fallback，稳定且不依赖 Live2D runtime：
-
-The default mode is CSS fallback. It is stable and does not require a Live2D runtime:
+更完整的配置说明见：
 
 ```text
+docs/gpt-sovits-tts.md
+```
+
+## Live2D
+
+Avatar 渲染由前端环境变量控制：
+
+```env
 VITE_AVATAR_RENDERER=css
 ```
 
-### Cubism 5 bridge
+Cubism 5 bridge 示例：
 
-Cubism 5 不再使用 `pixi-live2d-display` 直接加载。请使用 Live2D 官方 Cubism SDK for Web 构建一个 renderer bridge，并让它暴露：
-
-Cubism 5 is no longer loaded directly through `pixi-live2d-display`. Use the official Live2D Cubism SDK for Web to build a renderer bridge that exposes:
-
-```ts
-window.MochiCubism5Renderer = {
-  async create({ canvas, modelUrl, emotion }) {
-    return {
-      setEmotion(emotion) {},
-      resize() {},
-      destroy() {}
-    }
-  }
-}
-```
-
-然后配置：
-
-Then configure:
-
-```text
+```env
 VITE_AVATAR_RENDERER=cubism5
 VITE_LIVE2D_MODEL_URL=/models/yumi/yumi.model3.json
 VITE_CUBISM5_CORE_URL=/live2d/cubism5/live2dcubismcore.min.js
 VITE_CUBISM5_RENDERER_URL=/live2d/cubism5/mochi-cubism5-renderer.js
 ```
 
-文件放置建议：
+`MochiCubism5Renderer` 和 `mochi-cubism5-renderer.js` 是历史桥接命名，当前仍保留以兼容已有 Live2D 渲染文件。
 
-Recommended file layout:
+## 插件
 
-```text
-frontend/public/models/yumi/yumi.model3.json
-frontend/public/live2d/cubism5/live2dcubismcore.min.js
-frontend/public/live2d/cubism5/mochi-cubism5-renderer.js
-```
-
-### Legacy Pixi Live2D
-
-旧的 Pixi 渲染器只建议用于 Cubism 3/4 模型：
-
-The legacy Pixi renderer is only recommended for Cubism 3/4 models:
+主仓库只保留插件框架入口：
 
 ```text
-VITE_AVATAR_RENDERER=legacy-pixi
-VITE_LIVE2D_MODEL_URL=/models/yumi/yumi.model3.json
-VITE_LIVE2D_CUBISM_CORE_URL=/live2d/legacy/live2dcubismcore.min.js
+agent/plugins/__init__.py
 ```
 
-## 构建 / Build
+具体插件建议放在独立仓库中维护，再复制或安装到：
+
+```text
+agent/plugins/<plugin-name>/
+```
+
+插件 manifest 支持新的协议版本：
+
+```json
+{
+  "schemaVersion": "yuyu.plugin.v1"
+}
+```
+
+旧的 `mochi.plugin.v1` 仍然兼容。
+
+## 构建
 
 ```powershell
 wails build
 ```
 
-构建产物路径：
-
-Build output:
+构建产物：
 
 ```text
-build/bin/MochiAI.exe
+build/bin/Yuyu-Mind.exe
 ```
 
-## 当前架构 / Current Architecture
+## 当前架构
 
 ```text
 Go / Wails
@@ -257,24 +228,21 @@ Go / Wails
   main.go             desktop process and frontend binding
 
 React Frontend
-  src/App.tsx
-  src/components/Live2DStage.tsx
-  src/App.css
+  frontend/src/App.tsx
+  frontend/src/components/Live2DStage.tsx
+  frontend/src/App.css
 
 Python Agent
   agent/main.py       stdlib HTTP service, provider registry, local fallback
+  agent/plugins/      plugin framework entry and external plugins
 
 Storage
-  data/mochi.db       created at runtime
+  data/yuyu-mind.db   created at runtime
+  data/mochi.db       legacy database path, still read when present
 ```
 
-## 下一步 / Next Milestones
+## 备注
 
-1. 实现官方 Cubism 5 renderer bridge。  
-   Implement the official Cubism 5 renderer bridge.
-2. 添加 TTS 语音播放，再接入流式 ASR/VAD。  
-   Add TTS playback, then streaming ASR/VAD.
-3. 将简单 SQLite 记忆扩展为用户档案、偏好、事件、语义和向量检索记忆。  
-   Expand memory into profile, preference, episodic, semantic, and vector-retrieved memory.
-4. 在明确权限提示下接入屏幕读取、浏览器和代码插件。  
-   Add screen reading and browser/code plugins behind explicit permission prompts.
+- `.env`、`frontend/.env` 和任何 API Key 不要提交到仓库。
+- 具体读屏插件、视觉插件等可以单独拆到插件仓库。
+- 如果旧配置里仍有 `MOCHI_*`，应用会继续读取；新配置建议逐步迁移到 `YUYU_*`。

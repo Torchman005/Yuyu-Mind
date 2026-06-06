@@ -1,16 +1,16 @@
 export namespace main {
-	
+
 	export class Message {
 	    id: number;
 	    role: string;
 	    content: string;
 	    emotion: string;
 	    createdAt: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new Message(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -26,11 +26,11 @@ export namespace main {
 	    agentStatus: string;
 	    agentProvider: string;
 	    providerError: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new AppState(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.messages = this.convertValues(source["messages"], Message);
@@ -39,7 +39,7 @@ export namespace main {
 	        this.agentProvider = source["agentProvider"];
 	        this.providerError = source["providerError"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -66,11 +66,11 @@ export namespace main {
 	    agentStatus: string;
 	    agentProvider: string;
 	    providerError: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new ChatReply(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.messages = this.convertValues(source["messages"], Message);
@@ -81,7 +81,7 @@ export namespace main {
 	        this.agentProvider = source["agentProvider"];
 	        this.providerError = source["providerError"];
 	    }
-	
+
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
 		    if (!a) {
 		        return a;
@@ -106,11 +106,11 @@ export namespace main {
 	    events: string[];
 	    elapsedMs: number;
 	    audioSize: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new FishLiveProbeResult(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.ok = source["ok"];
@@ -120,7 +120,7 @@ export namespace main {
 	        this.audioSize = source["audioSize"];
 	    }
 	}
-	
+
 	export class PetHitTestState {
 	    enabled: boolean;
 	    controlsOpen: boolean;
@@ -128,11 +128,11 @@ export namespace main {
 	    y: number;
 	    width: number;
 	    height: number;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new PetHitTestState(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
@@ -217,11 +217,11 @@ export namespace main {
 	    audioBase64: string;
 	    contentType: string;
 	    provider: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SpeechReply(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.audioBase64 = source["audioBase64"];
@@ -233,11 +233,11 @@ export namespace main {
 	    sessionId: string;
 	    contentType: string;
 	    provider: string;
-	
+
 	    static createFrom(source: any = {}) {
 	        return new SpeechStreamStart(source);
 	    }
-	
+
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.sessionId = source["sessionId"];

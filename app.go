@@ -177,7 +177,7 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	loadDotenv()
-	if value := strings.TrimSpace(os.Getenv("MOCHI_AGENT_URL")); value != "" {
+	if value := envFirst("YUYU_AGENT_URL", "MOCHI_AGENT_URL"); value != "" {
 		a.agentURL = strings.TrimRight(value, "/")
 	}
 	if err := a.openDatabase(); err != nil {
@@ -238,7 +238,14 @@ func (a *App) openDatabase() error {
 		return err
 	}
 
-	db, err := sql.Open("sqlite", filepath.Join("data", "mochi.db"))
+	dbPath := filepath.Join("data", "yuyu-mind.db")
+	legacyPath := filepath.Join("data", "mochi.db")
+	if _, err := os.Stat(dbPath); errors.Is(err, os.ErrNotExist) {
+		if _, legacyErr := os.Stat(legacyPath); legacyErr == nil {
+			dbPath = legacyPath
+		}
+	}
+	db, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return err
 	}
@@ -1266,11 +1273,11 @@ func (a *App) completeLLMSpeechText(provider string, apiKey string, model string
 }
 
 func buildRealtimeSpeechPrompt() string {
-	name := strings.TrimSpace(os.Getenv("MOCHI_DESKTOP_PET_NAME"))
+	name := envFirst("YUYU_DESKTOP_PET_NAME", "MOCHI_DESKTOP_PET_NAME")
 	if name == "" {
-		name = "Mochi"
+		name = "Yuyu"
 	}
-	language := strings.ToLower(strings.TrimSpace(os.Getenv("MOCHI_REPLY_LANGUAGE")))
+	language := strings.ToLower(envFirst("YUYU_REPLY_LANGUAGE", "MOCHI_REPLY_LANGUAGE"))
 	if language == "" {
 		language = "ja"
 	}
@@ -1388,7 +1395,7 @@ func realtimeAckText() string {
 	if value != "" {
 		return value
 	}
-	language := strings.ToLower(strings.TrimSpace(os.Getenv("MOCHI_REPLY_LANGUAGE")))
+	language := strings.ToLower(envFirst("YUYU_REPLY_LANGUAGE", "MOCHI_REPLY_LANGUAGE"))
 	if strings.Contains(language, "ja") {
 		return "うん、ちょっと待ってね。"
 	}
@@ -1657,6 +1664,15 @@ func defaultString(value string, fallback string) string {
 	return value
 }
 
+func envFirst(keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(os.Getenv(key)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func envEnabled(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
 	case "1", "true", "yes", "on":
@@ -1670,6 +1686,19 @@ func envEnabledDefault(key string, fallback bool) bool {
 	value := strings.TrimSpace(os.Getenv(key))
 	if value == "" {
 		return fallback
+	}
+	switch strings.ToLower(value) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func envEnabledDefaultCompat(primary string, legacy string, fallback bool) bool {
+	value := strings.TrimSpace(os.Getenv(primary))
+	if value == "" {
+		return envEnabledDefault(legacy, fallback)
 	}
 	switch strings.ToLower(value) {
 	case "1", "true", "yes", "on":
@@ -2198,7 +2227,7 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 			a.provider = "agent"
 		}
 		if expectsDualLanguageSpeech() && strings.TrimSpace(agentReply.SpeechText) == "" {
-			a.providerErr = "Agent did not return speechText. Please stop the old python agent/main.py process and restart MochiAI."
+			a.providerErr = "Agent did not return speechText. Please stop the old python agent/main.py process and restart Yuyu-Mind."
 		}
 	}
 	if len(pluginContextErrs) > 0 {
@@ -2357,13 +2386,13 @@ func (a *App) invokeAgentPlugin(plugin string, action string, payload map[string
 }
 
 func (a *App) collectPluginContexts(mode string, message string) ([]PluginContextCandidate, []string) {
-	if !envEnabledDefault("MOCHI_PLUGIN_CONTEXT_ENABLED", true) {
+	if !envEnabledDefaultCompat("YUYU_PLUGIN_CONTEXT_ENABLED", "MOCHI_PLUGIN_CONTEXT_ENABLED", true) {
 		return nil, nil
 	}
-	if mode == "chat" && !envEnabledDefault("MOCHI_PLUGIN_CONTEXT_CHAT_ENABLED", envEnabledDefault("MOCHI_SCREEN_CONTEXT_AUTO", true)) {
+	if mode == "chat" && !envEnabledDefaultCompat("YUYU_PLUGIN_CONTEXT_CHAT_ENABLED", "MOCHI_PLUGIN_CONTEXT_CHAT_ENABLED", envEnabledDefault("MOCHI_SCREEN_CONTEXT_AUTO", true)) {
 		return nil, nil
 	}
-	if mode == "proactive" && !envEnabledDefault("MOCHI_PLUGIN_CONTEXT_PROACTIVE_ENABLED", envEnabledDefault("MOCHI_SCREEN_PROACTIVE_ENABLED", true)) {
+	if mode == "proactive" && !envEnabledDefaultCompat("YUYU_PLUGIN_CONTEXT_PROACTIVE_ENABLED", "MOCHI_PLUGIN_CONTEXT_PROACTIVE_ENABLED", envEnabledDefault("MOCHI_SCREEN_PROACTIVE_ENABLED", true)) {
 		return nil, nil
 	}
 	reply, err := a.ListPlugins()
@@ -2762,7 +2791,7 @@ func (a *App) generateFallbackReply(content string) agentResponse {
 			Emotion:    "thinking",
 		}
 	}
-	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(os.Getenv("MOCHI_REPLY_LANGUAGE"))), "ja") {
+	if strings.HasPrefix(strings.ToLower(envFirst("YUYU_REPLY_LANGUAGE", "MOCHI_REPLY_LANGUAGE")), "ja") {
 		return agentResponse{
 			Text:    fmt.Sprintf("今は%sが固定返答しかできないわけじゃなくて、Python AgentかLLMが一時的に使えないみたい。エラー表示を確認してね。", currentName),
 			Emotion: "thinking",
@@ -2775,7 +2804,7 @@ func (a *App) generateFallbackReply(content string) agentResponse {
 
 	name := desktopPetName()
 	lower := strings.ToLower(content)
-	useJapanese := strings.HasPrefix(strings.ToLower(strings.TrimSpace(os.Getenv("MOCHI_REPLY_LANGUAGE"))), "ja")
+	useJapanese := strings.HasPrefix(strings.ToLower(envFirst("YUYU_REPLY_LANGUAGE", "MOCHI_REPLY_LANGUAGE")), "ja")
 
 	switch {
 	case strings.Contains(lower, "remember"):
@@ -2797,9 +2826,9 @@ func (a *App) generateFallbackReply(content string) agentResponse {
 }
 
 func desktopPetName() string {
-	name := strings.TrimSpace(os.Getenv("MOCHI_DESKTOP_PET_NAME"))
+	name := envFirst("YUYU_DESKTOP_PET_NAME", "MOCHI_DESKTOP_PET_NAME")
 	if name == "" {
-		return "Mochi"
+		return "Yuyu"
 	}
 	return name
 }
@@ -2816,7 +2845,7 @@ func chooseSpeechText(reply agentResponse, fallback string) string {
 }
 
 func expectsDualLanguageSpeech() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("MOCHI_REPLY_LANGUAGE"))) {
+	switch strings.ToLower(envFirst("YUYU_REPLY_LANGUAGE", "MOCHI_REPLY_LANGUAGE")) {
 	case "zh_ja", "zh-ja", "dual", "bilingual":
 		return true
 	default:

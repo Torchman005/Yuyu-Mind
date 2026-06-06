@@ -74,9 +74,12 @@ const emotionLabel: Record<string, string> = {
     surprised: '惊讶',
 };
 
-const PET_MODE_KEY = 'mochi.petMode';
-const PET_SCALE_KEY = 'mochi.petScale';
-const CONTINUOUS_VOICE_KEY = 'mochi.continuousVoice';
+const PET_MODE_KEY = 'yuyu.petMode';
+const PET_SCALE_KEY = 'yuyu.petScale';
+const CONTINUOUS_VOICE_KEY = 'yuyu.continuousVoice';
+const LEGACY_PET_MODE_KEY = 'mochi.petMode';
+const LEGACY_PET_SCALE_KEY = 'mochi.petScale';
+const LEGACY_CONTINUOUS_VOICE_KEY = 'mochi.continuousVoice';
 const PET_CONTROLS_SHORTCUT = 'Ctrl + Shift + M';
 const PET_BASE_WIDTH = 380;
 const PET_BASE_HEIGHT = 560;
@@ -86,7 +89,11 @@ const PET_SCALE_STEP = 0.08;
 const PET_HIT_INSET_X = 0.06;
 const PET_HIT_INSET_TOP = 0.02;
 const PET_HIT_INSET_BOTTOM = 0.02;
-const DESKTOP_PET_NAME = (import.meta.env.VITE_DESKTOP_PET_NAME as string | undefined)?.trim() || 'Mochi';
+const DESKTOP_PET_NAME = (
+    (import.meta.env.VITE_YUYU_DESKTOP_PET_NAME as string | undefined)
+    || (import.meta.env.VITE_DESKTOP_PET_NAME as string | undefined)
+    || ''
+).trim() || 'Yuyu';
 const SPEECH_OUTPUT_MODE = ((import.meta.env.VITE_SPEECH_OUTPUT_MODE as string | undefined) || 'cloud').trim().toLowerCase();
 const ALLOW_SYSTEM_TTS_FALLBACK = ((import.meta.env.VITE_ALLOW_SYSTEM_TTS_FALLBACK as string | undefined) || 'false').trim().toLowerCase() === 'true';
 const ENABLE_STREAMING_TTS = ((import.meta.env.VITE_ENABLE_STREAMING_TTS as string | undefined) || 'false').trim().toLowerCase() === 'true';
@@ -119,7 +126,7 @@ function clamp(value: number, min: number, max: number) {
 }
 
 function readStoredPetScale() {
-    const value = Number(localStorage.getItem(PET_SCALE_KEY));
+    const value = Number(localStorage.getItem(PET_SCALE_KEY) ?? localStorage.getItem(LEGACY_PET_SCALE_KEY));
     if (!Number.isFinite(value)) {
         return 1;
     }
@@ -292,11 +299,11 @@ function App() {
     const [voiceError, setVoiceError] = useState('');
     const [mouthLevel, setMouthLevel] = useState(0);
     const [speechMetrics, setSpeechMetrics] = useState<SpeechMetric[]>([]);
-    const [isPetMode, setIsPetMode] = useState(() => localStorage.getItem(PET_MODE_KEY) === 'true');
+    const [isPetMode, setIsPetMode] = useState(() => (localStorage.getItem(PET_MODE_KEY) ?? localStorage.getItem(LEGACY_PET_MODE_KEY)) === 'true');
     const [petScale, setPetScale] = useState(readStoredPetScale);
     const [isPetControlsOpen, setIsPetControlsOpen] = useState(false);
     const [isTextInputOpen, setIsTextInputOpen] = useState(false);
-    const [continuousVoiceMode, setContinuousVoiceMode] = useState(() => localStorage.getItem(CONTINUOUS_VOICE_KEY) === 'true');
+    const [continuousVoiceMode, setContinuousVoiceMode] = useState(() => (localStorage.getItem(CONTINUOUS_VOICE_KEY) ?? localStorage.getItem(LEGACY_CONTINUOUS_VOICE_KEY)) === 'true');
     const feedRef = useRef<HTMLDivElement>(null);
     const composerInputRef = useRef<HTMLInputElement>(null);
     const recognitionRef = useRef<any>(null);
@@ -1622,7 +1629,7 @@ function App() {
 
     return (
         <main className={isPetMode ? 'app-shell pet-mode' : 'app-shell'}>
-            <section className="stage" aria-label="Mochi Live2D 舞台" onWheel={resizePetWithWheel}>
+            <section className="stage" aria-label="Yuyu Live2D 舞台" onWheel={resizePetWithWheel}>
                 {!isPetMode && (
                     <div className="status-bar">
                         <span>{DESKTOP_PET_NAME} AI</span>

@@ -116,15 +116,15 @@ def current_api_key() -> str:
 
 
 def reply_language() -> str:
-    return os.environ.get("MOCHI_REPLY_LANGUAGE", "zh_ja").strip().lower() or "zh_ja"
+    return (os.environ.get("YUYU_REPLY_LANGUAGE") or os.environ.get("MOCHI_REPLY_LANGUAGE", "zh_ja")).strip().lower() or "zh_ja"
 
 
 def desktop_pet_name() -> str:
-    return os.environ.get("MOCHI_DESKTOP_PET_NAME", "Mochi").strip() or "Mochi"
+    return (os.environ.get("YUYU_DESKTOP_PET_NAME") or os.environ.get("MOCHI_DESKTOP_PET_NAME", "Yuyu")).strip() or "Yuyu"
 
 
 def user_nickname() -> str:
-    return os.environ.get("MOCHI_USER_NICKNAME", "主人").strip() or "主人"
+    return (os.environ.get("YUYU_USER_NICKNAME") or os.environ.get("MOCHI_USER_NICKNAME", "主人")).strip() or "主人"
 
 
 def persona_prompt() -> str:
@@ -135,7 +135,7 @@ def persona_prompt() -> str:
         "She talks like a gentle Japanese anime assistant, with natural charm but not exaggerated roleplay. "
         "She can help with coding and desktop tasks while keeping a soft companion tone."
     )
-    return os.environ.get("MOCHI_PERSONA", default_persona).strip() or default_persona
+    return (os.environ.get("YUYU_PERSONA") or os.environ.get("MOCHI_PERSONA", default_persona)).strip() or default_persona
 
 
 def detect_emotion(message: str) -> str:
@@ -245,7 +245,7 @@ Persona:
 {persona_prompt()}
 
 {language_instruction}
-Your name is exactly "{name}". If the user asks your name, say you are "{name}", not Mochi or any other name.
+Your name is exactly "{name}". If the user asks your name, say you are "{name}", not Yuyu or any other name.
 The user's preferred nickname is "{nickname}". Use it occasionally when it feels natural, not in every sentence.
 If the nickname is a generic label like "用户" or "user", do not address the user with that literal label.
 You are not a customer-service bot. You are a small desktop companion who lives near the user's work.
@@ -339,7 +339,7 @@ def call_responses_api(
         "text": {
             "format": {
                 "type": "json_schema",
-                "name": "mochi_reply",
+                "name": "yuyu_reply",
                 "schema": {
                     "type": "object",
                     "additionalProperties": False,
@@ -528,7 +528,7 @@ class AgentHandler(BaseHTTPRequestHandler):
             self.send_json(
                 {
                     "ok": True,
-                    "service": "mochi-agent",
+                    "service": "yuyu-agent",
                     "provider": get_provider_name(),
                     "model": current_model(),
                     "baseUrl": current_base_url(),
@@ -622,7 +622,7 @@ class AgentHandler(BaseHTTPRequestHandler):
 
 def main() -> None:
     server = ThreadingHTTPServer((HOST, PORT), AgentHandler)
-    print(f"Mochi Agent listening on http://{HOST}:{PORT} with {get_provider_name()} provider", flush=True)
+    print(f"Yuyu Agent listening on http://{HOST}:{PORT} with {get_provider_name()} provider", flush=True)
     server.serve_forever()
 
 

@@ -1,4 +1,4 @@
-module MochiAI
+module YuyuMind
 
 go 1.23.0
 

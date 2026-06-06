@@ -14,8 +14,8 @@ pyyaml>=6.0.0
 speechrecognition>=3.14.0
 websockets>=12.0
 
-# Heavy / platform-sensitive packages from the reference Mochi-AI project.
-# 参考 Mochi-AI 项目中的重依赖 / 平台敏感依赖。
+# Heavy / platform-sensitive packages from the reference Yuyu-Mind project.
+# 参考 Yuyu-Mind 项目中的重依赖 / 平台敏感依赖。
 # Uncomment only when the corresponding feature is implemented.
 # 只有实现对应功能时再取消注释。
 #

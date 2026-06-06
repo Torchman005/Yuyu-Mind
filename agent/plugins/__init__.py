@@ -8,7 +8,8 @@ from typing import Any, Callable
 
 
 PluginAction = Callable[[dict[str, Any]], dict[str, Any]]
-PLUGIN_SCHEMA_VERSION = "mochi.plugin.v1"
+PLUGIN_SCHEMA_VERSION = "yuyu.plugin.v1"
+LEGACY_PLUGIN_SCHEMA_VERSION = "mochi.plugin.v1"
 
 
 @dataclass(frozen=True)
@@ -51,7 +52,7 @@ def load_plugins(root: Path | None = None) -> None:
 
 def load_plugin_from_manifest(metadata_path: Path) -> PluginSpec:
     metadata = json.loads(metadata_path.read_text(encoding="utf-8-sig"))
-    if metadata.get("schemaVersion") != PLUGIN_SCHEMA_VERSION:
+    if metadata.get("schemaVersion") not in {PLUGIN_SCHEMA_VERSION, LEGACY_PLUGIN_SCHEMA_VERSION}:
         raise ValueError(f"unsupported plugin schema: {metadata.get('schemaVersion')}")
 
     name = str(metadata.get("name", "")).strip()

@@ -1,8 +1,8 @@
 # GPT-SoVITS TTS Setup
 
-MochiAI can use a local or self-hosted GPT-SoVITS API server for desktop pet speech.
+Yuyu-Mind can use a local or self-hosted GPT-SoVITS API server for desktop pet speech.
 
-## MochiAI Configuration
+## Yuyu-Mind Configuration
 
 Set the backend TTS provider in `.env`:
 
@@ -45,7 +45,7 @@ For zero-shot voice cloning, prepare a clean reference clip:
 - Avoid music, reverb, noise, and overlapping voices.
 - `GPT_SOVITS_PROMPT_TEXT` must exactly match what is spoken in the reference clip.
 - `GPT_SOVITS_PROMPT_LANG` should match the reference language, for example `zh`, `ja`, or `en`.
-- `GPT_SOVITS_TEXT_LANG` should match Mochi's speech text language.
+- `GPT_SOVITS_TEXT_LANG` should match Yuyu's speech text language.
 
 ## Useful Parameters
 
@@ -53,8 +53,8 @@ For zero-shot voice cloning, prepare a clean reference clip:
 - `GPT_SOVITS_MEDIA_TYPE=mp3` can reduce payload size if your server supports it.
 - `GPT_SOVITS_SPEED_FACTOR=1.0` controls speaking speed.
 - `GPT_SOVITS_SAMPLE_STEPS=32` is a balanced default.
-- `GPT_SOVITS_STREAMING_MODE=false` avoids chunked audio in MochiAI's current buffered playback path.
-- `GPT_SOVITS_STREAMING_MODE=3` is faster on GPT-SoVITS API v2, but MochiAI currently still plays the received response as a complete audio file.
+- `GPT_SOVITS_STREAMING_MODE=false` avoids chunked audio in Yuyu-Mind's current buffered playback path.
+- `GPT_SOVITS_STREAMING_MODE=3` is faster on GPT-SoVITS API v2, but Yuyu-Mind currently still plays the received response as a complete audio file.
 
 ## Start GPT-SoVITS API
 
@@ -64,7 +64,7 @@ From the GPT-SoVITS repository, start the v2 API server:
 python api_v2.py -a 127.0.0.1 -p 9880 -c GPT_SoVITS/configs/tts_infer.yaml
 ```
 
-Then restart MochiAI so it reloads `.env`.
+Then restart Yuyu-Mind so it reloads `.env`.
 
 ## Quick API Smoke Test
 
@@ -79,4 +79,4 @@ Invoke-WebRequest `
   -OutFile test.wav
 ```
 
-If `test.wav` plays correctly, MochiAI should be able to use the same configuration.
+If `test.wav` plays correctly, Yuyu-Mind should be able to use the same configuration.

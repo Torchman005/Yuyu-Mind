@@ -18,9 +18,9 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:  "MochiAI",
-		Width:  1024,
-		Height: 768,
+		Title:     "Yuyu-Mind",
+		Width:     1024,
+		Height:    768,
 		Frameless: true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
@@ -29,10 +29,10 @@ func main() {
 		OnStartup:        app.startup,
 		OnShutdown:       app.shutdown,
 		Windows: &windows.Options{
-			WebviewIsTransparent:               true,
-			WindowIsTranslucent:                true,
+			WebviewIsTransparent:              true,
+			WindowIsTranslucent:               true,
 			DisableFramelessWindowDecorations: true,
-			BackdropType:                       windows.None,
+			BackdropType:                      windows.None,
 		},
 		Bind: []interface{}{
 			app,

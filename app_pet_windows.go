@@ -159,13 +159,13 @@ func petWindowHandle() (uintptr, error) {
 		return petWindowHandleCache, nil
 	}
 
-	title, err := syscall.UTF16PtrFromString("MochiAI")
+	title, err := syscall.UTF16PtrFromString("Yuyu-Mind")
 	if err != nil {
 		return 0, err
 	}
 	hwnd, _, _ := procFindWindowW.Call(0, uintptr(unsafe.Pointer(title)))
 	if hwnd == 0 {
-		return 0, errors.New("MochiAI window was not found")
+		return 0, errors.New("Yuyu-Mind window was not found")
 	}
 	petWindowHandleCache = hwnd
 	return hwnd, nil

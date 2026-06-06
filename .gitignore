@@ -7,6 +7,8 @@ data/
 frontend/.env
 __pycache__/
 *.pyc
+agent/plugins/*
+!agent/plugins/__init__.py
 frontend/package.json.md5
 CubismSdkForWeb-5-r.5/
 frontend/public/live2d/cubism5/
