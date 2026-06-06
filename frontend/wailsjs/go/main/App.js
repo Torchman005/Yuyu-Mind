@@ -14,6 +14,14 @@ export function GetState() {
   return window['go']['main']['App']['GetState']();
 }
 
+export function ListPlugins() {
+  return window['go']['main']['App']['ListPlugins']();
+}
+
+export function ObserveScreen(arg1) {
+  return window['go']['main']['App']['ObserveScreen'](arg1);
+}
+
 export function ProbeFishLive() {
   return window['go']['main']['App']['ProbeFishLive']();
 }

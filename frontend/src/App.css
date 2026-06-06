@@ -97,6 +97,10 @@
     cursor: default;
 }
 
+.stage-tools button:nth-child(5) {
+    display: none;
+}
+
 .pet-controls {
     position: absolute;
     left: 12px;

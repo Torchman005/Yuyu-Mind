@@ -4,6 +4,7 @@ import {
     ClearChat,
     GenerateProactiveMessage,
     GetState,
+    ObserveScreen,
     ProbeFishLive,
     SendMessage,
     SynthesizeSpeech,
@@ -96,6 +97,16 @@ const PROACTIVE_IDLE_MINUTES = Number((import.meta.env.VITE_PROACTIVE_IDLE_MINUT
 const PROACTIVE_COOLDOWN_MINUTES = Number((import.meta.env.VITE_PROACTIVE_COOLDOWN_MINUTES as string | undefined) || '15');
 const PROACTIVE_QUIET_HOURS = ((import.meta.env.VITE_PROACTIVE_QUIET_HOURS as string | undefined) || '01:00-09:00').trim();
 const VOICE_RELISTEN_DELAY_MS = 280;
+const VOICE_LOOP_MAX_EMPTY_TURNS = 4;
+const VOICE_LOOP_EMPTY_BACKOFF_MS = 900;
+const VOICE_LOOP_MAX_BACKOFF_MS = 3500;
+const VOICE_MIN_CHARS = 2;
+const VOICE_LOOP_MIN_CHARS = 3;
+const VOICE_LOW_CONFIDENCE = 0.35;
+const VOICE_GATE_ENABLED = ((import.meta.env.VITE_VOICE_GATE_ENABLED as string | undefined) || 'true').trim().toLowerCase() === 'true';
+const VOICE_GATE_THRESHOLD = Number((import.meta.env.VITE_VOICE_GATE_THRESHOLD as string | undefined) || '0.035');
+const VOICE_GATE_HOLD_MS = Number((import.meta.env.VITE_VOICE_GATE_HOLD_MS as string | undefined) || '160');
+const VOICE_GATE_TIMEOUT_MS = Number((import.meta.env.VITE_VOICE_GATE_TIMEOUT_MS as string | undefined) || '12000');
 const BARGE_IN_MIN_CHARS = 2;
 const BARGE_IN_ECHO_SIMILARITY = 0.68;
 
@@ -180,6 +191,40 @@ function textSimilarity(left: string, right: string) {
     return matches / Math.max(a.length, b.length);
 }
 
+function isLikelyNoiseTranscript(text: string) {
+    const normalized = normalizeSpeechText(text);
+    if (!normalized) {
+        return true;
+    }
+    const noiseWords = new Set([
+        '啊', '呃', '额', '嗯', '唔', '哦', '喔', '诶', '欸', '哎', '唉',
+        '哈', '哈哈', '呵呵', '嗯嗯', '啊啊', '呃呃',
+        'um', 'uh', 'hmm', 'mmm', 'ah', 'oh',
+    ]);
+    if (noiseWords.has(normalized)) {
+        return true;
+    }
+    if (/^[啊呃额嗯唔哦喔诶欸哎唉哈呵]+$/.test(normalized) && normalized.length <= 4) {
+        return true;
+    }
+    return false;
+}
+
+function isUsableVoiceTranscript(text: string, confidence = 0, options: {fromLoop?: boolean; assistantLine?: string} = {}) {
+    const normalized = normalizeSpeechText(text);
+    const minChars = options.fromLoop ? VOICE_LOOP_MIN_CHARS : VOICE_MIN_CHARS;
+    if (normalized.length < minChars || isLikelyNoiseTranscript(text)) {
+        return false;
+    }
+    if (confidence > 0 && confidence < VOICE_LOW_CONFIDENCE && normalized.length < 8) {
+        return false;
+    }
+    if (options.assistantLine && textSimilarity(text, options.assistantLine) >= BARGE_IN_ECHO_SIMILARITY) {
+        return false;
+    }
+    return true;
+}
+
 function inferAvatarPerformance(text: string, emotion: string, isSpeaking: boolean): AvatarPerformance {
     const line = text.trim();
     const lower = line.toLowerCase();
@@ -241,6 +286,7 @@ function App() {
     const [agentProvider, setAgentProvider] = useState('unknown');
     const [providerError, setProviderError] = useState('');
     const [isSending, setIsSending] = useState(false);
+    const [isObservingScreen, setIsObservingScreen] = useState(false);
     const [error, setError] = useState('');
     const [voiceStatus, setVoiceStatus] = useState('idle');
     const [voiceError, setVoiceError] = useState('');
@@ -262,7 +308,10 @@ function App() {
     const isSendingRef = useRef(false);
     const voiceStatusRef = useRef('idle');
     const voiceLoopRef = useRef(false);
+    const voiceEmptyTurnsRef = useRef(0);
     const relistenTimerRef = useRef<number | null>(null);
+    const voiceGateCancelRef = useRef<(() => void) | null>(null);
+    const voiceGateStreamRef = useRef<MediaStream | null>(null);
     const lastUserActivityRef = useRef(Date.now());
     const lastProactiveAtRef = useRef(0);
     const proactiveInFlightRef = useRef(false);
@@ -360,6 +409,165 @@ function App() {
         setSpeechMetrics((items) => [...items.slice(-11), metric]);
     }
 
+    function clearRelistenTimer() {
+        if (relistenTimerRef.current) {
+            window.clearTimeout(relistenTimerRef.current);
+            relistenTimerRef.current = null;
+        }
+    }
+
+    function cancelVoiceGate() {
+        voiceGateCancelRef.current?.();
+        voiceGateCancelRef.current = null;
+        voiceGateStreamRef.current?.getTracks().forEach((track) => track.stop());
+        voiceGateStreamRef.current = null;
+    }
+
+    function resetVoiceEmptyTurns() {
+        voiceEmptyTurnsRef.current = 0;
+    }
+
+    function registerEmptyVoiceTurn(reason: string) {
+        voiceEmptyTurnsRef.current += 1;
+        const count = voiceEmptyTurnsRef.current;
+        addSpeechMetric({
+            phase: 'voice-empty',
+            elapsedMs: 0,
+            detail: `${reason} ${count}/${VOICE_LOOP_MAX_EMPTY_TURNS}`,
+        });
+        if (count < VOICE_LOOP_MAX_EMPTY_TURNS) {
+            return true;
+        }
+
+        voiceLoopRef.current = false;
+        clearRelistenTimer();
+        setVoiceStatus('idle');
+        setEmotion('neutral');
+        addSpeechMetric({
+            phase: 'voice-loop-paused',
+            elapsedMs: 0,
+            detail: 'too many empty turns',
+        });
+        return false;
+    }
+
+    function nextRelistenDelay() {
+        if (voiceEmptyTurnsRef.current <= 0) {
+            return VOICE_RELISTEN_DELAY_MS;
+        }
+        return Math.min(
+            VOICE_LOOP_MAX_BACKOFF_MS,
+            VOICE_RELISTEN_DELAY_MS + voiceEmptyTurnsRef.current * VOICE_LOOP_EMPTY_BACKOFF_MS,
+        );
+    }
+
+    async function waitForVoiceGate() {
+        if (!VOICE_GATE_ENABLED || !navigator.mediaDevices?.getUserMedia) {
+            return true;
+        }
+
+        cancelVoiceGate();
+        addSpeechMetric({
+            phase: 'voice-gate-start',
+            elapsedMs: 0,
+            detail: `threshold=${VOICE_GATE_THRESHOLD}`,
+        });
+
+        let stream: MediaStream;
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                },
+            });
+        } catch (reason) {
+            addSpeechMetric({
+                phase: 'voice-gate-bypass',
+                elapsedMs: 0,
+                detail: String(reason),
+            });
+            return true;
+        }
+
+        voiceGateStreamRef.current = stream;
+        const startedAt = performance.now();
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        if (!AudioContextClass) {
+            stream.getTracks().forEach((track) => track.stop());
+            voiceGateStreamRef.current = null;
+            return true;
+        }
+
+        const context = new AudioContextClass();
+        const source = context.createMediaStreamSource(stream);
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 1024;
+        source.connect(analyser);
+        const data = new Uint8Array(analyser.fftSize);
+
+        return new Promise<boolean>((resolve) => {
+            let frame = 0;
+            let activeSince = 0;
+            let settled = false;
+            let timeout = 0;
+
+            const finish = (ok: boolean, phase: string, detail: string) => {
+                if (settled) {
+                    return;
+                }
+                settled = true;
+                window.clearTimeout(timeout);
+                window.cancelAnimationFrame(frame);
+                source.disconnect();
+                analyser.disconnect();
+                stream.getTracks().forEach((track) => track.stop());
+                if (voiceGateStreamRef.current === stream) {
+                    voiceGateStreamRef.current = null;
+                }
+                voiceGateCancelRef.current = null;
+                void context.close();
+                addSpeechMetric({
+                    phase,
+                    elapsedMs: Math.round(performance.now() - startedAt),
+                    detail,
+                });
+                resolve(ok);
+            };
+
+            voiceGateCancelRef.current = () => finish(false, 'voice-gate-cancelled', 'cancelled');
+            timeout = window.setTimeout(() => finish(false, 'voice-gate-timeout', 'no voice activity'), VOICE_GATE_TIMEOUT_MS);
+
+            const sample = (now: number) => {
+                if (!voiceLoopRef.current || recognitionRef.current || isSendingRef.current || voiceStatusRef.current === 'speaking') {
+                    finish(false, 'voice-gate-cancelled', 'state changed');
+                    return;
+                }
+
+                analyser.getByteTimeDomainData(data);
+                let sum = 0;
+                for (let index = 0; index < data.length; index += 1) {
+                    const value = (data[index] - 128) / 128;
+                    sum += value * value;
+                }
+                const rms = Math.sqrt(sum / data.length);
+                if (rms >= VOICE_GATE_THRESHOLD) {
+                    activeSince = activeSince || now;
+                    if (now - activeSince >= VOICE_GATE_HOLD_MS) {
+                        finish(true, 'voice-gate-open', `rms=${rms.toFixed(3)}`);
+                        return;
+                    }
+                } else {
+                    activeSince = 0;
+                }
+                frame = window.requestAnimationFrame(sample);
+            };
+
+            frame = window.requestAnimationFrame(sample);
+        });
+    }
+
     useEffect(() => {
         localStorage.setItem(PET_MODE_KEY, String(isPetMode));
         localStorage.setItem(PET_SCALE_KEY, String(petScale));
@@ -455,6 +663,7 @@ function App() {
                 if (relistenTimerRef.current) {
                     window.clearTimeout(relistenTimerRef.current);
                 }
+                cancelVoiceGate();
                 recognitionRef.current?.abort?.();
                 bargeRecognitionRef.current?.abort?.();
                 bargeRecognitionRef.current = null;
@@ -477,6 +686,7 @@ function App() {
                 event.preventDefault();
                 if (voiceStatus === 'listening') {
                     voiceLoopRef.current = false;
+                    cancelVoiceGate();
                     recognitionRef.current?.stop?.();
                     setVoiceStatus('idle');
                     return;
@@ -485,11 +695,11 @@ function App() {
                     audioRef.current?.pause();
                     window.speechSynthesis?.cancel?.();
                     setVoiceStatus('idle');
-                    startVoiceInput();
+                    void startVoiceInput();
                     return;
                 }
                 if (!isSending && voiceStatus !== 'thinking') {
-                    startVoiceInput();
+                    void startVoiceInput();
                 }
                 return;
             }
@@ -522,6 +732,7 @@ function App() {
         return () => {
             recognitionRef.current?.abort?.();
             bargeRecognitionRef.current?.abort?.();
+            cancelVoiceGate();
             if (relistenTimerRef.current) {
                 window.clearTimeout(relistenTimerRef.current);
             }
@@ -546,10 +757,10 @@ function App() {
             return;
         }
 
-        if (relistenTimerRef.current) {
-            window.clearTimeout(relistenTimerRef.current);
-        }
+        clearRelistenTimer();
+        const delay = nextRelistenDelay();
         relistenTimerRef.current = window.setTimeout(() => {
+            relistenTimerRef.current = null;
             if (!voiceLoopRef.current || recognitionRef.current) {
                 return;
             }
@@ -557,12 +768,13 @@ function App() {
                 finishSpeaking();
                 return;
             }
-            startVoiceInput(true);
-        }, VOICE_RELISTEN_DELAY_MS);
+            void startVoiceInput(true);
+        }, delay);
     }
 
     function stopCurrentAudio() {
         playbackIdRef.current += 1;
+        cancelVoiceGate();
         bargeRecognitionRef.current?.abort?.();
         bargeRecognitionRef.current = null;
         lipSyncCleanupRef.current?.();
@@ -580,12 +792,11 @@ function App() {
         window.speechSynthesis?.cancel?.();
     }
 
-    function isBargeInCandidate(text: string) {
-        const normalized = normalizeSpeechText(text);
-        if (normalized.length < BARGE_IN_MIN_CHARS) {
+    function isBargeInCandidate(text: string, confidence = 0) {
+        if (normalizeSpeechText(text).length < BARGE_IN_MIN_CHARS) {
             return false;
         }
-        return textSimilarity(text, assistantLine) < BARGE_IN_ECHO_SIMILARITY;
+        return isUsableVoiceTranscript(text, confidence, {fromLoop: true, assistantLine});
     }
 
     function interruptWithBargeIn(text: string, playbackId: number) {
@@ -623,9 +834,9 @@ function App() {
         let latestTranscript = '';
         let interrupted = false;
 
-        const maybeInterrupt = (value: string) => {
+        const maybeInterrupt = (value: string, confidence = 0) => {
             const content = value.trim();
-            if (interrupted || !isBargeInCandidate(content)) {
+            if (interrupted || !isBargeInCandidate(content, confidence)) {
                 return;
             }
             interrupted = true;
@@ -636,8 +847,11 @@ function App() {
 
         recognition.onresult = (event: any) => {
             let interimTranscript = '';
+            let bestConfidence = 0;
             for (let index = event.resultIndex; index < event.results.length; index += 1) {
-                const transcript = event.results[index][0]?.transcript ?? '';
+                const alternative = event.results[index][0];
+                const transcript = alternative?.transcript ?? '';
+                bestConfidence = Math.max(bestConfidence, Number(alternative?.confidence || 0));
                 if (event.results[index].isFinal) {
                     finalTranscript += transcript;
                 } else {
@@ -646,7 +860,7 @@ function App() {
             }
             latestTranscript = (finalTranscript || interimTranscript).trim();
             if (finalTranscript.trim()) {
-                maybeInterrupt(finalTranscript);
+                maybeInterrupt(finalTranscript, bestConfidence);
             }
         };
 
@@ -1106,6 +1320,7 @@ function App() {
             return;
         }
 
+        resetVoiceEmptyTurns();
         lastUserActivityRef.current = Date.now();
         setDraft('');
         setIsTextInputOpen(false);
@@ -1181,6 +1396,37 @@ function App() {
         }
     }
 
+    async function observeScreen() {
+        if (isSendingRef.current || isObservingScreen || voiceStatus === 'thinking') {
+            return;
+        }
+
+        lastUserActivityRef.current = Date.now();
+        isSendingRef.current = true;
+        setIsSending(true);
+        setIsObservingScreen(true);
+        setError('');
+        setVoiceError('');
+        setVoiceStatus('thinking');
+        setEmotion('focused');
+        try {
+            const response = await ObserveScreen('Look at the current screen and tell me what you notice.') as ChatResponse;
+            setMessages(response.messages ?? []);
+            setEmotion(response.emotion || response.reply?.emotion || 'thinking');
+            setAgentStatus(response.agentStatus || 'offline');
+            setAgentProvider(response.agentProvider || 'unknown');
+            setProviderError(response.providerError || '');
+            void speakText(response.speechText || response.reply?.content || '');
+        } catch (reason) {
+            setError(String(reason));
+            finishSpeaking();
+        } finally {
+            isSendingRef.current = false;
+            setIsSending(false);
+            setIsObservingScreen(false);
+        }
+    }
+
     async function probeFishLive() {
         setVoiceError('');
         setSpeechMetrics([{phase: 'probe-start', elapsedMs: 0, detail: 'Fish live minimal probe'}]);
@@ -1207,13 +1453,23 @@ function App() {
         }
     }
 
-    function startVoiceInput(fromLoop = false) {
+    async function startVoiceInput(fromLoop = false) {
         if (!fromLoop) {
             voiceLoopRef.current = continuousVoiceMode;
+            resetVoiceEmptyTurns();
         }
-        if (relistenTimerRef.current) {
-            window.clearTimeout(relistenTimerRef.current);
-            relistenTimerRef.current = null;
+        clearRelistenTimer();
+
+        if (fromLoop && voiceLoopRef.current) {
+            const gateOpen = await waitForVoiceGate();
+            if (!gateOpen) {
+                setVoiceStatus('idle');
+                setEmotion('neutral');
+                if (voiceLoopRef.current && !recognitionRef.current && !isSendingRef.current && voiceStatusRef.current !== 'speaking') {
+                    finishSpeaking();
+                }
+                return;
+            }
         }
 
         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -1241,6 +1497,8 @@ function App() {
 
         let finalTranscript = '';
         let latestTranscript = '';
+        let bestConfidence = 0;
+        let recognitionFailed = false;
         setVoiceError('');
         setVoiceStatus('listening');
         setEmotion('thinking');
@@ -1248,7 +1506,9 @@ function App() {
         recognition.onresult = (event: any) => {
             let interimTranscript = '';
             for (let index = event.resultIndex; index < event.results.length; index += 1) {
-                const transcript = event.results[index][0]?.transcript ?? '';
+                const alternative = event.results[index][0];
+                const transcript = alternative?.transcript ?? '';
+                bestConfidence = Math.max(bestConfidence, Number(alternative?.confidence || 0));
                 if (event.results[index].isFinal) {
                     finalTranscript += transcript;
                 } else {
@@ -1263,11 +1523,14 @@ function App() {
         };
 
         recognition.onerror = (event: any) => {
+            recognitionFailed = true;
             recognitionRef.current = null;
             const errorName = String(event.error || '');
             setVoiceStatus('idle');
             if (voiceLoopRef.current && (errorName === 'no-speech' || errorName === 'aborted')) {
-                finishSpeaking();
+                if (registerEmptyVoiceTurn(errorName || 'recognition-error')) {
+                    finishSpeaking();
+                }
                 return;
             }
             voiceLoopRef.current = false;
@@ -1275,16 +1538,28 @@ function App() {
         };
 
         recognition.onend = () => {
+            if (recognitionFailed) {
+                return;
+            }
             const content = (finalTranscript || latestTranscript).trim();
             recognitionRef.current = null;
-            if (!content) {
+            if (!content || !isUsableVoiceTranscript(content, bestConfidence, {fromLoop, assistantLine})) {
                 setVoiceStatus('idle');
                 setEmotion('neutral');
+                setDraft('');
                 if (voiceLoopRef.current) {
-                    finishSpeaking();
+                    addSpeechMetric({
+                        phase: 'voice-filtered',
+                        elapsedMs: 0,
+                        detail: content || 'empty',
+                    });
+                    if (registerEmptyVoiceTurn(content ? 'filtered' : 'empty')) {
+                        finishSpeaking();
+                    }
                 }
                 return;
             }
+            resetVoiceEmptyTurns();
             void sendContent(content);
         };
 
@@ -1294,7 +1569,9 @@ function App() {
             recognitionRef.current = null;
             setVoiceStatus('idle');
             if (voiceLoopRef.current) {
-                finishSpeaking();
+                if (registerEmptyVoiceTurn('start-failed')) {
+                    finishSpeaking();
+                }
                 return;
             }
             setVoiceError(`语音识别启动失败：${String(reason)}`);
@@ -1329,7 +1606,7 @@ function App() {
                         window.speechSynthesis?.cancel?.();
                         setVoiceStatus('idle');
                     }
-                    startVoiceInput();
+                    void startVoiceInput();
                 }}
                 disabled={isSending || voiceStatus === 'thinking'}
             >
@@ -1390,6 +1667,9 @@ function App() {
                     <div className="pet-controls" aria-label="桌宠控制">
                         {composer}
                         <div className="pet-mode-actions">
+                            <button type="button" className="pet-mode-toggle" onClick={() => void observeScreen()} disabled={isSending || isObservingScreen}>
+                                看屏幕
+                            </button>
                             <button type="button" className="pet-mode-toggle" onClick={() => setIsPetControlsOpen(false)}>
                                 收起
                             </button>
@@ -1401,6 +1681,9 @@ function App() {
                     </div>
                 ) : !isPetMode && (
                     <div className="stage-tools">
+                        <button type="button" onClick={() => void observeScreen()} disabled={isSending || isObservingScreen}>
+                            {isObservingScreen ? '观察中' : '看屏幕'}
+                        </button>
                         <button type="button">Live2D</button>
                         <button type="button">记忆</button>
                         <button type="button">插件</button>

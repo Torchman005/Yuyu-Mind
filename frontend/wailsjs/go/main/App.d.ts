@@ -8,6 +8,10 @@ export function GenerateProactiveMessage(arg1:string):Promise<main.ChatReply>;
 
 export function GetState():Promise<main.AppState>;
 
+export function ListPlugins():Promise<main.PluginListReply>;
+
+export function ObserveScreen(arg1:string):Promise<main.ChatReply>;
+
 export function ProbeFishLive():Promise<main.FishLiveProbeResult>;
 
 export function SendMessage(arg1:string):Promise<main.ChatReply>;

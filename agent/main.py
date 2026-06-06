@@ -10,6 +10,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from plugins import invoke_plugin, list_plugins, load_builtin_plugins
+
 
 HOST = "127.0.0.1"
 PORT = 8765
@@ -84,6 +86,7 @@ def load_dotenv() -> None:
 
 
 load_dotenv()
+load_builtin_plugins()
 
 
 def get_provider_name() -> str:
@@ -529,14 +532,22 @@ class AgentHandler(BaseHTTPRequestHandler):
                     "provider": get_provider_name(),
                     "model": current_model(),
                     "baseUrl": current_base_url(),
-                    "capabilities": ["chat", "speechText"],
+                    "capabilities": ["chat", "speechText", "plugins"],
+                    "plugins": list_plugins(),
                     "supportedProviders": sorted(PROVIDERS.keys()),
                 }
             )
             return
+        if self.path == "/plugins":
+            self.send_json({"ok": True, "plugins": list_plugins()})
+            return
         self.send_error(404)
 
     def do_POST(self) -> None:
+        if self.path.startswith("/plugins/"):
+            self.handle_plugin_post()
+            return
+
         if self.path != "/chat":
             self.send_error(404)
             return
@@ -563,6 +574,36 @@ class AgentHandler(BaseHTTPRequestHandler):
             return
 
         self.send_json(build_reply(message, history, [str(item) for item in memories], request_mode))
+
+    def handle_plugin_post(self) -> None:
+        parts = [part for part in self.path.split("/") if part]
+        if len(parts) != 3:
+            self.send_error(404)
+            return
+
+        _, plugin_name, action_name = parts
+        length = int(self.headers.get("Content-Length", "0"))
+        raw_body = self.rfile.read(length)
+        try:
+            payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+        except json.JSONDecodeError:
+            self.send_error(400, "Invalid JSON")
+            return
+
+        if not isinstance(payload, dict):
+            self.send_error(400, "Plugin payload must be a JSON object")
+            return
+
+        try:
+            result = invoke_plugin(plugin_name, action_name, payload)
+        except KeyError as error:
+            self.send_error(404, str(error))
+            return
+        except Exception as error:
+            self.send_json({"ok": False, "plugin": plugin_name, "action": action_name, "error": str(error)})
+            return
+
+        self.send_json(result)
 
     def send_json(self, payload: dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

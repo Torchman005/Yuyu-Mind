@@ -109,6 +109,50 @@ type agentResponse struct {
 	ProviderError    string   `json:"providerError"`
 }
 
+type PluginInfo struct {
+	SchemaVersion string           `json:"schemaVersion"`
+	Name          string           `json:"name"`
+	DisplayName   string           `json:"displayName"`
+	Description   string           `json:"description"`
+	Version       string           `json:"version"`
+	Author        string           `json:"author"`
+	Enabled       bool             `json:"enabled"`
+	Entry         string           `json:"entry"`
+	Permissions   []string         `json:"permissions"`
+	Context       map[string]any   `json:"context"`
+	Config        map[string]any   `json:"config"`
+	ConfigSchema  map[string]any   `json:"configSchema"`
+	Actions       []map[string]any `json:"actions"`
+	LoadedActions []string         `json:"loadedActions"`
+}
+
+type PluginListReply struct {
+	OK      bool         `json:"ok"`
+	Plugins []PluginInfo `json:"plugins"`
+}
+
+type PluginInvokeResult struct {
+	OK          bool           `json:"ok"`
+	Plugin      string         `json:"plugin"`
+	Action      string         `json:"action"`
+	Error       string         `json:"error"`
+	Summary     string         `json:"summary"`
+	Metadata    map[string]any `json:"metadata"`
+	Vision      map[string]any `json:"vision"`
+	ImageBase64 string         `json:"imageBase64"`
+	ContentType string         `json:"contentType"`
+}
+
+type PluginContextCandidate struct {
+	Plugin       string
+	Action       string
+	Mode         string
+	Priority     int
+	Prompt       string
+	Result       PluginInvokeResult
+	ProviderName string
+}
+
 type App struct {
 	ctx          context.Context
 	db           *sql.DB
@@ -289,6 +333,26 @@ func (a *App) ClearChat() (AppState, error) {
 		AgentProvider: a.provider,
 		ProviderError: a.providerErr,
 	}, nil
+}
+
+func (a *App) ListPlugins() (PluginListReply, error) {
+	request, err := http.NewRequest(http.MethodGet, a.agentURL+"/plugins", nil)
+	if err != nil {
+		return PluginListReply{}, err
+	}
+	response, err := a.chatClient.Do(request)
+	if err != nil {
+		return PluginListReply{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return PluginListReply{}, errors.New("agent plugin registry returned a non-success status")
+	}
+	var reply PluginListReply
+	if err := json.NewDecoder(response.Body).Decode(&reply); err != nil {
+		return PluginListReply{}, err
+	}
+	return reply, nil
 }
 
 func (a *App) SynthesizeSpeech(text string) (SpeechReply, error) {
@@ -1615,6 +1679,75 @@ func envEnabledDefault(key string, fallback bool) bool {
 	}
 }
 
+func intEnv(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func stringValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case fmt.Stringer:
+		return typed.String()
+	default:
+		if value == nil {
+			return ""
+		}
+		return fmt.Sprint(value)
+	}
+}
+
+func intValue(value any, fallback int) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case json.Number:
+		parsed, err := typed.Int64()
+		if err != nil {
+			return fallback
+		}
+		return int(parsed)
+	case string:
+		parsed, err := strconv.Atoi(strings.TrimSpace(typed))
+		if err != nil {
+			return fallback
+		}
+		return parsed
+	default:
+		return fallback
+	}
+}
+
+func stringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		items := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text := strings.TrimSpace(stringValue(item))
+			if text != "" {
+				items = append(items, text)
+			}
+		}
+		return items
+	default:
+		return nil
+	}
+}
+
 func boolOrIntEnv(key string, fallback bool) any {
 	value := strings.ToLower(strings.TrimSpace(os.Getenv(key)))
 	if value == "" {
@@ -2045,7 +2178,13 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 		return ChatReply{}, err
 	}
 
-	agentReply, err := a.askAgent(content, history, memories)
+	agentContent := content
+	pluginContexts, pluginContextErrs := a.collectPluginContexts("chat", content)
+	if len(pluginContexts) > 0 {
+		agentContent = buildPluginAwareUserPrompt(content, pluginContexts)
+	}
+
+	agentReply, err := a.askAgent(agentContent, history, memories)
 	if err != nil {
 		agentReply = a.generateFallbackReply(content)
 		a.agentStatus = "offline"
@@ -2061,6 +2200,12 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 		if expectsDualLanguageSpeech() && strings.TrimSpace(agentReply.SpeechText) == "" {
 			a.providerErr = "Agent did not return speechText. Please stop the old python agent/main.py process and restart MochiAI."
 		}
+	}
+	if len(pluginContextErrs) > 0 {
+		if strings.TrimSpace(a.providerErr) != "" {
+			a.providerErr += " | "
+		}
+		a.providerErr += "plugin context failed: " + strings.Join(pluginContextErrs, "; ")
 	}
 
 	reply, err := a.saveMessage("assistant", agentReply.Text, normalizedEmotion(agentReply.Emotion))
@@ -2087,6 +2232,301 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 	}, nil
 }
 
+func (a *App) ObserveScreen(prompt string) (ChatReply, error) {
+	if a.db == nil {
+		return ChatReply{}, errors.New("database is not ready")
+	}
+
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		prompt = "看一下当前屏幕，告诉我你注意到了什么。"
+	}
+
+	observation, err := a.invokeAgentPlugin("screen", "observe", map[string]any{
+		"prompt":       prompt,
+		"includeImage": false,
+	})
+	if err != nil {
+		return ChatReply{}, err
+	}
+	if !observation.OK {
+		if strings.TrimSpace(observation.Error) != "" {
+			return ChatReply{}, errors.New(observation.Error)
+		}
+		return ChatReply{}, errors.New("screen plugin failed")
+	}
+
+	userMessage, err := a.saveMessage("user", prompt, "focused")
+	if err != nil {
+		return ChatReply{}, err
+	}
+
+	history, err := a.fetchMessages()
+	if err != nil {
+		return ChatReply{}, err
+	}
+	memories, err := a.fetchMemories()
+	if err != nil {
+		return ChatReply{}, err
+	}
+
+	screenContext := buildPluginContextPrompt(
+		"The user explicitly asked you to look at the current screen.",
+		prompt,
+		[]PluginContextCandidate{{
+			Plugin:       "screen",
+			Action:       "observe",
+			Mode:         "chat",
+			Prompt:       prompt,
+			Result:       observation,
+			ProviderName: "屏幕观察",
+		}},
+	)
+	agentReply, err := a.askAgentWithMode(screenContext, history, memories, "chat")
+	if err != nil {
+		summary := strings.TrimSpace(observation.Summary)
+		if summary == "" {
+			summary = "屏幕插件已经返回结果，但没有生成摘要。"
+		}
+		agentReply = agentResponse{
+			Text:       fmt.Sprintf("我看到了当前屏幕：%s", summary),
+			SpeechText: "画面は見えたよ。内容は画面の要約として確認できているみたい。",
+			Emotion:    "thinking",
+		}
+		a.agentStatus = "offline"
+		a.provider = "go-fallback"
+		a.providerErr = "screen plugin succeeded; agent reply failed: " + err.Error()
+	} else {
+		a.agentStatus = "online"
+		a.provider = strings.TrimSpace(agentReply.Provider)
+		a.providerErr = strings.TrimSpace(agentReply.ProviderError)
+		if a.provider == "" {
+			a.provider = "agent"
+		}
+		if strings.TrimSpace(agentReply.Text) == "" {
+			agentReply.Text = fmt.Sprintf("我看到了当前屏幕：%s", strings.TrimSpace(observation.Summary))
+			agentReply.Emotion = "thinking"
+		}
+	}
+
+	reply, err := a.saveMessage("assistant", agentReply.Text, normalizedEmotion(agentReply.Emotion))
+	if err != nil {
+		return ChatReply{}, err
+	}
+	a.saveMemoryCandidates(agentReply.MemoryCandidates, userMessage.ID)
+
+	messages, err := a.fetchMessages()
+	if err != nil {
+		return ChatReply{}, err
+	}
+
+	return ChatReply{
+		Messages:      messages,
+		Reply:         reply,
+		SpeechText:    chooseSpeechText(agentReply, reply.Content),
+		Emotion:       reply.Emotion,
+		AgentStatus:   a.agentStatus,
+		AgentProvider: a.provider,
+		ProviderError: a.providerErr,
+	}, nil
+}
+
+func (a *App) invokeAgentPlugin(plugin string, action string, payload map[string]any) (PluginInvokeResult, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return PluginInvokeResult{}, err
+	}
+	response, err := a.chatClient.Post(
+		fmt.Sprintf("%s/plugins/%s/%s", a.agentURL, url.PathEscape(plugin), url.PathEscape(action)),
+		"application/json",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return PluginInvokeResult{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		detail, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+		return PluginInvokeResult{}, fmt.Errorf("agent plugin returned status %d: %s", response.StatusCode, strings.TrimSpace(string(detail)))
+	}
+	var result PluginInvokeResult
+	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
+		return PluginInvokeResult{}, err
+	}
+	return result, nil
+}
+
+func (a *App) collectPluginContexts(mode string, message string) ([]PluginContextCandidate, []string) {
+	if !envEnabledDefault("MOCHI_PLUGIN_CONTEXT_ENABLED", true) {
+		return nil, nil
+	}
+	if mode == "chat" && !envEnabledDefault("MOCHI_PLUGIN_CONTEXT_CHAT_ENABLED", envEnabledDefault("MOCHI_SCREEN_CONTEXT_AUTO", true)) {
+		return nil, nil
+	}
+	if mode == "proactive" && !envEnabledDefault("MOCHI_PLUGIN_CONTEXT_PROACTIVE_ENABLED", envEnabledDefault("MOCHI_SCREEN_PROACTIVE_ENABLED", true)) {
+		return nil, nil
+	}
+	reply, err := a.ListPlugins()
+	if err != nil {
+		return nil, []string{err.Error()}
+	}
+	candidates := []PluginContextCandidate{}
+	errs := []string{}
+	for _, plugin := range reply.Plugins {
+		candidate, ok, err := a.maybeInvokePluginContext(plugin, mode, message)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("%s: %s", plugin.Name, err.Error()))
+			continue
+		}
+		if ok {
+			candidates = append(candidates, candidate)
+		}
+	}
+	return candidates, errs
+}
+
+func (a *App) maybeInvokePluginContext(plugin PluginInfo, mode string, message string) (PluginContextCandidate, bool, error) {
+	if !plugin.Enabled {
+		return PluginContextCandidate{}, false, nil
+	}
+	contextConfig, ok := plugin.Context["modes"].(map[string]any)
+	if !ok {
+		return PluginContextCandidate{}, false, nil
+	}
+	rawMode, ok := contextConfig[mode].(map[string]any)
+	if !ok {
+		return PluginContextCandidate{}, false, nil
+	}
+	if enabled, ok := rawMode["enabled"].(bool); ok && !enabled {
+		return PluginContextCandidate{}, false, nil
+	}
+	action := strings.TrimSpace(stringValue(rawMode["action"]))
+	if action == "" {
+		return PluginContextCandidate{}, false, nil
+	}
+	if !pluginHasLoadedAction(plugin, action) {
+		return PluginContextCandidate{}, false, nil
+	}
+	if mode == "chat" && !pluginContextMatchesMessage(rawMode, message) {
+		return PluginContextCandidate{}, false, nil
+	}
+	if mode == "proactive" && !pluginContextAllowsProactive(rawMode) {
+		return PluginContextCandidate{}, false, nil
+	}
+
+	result, err := a.invokeAgentPlugin(plugin.Name, action, map[string]any{
+		"prompt":       pluginContextPrompt(rawMode, message),
+		"includeImage": false,
+	})
+	if err != nil {
+		return PluginContextCandidate{}, false, err
+	}
+	if !result.OK {
+		if strings.TrimSpace(result.Error) != "" {
+			return PluginContextCandidate{}, false, errors.New(result.Error)
+		}
+		return PluginContextCandidate{}, false, errors.New("plugin returned unsuccessful context")
+	}
+	return PluginContextCandidate{
+		Plugin:       plugin.Name,
+		Action:       action,
+		Mode:         mode,
+		Priority:     intValue(rawMode["priority"], 50),
+		Prompt:       pluginContextPrompt(rawMode, message),
+		Result:       result,
+		ProviderName: plugin.DisplayName,
+	}, true, nil
+}
+
+func pluginHasLoadedAction(plugin PluginInfo, action string) bool {
+	for _, loaded := range plugin.LoadedActions {
+		if loaded == action {
+			return true
+		}
+	}
+	return false
+}
+
+func pluginContextMatchesMessage(config map[string]any, message string) bool {
+	text := strings.ToLower(strings.TrimSpace(message))
+	if text == "" {
+		return false
+	}
+	for _, marker := range stringSlice(config["triggers"]) {
+		if marker != "" && strings.Contains(text, strings.ToLower(marker)) {
+			return true
+		}
+	}
+	demonstratives := stringSlice(config["demonstratives"])
+	targets := stringSlice(config["targets"])
+	for _, demonstrative := range demonstratives {
+		if demonstrative == "" || !strings.Contains(text, strings.ToLower(demonstrative)) {
+			continue
+		}
+		for _, target := range targets {
+			if target != "" && strings.Contains(text, strings.ToLower(target)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func pluginContextAllowsProactive(config map[string]any) bool {
+	chance := intValue(config["chancePercent"], 0)
+	if chance <= 0 {
+		return false
+	}
+	if chance >= 100 {
+		return true
+	}
+	return int(time.Now().UnixNano()%100) < chance
+}
+
+func pluginContextPrompt(config map[string]any, fallback string) string {
+	prompt := strings.TrimSpace(stringValue(config["prompt"]))
+	if prompt != "" {
+		return prompt
+	}
+	return fallback
+}
+
+func buildPluginAwareUserPrompt(userMessage string, contexts []PluginContextCandidate) string {
+	return buildPluginContextPrompt(
+		"The user message appears to need live plugin context. Use the context below, then answer the user's original message directly.",
+		userMessage,
+		contexts,
+	)
+}
+
+func buildPluginContextPrompt(instruction string, userMessage string, contexts []PluginContextCandidate) string {
+	var details strings.Builder
+	for _, context := range contexts {
+		metadata, _ := json.Marshal(context.Result.Metadata)
+		vision, _ := json.Marshal(context.Result.Vision)
+		summary := strings.TrimSpace(context.Result.Summary)
+		if summary == "" {
+			summary = "The plugin returned no summary."
+		}
+		details.WriteString(fmt.Sprintf(`Provider: %s
+Plugin: %s.%s
+Summary:
+%s
+Metadata JSON:
+%s
+Details JSON:
+%s
+
+`, context.ProviderName, context.Plugin, context.Action, summary, string(metadata), string(vision)))
+	}
+	return fmt.Sprintf(`%s
+User request: %s
+
+Live plugin context:
+%s
+Answer naturally as the desktop companion. Do not mention internal plugin names unless the user asks.`, instruction, userMessage, strings.TrimSpace(details.String()))
+}
+
 func (a *App) GenerateProactiveMessage(trigger string) (ChatReply, error) {
 	if a.db == nil {
 		return ChatReply{}, errors.New("database is not ready")
@@ -2107,6 +2547,10 @@ func (a *App) GenerateProactiveMessage(trigger string) (ChatReply, error) {
 	}
 
 	content := buildProactivePrompt(trigger, history)
+	pluginContexts, pluginContextErrs := a.collectPluginContexts("proactive", trigger)
+	if len(pluginContexts) > 0 {
+		content = buildProactivePluginPrompt(trigger, history, pluginContexts)
+	}
 	agentReply, err := a.askAgentWithMode(content, history, memories, "proactive")
 	if err != nil {
 		agentReply = agentResponse{
@@ -2124,6 +2568,12 @@ func (a *App) GenerateProactiveMessage(trigger string) (ChatReply, error) {
 		if a.provider == "" {
 			a.provider = "agent"
 		}
+	}
+	if len(pluginContextErrs) > 0 {
+		if strings.TrimSpace(a.providerErr) != "" {
+			a.providerErr += " | "
+		}
+		a.providerErr += "proactive plugin context failed: " + strings.Join(pluginContextErrs, "; ")
 	}
 
 	reply, err := a.saveMessage("assistant", agentReply.Text, normalizedEmotion(agentReply.Emotion))
@@ -2209,6 +2659,24 @@ Rules:
 - If recent context is technical, gently refer to it.
 - If there is no useful context, simply check in warmly.
 - Do not mention timers, idle detection, triggers, or internal state.`, trigger, strings.TrimSpace(recent.String()))
+}
+
+func buildProactivePluginPrompt(trigger string, history []Message, contexts []PluginContextCandidate) string {
+	base := buildProactivePrompt(trigger, history)
+	contextText := buildPluginContextPrompt(
+		"Use this live plugin context only if it helps a low-interruption proactive desktop companion line.",
+		trigger,
+		contexts,
+	)
+	return fmt.Sprintf(`%s
+
+Live context:
+%s
+
+Extra rules for this proactive line:
+- You may gently tease, notice, or encourage based on the live context.
+- Keep it natural, specific, and low-interruption.
+- Do not say "I used a plugin" or name internal context systems.`, base, contextText)
 }
 
 func (a *App) saveMessage(role string, content string, emotion string) (Message, error) {
