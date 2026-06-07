@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 import socket
+import base64
+import tempfile
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -88,6 +90,8 @@ def load_dotenv() -> None:
 load_dotenv()
 load_builtin_plugins()
 
+_WHISPER_MODEL: Any | None = None
+
 
 def get_provider_name() -> str:
     return os.environ.get("LLM_PROVIDER", DEFAULT_PROVIDER).strip().lower() or DEFAULT_PROVIDER
@@ -115,6 +119,82 @@ def current_api_key() -> str:
     return os.environ.get(provider.api_key_env, "").strip()
 
 
+def asr_provider() -> str:
+    return (os.environ.get("ASR_PROVIDER") or "browser").strip().lower() or "browser"
+
+
+def asr_language() -> str:
+    return (os.environ.get("ASR_LANGUAGE") or "zh").strip() or "zh"
+
+
+def asr_audio_suffix(content_type: str) -> str:
+    content_type = content_type.lower()
+    if "wav" in content_type:
+        return ".wav"
+    if "ogg" in content_type:
+        return ".ogg"
+    if "mp4" in content_type or "m4a" in content_type:
+        return ".m4a"
+    return ".webm"
+
+
+def get_whisper_model() -> Any:
+    global _WHISPER_MODEL
+    if _WHISPER_MODEL is not None:
+        return _WHISPER_MODEL
+
+    try:
+        from faster_whisper import WhisperModel
+    except Exception as error:
+        raise RuntimeError("faster-whisper is not installed. Run: pip install faster-whisper") from error
+
+    model_name = os.environ.get("FASTER_WHISPER_MODEL", "small").strip() or "small"
+    device = os.environ.get("FASTER_WHISPER_DEVICE", "auto").strip() or "auto"
+    compute_type = os.environ.get("FASTER_WHISPER_COMPUTE_TYPE", "default").strip() or "default"
+    _WHISPER_MODEL = WhisperModel(model_name, device=device, compute_type=compute_type)
+    return _WHISPER_MODEL
+
+
+def transcribe_audio_payload(audio_base64: str, content_type: str, language: str = "") -> dict[str, Any]:
+    provider = asr_provider()
+    if provider not in {"faster_whisper", "faster-whisper", "whisper"}:
+        raise RuntimeError(f"Unsupported ASR_PROVIDER for agent ASR: {provider}")
+
+    try:
+        audio_bytes = base64.b64decode(audio_base64, validate=True)
+    except Exception as error:
+        raise RuntimeError("Invalid base64 audio payload") from error
+    if not audio_bytes:
+        raise RuntimeError("Empty audio payload")
+
+    suffix = asr_audio_suffix(content_type)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as audio_file:
+        audio_file.write(audio_bytes)
+        audio_path = audio_file.name
+
+    try:
+        model = get_whisper_model()
+        target_language = (language or asr_language()).strip() or asr_language()
+        segments, info = model.transcribe(
+            audio_path,
+            language=target_language,
+            vad_filter=True,
+            beam_size=int(os.environ.get("FASTER_WHISPER_BEAM_SIZE", "1") or "1"),
+        )
+        text = "".join(segment.text for segment in segments).strip()
+        return {
+            "text": text,
+            "provider": "faster-whisper",
+            "language": getattr(info, "language", target_language),
+            "duration": float(getattr(info, "duration", 0) or 0),
+        }
+    finally:
+        try:
+            os.remove(audio_path)
+        except OSError:
+            pass
+
+
 def reply_language() -> str:
     return (os.environ.get("YUYU_REPLY_LANGUAGE") or os.environ.get("MOCHI_REPLY_LANGUAGE", "zh_ja")).strip().lower() or "zh_ja"
 
@@ -136,6 +216,36 @@ def persona_prompt() -> str:
         "She can help with coding and desktop tasks while keeping a soft companion tone."
     )
     return (os.environ.get("YUYU_PERSONA") or os.environ.get("MOCHI_PERSONA", default_persona)).strip() or default_persona
+
+
+def proactive_style() -> str:
+    return (
+        os.environ.get("YUYU_PROACTIVE_STYLE")
+        or os.environ.get(
+            "MOCHI_PROACTIVE_STYLE",
+            "low-interruption, observant, gently playful, specific to the user's recent work when possible",
+        )
+    ).strip()
+
+
+def proactive_topics() -> str:
+    return (
+        os.environ.get("YUYU_PROACTIVE_TOPICS")
+        or os.environ.get(
+            "MOCHI_PROACTIVE_TOPICS",
+            "recent project context, visible screen context, user mood, tiny next-step suggestions, light technical teasing",
+        )
+    ).strip()
+
+
+def proactive_boundaries() -> str:
+    return (
+        os.environ.get("YUYU_PROACTIVE_BOUNDARIES")
+        or os.environ.get(
+            "MOCHI_PROACTIVE_BOUNDARIES",
+            "do not interrupt active speech, do not ask for long replies, do not mention screenshots or plugins unless asked",
+        )
+    ).strip()
 
 
 def detect_emotion(message: str) -> str:
@@ -217,6 +327,12 @@ def build_context(
         "replyLanguage": reply_language(),
         "requestMode": request_mode,
     }
+    if request_mode == "proactive":
+        context["proactiveGuidance"] = {
+            "style": proactive_style(),
+            "preferredTopics": proactive_topics(),
+            "boundaries": proactive_boundaries(),
+        }
     if repair_instruction:
         context["replyRepairInstruction"] = repair_instruction
     return context
@@ -255,7 +371,8 @@ Do not always answer in a flat Q&A pattern. If appropriate, add one small observ
 Do not overdo roleplay, honorifics, catchphrases, or summaries. Keep it alive but concise.
 For normal chat, answer the context `userMessage` directly. Do not say you did not understand unless `userMessage` is empty, broken ASR, or truly impossible to interpret.
 Avoid generic clarification templates such as "你在说什么", "没看懂", "听不懂", or "可以再说一遍" when the user message has usable content.
-If the context requestMode is "proactive", generate one short low-interruption line only. Do not mention triggers, timers, or being proactive. Do not ask for a long answer. It should feel like a natural little desktop comment.
+If the context requestMode is "proactive", generate one short low-interruption line only. Read `proactiveGuidance` carefully. Do not mention triggers, timers, screenshots, plugins, or being proactive. Do not ask for a long answer. It should feel like a natural little desktop comment.
+For proactive lines, choose one clear intent: notice something, gently encourage, lightly tease, or offer one tiny next step. Avoid repeating recent assistant lines or generic check-ins.
 If context contains `replyRepairInstruction`, follow it and replace the previous bad draft with a direct answer.
 The `text` field must follow the reply language instruction.
 Return only valid JSON with this schema:
@@ -548,6 +665,10 @@ class AgentHandler(BaseHTTPRequestHandler):
             self.handle_plugin_post()
             return
 
+        if self.path == "/asr":
+            self.handle_asr_post()
+            return
+
         if self.path != "/chat":
             self.send_error(404)
             return
@@ -574,6 +695,31 @@ class AgentHandler(BaseHTTPRequestHandler):
             return
 
         self.send_json(build_reply(message, history, [str(item) for item in memories], request_mode))
+
+    def handle_asr_post(self) -> None:
+        length = int(self.headers.get("Content-Length", "0"))
+        raw_body = self.rfile.read(length)
+        try:
+            payload = json.loads(raw_body.decode("utf-8"))
+        except json.JSONDecodeError:
+            self.send_error(400, "Invalid JSON")
+            return
+
+        if not isinstance(payload, dict):
+            self.send_error(400, "ASR payload must be a JSON object")
+            return
+
+        audio_base64 = str(payload.get("audioBase64", "")).strip()
+        content_type = str(payload.get("contentType", "audio/webm")).strip()
+        language = str(payload.get("language", "")).strip()
+        if not audio_base64:
+            self.send_error(400, "Empty audio payload")
+            return
+
+        try:
+            self.send_json(transcribe_audio_payload(audio_base64, content_type, language))
+        except Exception as error:
+            self.send_json({"text": "", "provider": asr_provider(), "error": str(error)})
 
     def handle_plugin_post(self) -> None:
         parts = [part for part in self.path.split("/") if part]

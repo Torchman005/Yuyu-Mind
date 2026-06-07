@@ -59,6 +59,14 @@ type SpeechReply struct {
 	Provider    string `json:"provider"`
 }
 
+type ASRReply struct {
+	Text     string  `json:"text"`
+	Provider string  `json:"provider"`
+	Language string  `json:"language"`
+	Duration float64 `json:"duration"`
+	Error    string  `json:"error,omitempty"`
+}
+
 type SpeechStreamStart struct {
 	SessionID   string `json:"sessionId"`
 	ContentType string `json:"contentType"`
@@ -412,6 +420,55 @@ func (a *App) SynthesizeSpeechStream(text string) (SpeechStreamStart, error) {
 	}
 	go a.streamFishSpeech(sessionID, text)
 	return start, nil
+}
+
+func (a *App) TranscribeAudio(audioBase64 string, contentType string, language string) (ASRReply, error) {
+	audioBase64 = strings.TrimSpace(audioBase64)
+	contentType = strings.TrimSpace(contentType)
+	language = strings.TrimSpace(language)
+	if audioBase64 == "" {
+		return ASRReply{}, errors.New("audio payload is empty")
+	}
+	if contentType == "" {
+		contentType = "audio/webm"
+	}
+
+	payload, err := json.Marshal(map[string]string{
+		"audioBase64": audioBase64,
+		"contentType": contentType,
+		"language":    language,
+	})
+	if err != nil {
+		return ASRReply{}, err
+	}
+
+	response, err := a.chatClient.Post(a.agentURL+"/asr", "application/json", bytes.NewReader(payload))
+	if err != nil {
+		return ASRReply{}, err
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		detail, _ := io.ReadAll(io.LimitReader(response.Body, 2048))
+		return ASRReply{}, fmt.Errorf("agent ASR returned status %d: %s", response.StatusCode, strings.TrimSpace(string(detail)))
+	}
+
+	var reply ASRReply
+	if err := json.NewDecoder(response.Body).Decode(&reply); err != nil {
+		return ASRReply{}, err
+	}
+	reply.Text = strings.TrimSpace(reply.Text)
+	reply.Error = strings.TrimSpace(reply.Error)
+	if reply.Error != "" {
+		return ASRReply{}, errors.New(reply.Error)
+	}
+	if reply.Text == "" {
+		return ASRReply{}, errors.New("ASR returned empty text")
+	}
+	if strings.TrimSpace(reply.Provider) == "" {
+		reply.Provider = "agent-asr"
+	}
+	return reply, nil
 }
 
 func (a *App) StartRealtimeSpeech(text string) (SpeechStreamStart, error) {
@@ -2664,6 +2721,7 @@ func (a *App) askAgentWithMode(content string, history []Message, memories []str
 
 func buildProactivePrompt(trigger string, history []Message) string {
 	var recent strings.Builder
+	var recentAssistant strings.Builder
 	start := len(history) - 6
 	if start < 0 {
 		start = 0
@@ -2677,17 +2735,28 @@ func buildProactivePrompt(trigger string, history []Message) string {
 		recent.WriteString(": ")
 		recent.WriteString(content)
 		recent.WriteString("\n")
+		if message.Role == "assistant" {
+			recentAssistant.WriteString("- ")
+			recentAssistant.WriteString(content)
+			recentAssistant.WriteString("\n")
+		}
 	}
 	return fmt.Sprintf(`Generate one short proactive desktop companion line.
 Trigger: %s
+Trigger meaning: %s
 Recent context:
+%s
+Recent assistant lines to avoid repeating:
 %s
 Rules:
 - One sentence, or two very short sentences at most.
 - Low interruption. Do not demand an answer.
-- If recent context is technical, gently refer to it.
+- Pick one intent: notice, encourage, lightly tease, or suggest one tiny next step.
+- If recent context is technical, gently refer to it without summarizing the whole task.
+- If the trigger includes screen-context, use live context only when it gives a specific natural comment.
 - If there is no useful context, simply check in warmly.
-- Do not mention timers, idle detection, triggers, or internal state.`, trigger, strings.TrimSpace(recent.String()))
+- Do not repeat recent assistant wording.
+- Do not mention timers, idle detection, triggers, screenshots, plugins, or internal state.`, trigger, describeProactiveTrigger(trigger), strings.TrimSpace(recent.String()), strings.TrimSpace(recentAssistant.String()))
 }
 
 func buildProactivePluginPrompt(trigger string, history []Message, contexts []PluginContextCandidate) string {
@@ -2706,6 +2775,27 @@ Extra rules for this proactive line:
 - You may gently tease, notice, or encourage based on the live context.
 - Keep it natural, specific, and low-interruption.
 - Do not say "I used a plugin" or name internal context systems.`, base, contextText)
+}
+
+func describeProactiveTrigger(trigger string) string {
+	parts := strings.Split(strings.TrimSpace(trigger), ":")
+	base := ""
+	if len(parts) > 0 {
+		base = strings.TrimSpace(parts[0])
+	}
+	var description string
+	switch base {
+	case "pet-idle":
+		description = "The desktop pet has been quiet for a while and may make one small companion comment."
+	case "free-idle":
+		description = "Full mode free conversation is enabled and the user has been idle for a while."
+	default:
+		description = "The companion may make one low-interruption proactive comment."
+	}
+	if strings.Contains(trigger, "screen-context") {
+		description += " Live screen context may be available; use it only if it makes the comment more specific."
+	}
+	return description
 }
 
 func (a *App) saveMessage(role string, content string, emotion string) (Message, error) {

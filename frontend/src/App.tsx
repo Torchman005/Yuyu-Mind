@@ -9,6 +9,7 @@ import {
     SendMessage,
     SynthesizeSpeech,
     SynthesizeSpeechStream,
+    TranscribeAudio,
     UpdatePetHitTest,
 } from '../wailsjs/go/main/App';
 import {
@@ -65,6 +66,14 @@ type FishLiveProbeResult = {
     audioSize?: number;
 };
 
+type ASRReply = {
+    text?: string;
+    provider?: string;
+    language?: string;
+    duration?: number;
+    error?: string;
+};
+
 const emotionLabel: Record<string, string> = {
     neutral: '待机',
     happy: '开心',
@@ -77,6 +86,8 @@ const emotionLabel: Record<string, string> = {
 const PET_MODE_KEY = 'yuyu.petMode';
 const PET_SCALE_KEY = 'yuyu.petScale';
 const CONTINUOUS_VOICE_KEY = 'yuyu.continuousVoice';
+const CONVERSATION_MODE_KEY = 'yuyu.conversationMode';
+const SPEECH_LANGUAGE_KEY = 'yuyu.speechLanguage';
 const LEGACY_PET_MODE_KEY = 'mochi.petMode';
 const LEGACY_PET_SCALE_KEY = 'mochi.petScale';
 const LEGACY_CONTINUOUS_VOICE_KEY = 'mochi.continuousVoice';
@@ -99,10 +110,19 @@ const ALLOW_SYSTEM_TTS_FALLBACK = ((import.meta.env.VITE_ALLOW_SYSTEM_TTS_FALLBA
 const ENABLE_STREAMING_TTS = ((import.meta.env.VITE_ENABLE_STREAMING_TTS as string | undefined) || 'false').trim().toLowerCase() === 'true';
 const ENABLE_REALTIME_SPEECH = ((import.meta.env.VITE_REALTIME_SPEECH as string | undefined) || 'false').trim().toLowerCase() === 'true';
 const SHOW_SPEECH_DEBUG = ((import.meta.env.VITE_SHOW_SPEECH_DEBUG as string | undefined) || 'false').trim().toLowerCase() === 'true';
+const ASR_PROVIDER = ((import.meta.env.VITE_ASR_PROVIDER as string | undefined) || 'browser').trim().toLowerCase();
+const DEFAULT_SPEECH_LANGUAGE = ((import.meta.env.VITE_SPEECH_LANGUAGE as string | undefined) || 'ja').trim().toLowerCase().startsWith('zh') ? 'zh' : 'ja';
 const PROACTIVE_ENABLED = ((import.meta.env.VITE_PROACTIVE_ENABLED as string | undefined) || 'true').trim().toLowerCase() === 'true';
 const PROACTIVE_IDLE_MINUTES = Number((import.meta.env.VITE_PROACTIVE_IDLE_MINUTES as string | undefined) || '8');
 const PROACTIVE_COOLDOWN_MINUTES = Number((import.meta.env.VITE_PROACTIVE_COOLDOWN_MINUTES as string | undefined) || '15');
 const PROACTIVE_QUIET_HOURS = ((import.meta.env.VITE_PROACTIVE_QUIET_HOURS as string | undefined) || '01:00-09:00').trim();
+const PROACTIVE_CHECK_SECONDS = Number((import.meta.env.VITE_PROACTIVE_CHECK_SECONDS as string | undefined) || '30');
+const PROACTIVE_FREE_MODE_ENABLED = ((import.meta.env.VITE_PROACTIVE_FREE_MODE_ENABLED as string | undefined) || 'true').trim().toLowerCase() === 'true';
+const PROACTIVE_PLUGIN_CONTEXT_HINT_MINUTES = Number((import.meta.env.VITE_PROACTIVE_PLUGIN_CONTEXT_HINT_MINUTES as string | undefined) || '20');
+const PROACTIVE_CHANCE_PERCENT = clamp(Number((import.meta.env.VITE_PROACTIVE_CHANCE_PERCENT as string | undefined) || '35'), 0, 100);
+const PROACTIVE_MAX_PER_HOUR = Number((import.meta.env.VITE_PROACTIVE_MAX_PER_HOUR as string | undefined) || '3');
+const MAX_VISIBLE_CHAT_ROUNDS = Number((import.meta.env.VITE_MAX_VISIBLE_CHAT_ROUNDS as string | undefined) || '20');
+const DEFAULT_CONVERSATION_MODE = ((import.meta.env.VITE_CONVERSATION_MODE as string | undefined) || 'manual').trim().toLowerCase() === 'free' ? 'free' : 'manual';
 const VOICE_RELISTEN_DELAY_MS = 280;
 const VOICE_LOOP_MAX_EMPTY_TURNS = 4;
 const VOICE_LOOP_EMPTY_BACKOFF_MS = 900;
@@ -114,6 +134,8 @@ const VOICE_GATE_ENABLED = ((import.meta.env.VITE_VOICE_GATE_ENABLED as string |
 const VOICE_GATE_THRESHOLD = Number((import.meta.env.VITE_VOICE_GATE_THRESHOLD as string | undefined) || '0.035');
 const VOICE_GATE_HOLD_MS = Number((import.meta.env.VITE_VOICE_GATE_HOLD_MS as string | undefined) || '160');
 const VOICE_GATE_TIMEOUT_MS = Number((import.meta.env.VITE_VOICE_GATE_TIMEOUT_MS as string | undefined) || '12000');
+const VOICE_AUTO_SUBMIT_SILENCE_MS = Number((import.meta.env.VITE_VOICE_AUTO_SUBMIT_SILENCE_MS as string | undefined) || '900');
+const VOICE_MAX_UTTERANCE_MS = Number((import.meta.env.VITE_VOICE_MAX_UTTERANCE_MS as string | undefined) || '15000');
 const BARGE_IN_MIN_CHARS = 2;
 const BARGE_IN_ECHO_SIMILARITY = 0.68;
 
@@ -138,6 +160,21 @@ function isEditableTarget(target: EventTarget | null) {
     return Boolean(element?.closest('input, textarea, [contenteditable="true"]'));
 }
 
+function visibleChatMessages(items: Message[], maxRounds: number) {
+    if (!Number.isFinite(maxRounds) || maxRounds <= 0) {
+        return items;
+    }
+
+    const userIndexes = items
+        .map((message, index) => message.role === 'user' ? index : -1)
+        .filter((index) => index >= 0);
+    if (userIndexes.length <= maxRounds) {
+        return items;
+    }
+
+    return items.slice(userIndexes[userIndexes.length - maxRounds]);
+}
+
 function decodeBase64Audio(base64: string) {
     const binary = window.atob(base64);
     const bytes = new Uint8Array(binary.length);
@@ -145,6 +182,26 @@ function decodeBase64Audio(base64: string) {
         bytes[index] = binary.charCodeAt(index);
     }
     return bytes;
+}
+
+function blobToBase64(blob: Blob) {
+    return new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+            const result = String(reader.result || '');
+            resolve(result.includes(',') ? result.split(',').pop() || '' : result);
+        };
+        reader.onerror = () => reject(reader.error || new Error('Failed to read audio blob'));
+        reader.readAsDataURL(blob);
+    });
+}
+
+function normalizeSpeechLanguage(value: string | null | undefined) {
+    return String(value || '').trim().toLowerCase().startsWith('zh') ? 'zh' : 'ja';
+}
+
+function speechRecognitionLang(language: string) {
+    return normalizeSpeechLanguage(language) === 'zh' ? 'zh-CN' : 'ja-JP';
 }
 
 function isInterruptedPlaybackError(reason: unknown) {
@@ -304,6 +361,10 @@ function App() {
     const [isPetControlsOpen, setIsPetControlsOpen] = useState(false);
     const [isTextInputOpen, setIsTextInputOpen] = useState(false);
     const [continuousVoiceMode, setContinuousVoiceMode] = useState(() => (localStorage.getItem(CONTINUOUS_VOICE_KEY) ?? localStorage.getItem(LEGACY_CONTINUOUS_VOICE_KEY)) === 'true');
+    const [conversationMode, setConversationMode] = useState(() => localStorage.getItem(CONVERSATION_MODE_KEY) === 'free' ? 'free' : DEFAULT_CONVERSATION_MODE);
+    const [speechLanguage, setSpeechLanguage] = useState(() => normalizeSpeechLanguage(localStorage.getItem(SPEECH_LANGUAGE_KEY) || DEFAULT_SPEECH_LANGUAGE));
+    const freeConversationMode = conversationMode === 'free';
+    const effectiveContinuousVoiceMode = continuousVoiceMode || freeConversationMode;
     const feedRef = useRef<HTMLDivElement>(null);
     const composerInputRef = useRef<HTMLInputElement>(null);
     const recognitionRef = useRef<any>(null);
@@ -321,6 +382,8 @@ function App() {
     const voiceGateStreamRef = useRef<MediaStream | null>(null);
     const lastUserActivityRef = useRef(Date.now());
     const lastProactiveAtRef = useRef(0);
+    const lastProactiveContextHintAtRef = useRef(0);
+    const proactiveSpeechTimestampsRef = useRef<number[]>([]);
     const proactiveInFlightRef = useRef(false);
 
     const assistantLine = useMemo(() => {
@@ -334,6 +397,10 @@ function App() {
     const avatarPerformance = useMemo(
         () => inferAvatarPerformance(assistantLine, emotion, voiceStatus === 'speaking'),
         [assistantLine, emotion, voiceStatus],
+    );
+    const displayedMessages = useMemo(
+        () => visibleChatMessages(messages, MAX_VISIBLE_CHAT_ROUNDS),
+        [messages],
     );
 
     useEffect(() => {
@@ -363,19 +430,30 @@ function App() {
     }, []);
 
     useEffect(() => {
-        if (!PROACTIVE_ENABLED || !isPetMode) {
+        const canSpeakProactively = isPetMode || (PROACTIVE_FREE_MODE_ENABLED && freeConversationMode);
+        if (!PROACTIVE_ENABLED || !canSpeakProactively) {
             return;
         }
 
         const idleMs = Math.max(1, PROACTIVE_IDLE_MINUTES) * 60 * 1000;
         const cooldownMs = Math.max(1, PROACTIVE_COOLDOWN_MINUTES) * 60 * 1000;
+        const contextHintMs = Math.max(1, PROACTIVE_PLUGIN_CONTEXT_HINT_MINUTES) * 60 * 1000;
+        const intervalMs = Math.max(5, PROACTIVE_CHECK_SECONDS) * 1000;
+        const maxPerHour = Math.floor(PROACTIVE_MAX_PER_HOUR);
         const interval = window.setInterval(() => {
             const now = Date.now();
+            const hasPendingVoiceLoop = effectiveContinuousVoiceMode && (
+                Boolean(recognitionRef.current) ||
+                Boolean(voiceGateStreamRef.current) ||
+                relistenTimerRef.current !== null
+            );
             if (
                 proactiveInFlightRef.current ||
                 isSending ||
+                isObservingScreen ||
                 isTextInputOpen ||
                 voiceStatus !== 'idle' ||
+                hasPendingVoiceLoop ||
                 now - lastUserActivityRef.current < idleMs ||
                 now - lastProactiveAtRef.current < cooldownMs ||
                 isWithinQuietHours(PROACTIVE_QUIET_HOURS)
@@ -383,16 +461,35 @@ function App() {
                 return;
             }
 
-            proactiveInFlightRef.current = true;
+            if (maxPerHour <= 0) {
+                return;
+            }
+            proactiveSpeechTimestampsRef.current = proactiveSpeechTimestampsRef.current.filter((timestamp) => now - timestamp < 60 * 60 * 1000);
+            if (proactiveSpeechTimestampsRef.current.length >= maxPerHour) {
+                return;
+            }
+
             lastProactiveAtRef.current = now;
-            GenerateProactiveMessage('idle')
+            if (Math.random() * 100 >= PROACTIVE_CHANCE_PERCENT) {
+                return;
+            }
+
+            const baseTrigger = isPetMode ? 'pet-idle' : 'free-idle';
+            const shouldHintPluginContext = now - lastProactiveContextHintAtRef.current >= contextHintMs;
+            const trigger = shouldHintPluginContext ? `${baseTrigger}:screen-context` : baseTrigger;
+            proactiveInFlightRef.current = true;
+            proactiveSpeechTimestampsRef.current = [...proactiveSpeechTimestampsRef.current, now];
+            if (shouldHintPluginContext) {
+                lastProactiveContextHintAtRef.current = now;
+            }
+            GenerateProactiveMessage(trigger)
                 .then((response: ChatResponse) => {
                     setMessages(response.messages ?? []);
                     setEmotion(response.emotion || response.reply?.emotion || 'neutral');
                     setAgentStatus(response.agentStatus || 'offline');
                     setAgentProvider(response.agentProvider || 'unknown');
                     setProviderError(response.providerError || '');
-                    void speakText(response.speechText || response.reply?.content || '');
+                    speakResponse(response);
                 })
                 .catch((reason) => {
                     console.warn('Proactive message failed:', reason);
@@ -400,17 +497,17 @@ function App() {
                 .finally(() => {
                     proactiveInFlightRef.current = false;
                 });
-        }, 30 * 1000);
+        }, intervalMs);
 
         return () => window.clearInterval(interval);
-    }, [isPetMode, isSending, isTextInputOpen, voiceStatus]);
+    }, [effectiveContinuousVoiceMode, freeConversationMode, isObservingScreen, isPetMode, isSending, isTextInputOpen, voiceStatus]);
 
     useEffect(() => {
         feedRef.current?.scrollTo({
             top: feedRef.current.scrollHeight,
             behavior: 'smooth',
         });
-    }, [messages]);
+    }, [displayedMessages]);
 
     function addSpeechMetric(metric: SpeechMetric) {
         setSpeechMetrics((items) => [...items.slice(-11), metric]);
@@ -442,6 +539,10 @@ function App() {
             elapsedMs: 0,
             detail: `${reason} ${count}/${VOICE_LOOP_MAX_EMPTY_TURNS}`,
         });
+        if (freeConversationMode) {
+            voiceEmptyTurnsRef.current = Math.min(count, VOICE_LOOP_MAX_EMPTY_TURNS);
+            return true;
+        }
         if (count < VOICE_LOOP_MAX_EMPTY_TURNS) {
             return true;
         }
@@ -602,14 +703,39 @@ function App() {
 
     useEffect(() => {
         localStorage.setItem(CONTINUOUS_VOICE_KEY, String(continuousVoiceMode));
-        if (!continuousVoiceMode) {
+        if (!effectiveContinuousVoiceMode) {
             voiceLoopRef.current = false;
         }
-    }, [continuousVoiceMode]);
+    }, [continuousVoiceMode, effectiveContinuousVoiceMode]);
+
+    useEffect(() => {
+        localStorage.setItem(CONVERSATION_MODE_KEY, conversationMode);
+    }, [conversationMode]);
+
+    useEffect(() => {
+        localStorage.setItem(SPEECH_LANGUAGE_KEY, speechLanguage);
+    }, [speechLanguage]);
 
     useEffect(() => {
         voiceStatusRef.current = voiceStatus;
     }, [voiceStatus]);
+
+    useEffect(() => {
+        if (!freeConversationMode) {
+            return;
+        }
+
+        voiceLoopRef.current = true;
+        if (
+            voiceStatus === 'idle' &&
+            !isSending &&
+            !recognitionRef.current &&
+            !voiceGateStreamRef.current &&
+            relistenTimerRef.current === null
+        ) {
+            void startVoiceInput(true);
+        }
+    }, [freeConversationMode, isSending, voiceStatus]);
 
     useEffect(() => {
         if (!canUseWailsRuntime()) {
@@ -727,7 +853,7 @@ function App() {
 
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [continuousVoiceMode, isPetMode, isSending, voiceStatus]);
+    }, [effectiveContinuousVoiceMode, isPetMode, isSending, voiceStatus]);
 
     useEffect(() => {
         if (isTextInputOpen) {
@@ -817,13 +943,15 @@ function App() {
             detail: content,
         }]);
         stopCurrentAudio();
+        clearRelistenTimer();
         setVoiceStatus('thinking');
+        setEmotion('focused');
         setDraft('');
         void sendContent(content);
     }
 
     function startBargeInListening(playbackId: number) {
-        if (!isPetMode || !continuousVoiceMode || !voiceLoopRef.current || bargeRecognitionRef.current || recognitionRef.current) {
+        if (!effectiveContinuousVoiceMode || !voiceLoopRef.current || bargeRecognitionRef.current || recognitionRef.current) {
             return;
         }
         const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -833,7 +961,7 @@ function App() {
 
         const recognition = new SpeechRecognition();
         bargeRecognitionRef.current = recognition;
-        recognition.lang = 'zh-CN';
+        recognition.lang = speechRecognitionLang(speechLanguage);
         recognition.continuous = true;
         recognition.interimResults = true;
 
@@ -1321,6 +1449,19 @@ function App() {
         }
     }
 
+    function speechContentForResponse(response: ChatResponse) {
+        const text = response.reply?.content?.trim() || '';
+        const speechText = response.speechText?.trim() || '';
+        if (speechLanguage === 'zh') {
+            return text || speechText;
+        }
+        return speechText || text;
+    }
+
+    function speakResponse(response: ChatResponse) {
+        void speakText(speechContentForResponse(response));
+    }
+
     async function sendContent(rawContent: string) {
         const content = rawContent.trim();
         if (!content || isSendingRef.current) {
@@ -1347,7 +1488,7 @@ function App() {
         setSpeechMetrics((items) => [...items, {
             phase: 'realtime-disabled',
             elapsedMs: 0,
-            detail: `mode=${SPEECH_OUTPUT_MODE}, streaming=${ENABLE_STREAMING_TTS}, realtime=${ENABLE_REALTIME_SPEECH}; using reply speechText`,
+            detail: `mode=${SPEECH_OUTPUT_MODE}, streaming=${ENABLE_STREAMING_TTS}, realtime=${ENABLE_REALTIME_SPEECH}; speechLanguage=${speechLanguage}`,
         }]);
 
         try {
@@ -1357,7 +1498,7 @@ function App() {
             setAgentStatus(response.agentStatus || 'offline');
             setAgentProvider(response.agentProvider || 'unknown');
             setProviderError(response.providerError || '');
-            void speakText(response.speechText || response.reply?.content || '');
+            speakResponse(response);
         } catch (reason) {
             setError(String(reason));
             finishSpeaking();
@@ -1423,7 +1564,7 @@ function App() {
             setAgentStatus(response.agentStatus || 'offline');
             setAgentProvider(response.agentProvider || 'unknown');
             setProviderError(response.providerError || '');
-            void speakText(response.speechText || response.reply?.content || '');
+            speakResponse(response);
         } catch (reason) {
             setError(String(reason));
             finishSpeaking();
@@ -1460,9 +1601,194 @@ function App() {
         }
     }
 
-    async function startVoiceInput(fromLoop = false) {
+    async function startModelASRVoiceInput(fromLoop = false) {
         if (!fromLoop) {
-            voiceLoopRef.current = continuousVoiceMode;
+            voiceLoopRef.current = effectiveContinuousVoiceMode;
+            resetVoiceEmptyTurns();
+        }
+        clearRelistenTimer();
+
+        if (fromLoop && voiceLoopRef.current) {
+            const gateOpen = await waitForVoiceGate();
+            if (!gateOpen) {
+                setVoiceStatus('idle');
+                setEmotion('neutral');
+                if (voiceLoopRef.current && !isSendingRef.current && voiceStatusRef.current !== 'speaking') {
+                    finishSpeaking();
+                }
+                return;
+            }
+        }
+
+        if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+            setVoiceError('当前 WebView 不支持录音 ASR，已回退到浏览器语音识别。');
+            await startBrowserVoiceInput(fromLoop);
+            return;
+        }
+
+        let stream: MediaStream;
+        try {
+            stream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true,
+                },
+            });
+        } catch (reason) {
+            setVoiceStatus('idle');
+            setVoiceError(`麦克风启动失败：${String(reason)}`);
+            if (voiceLoopRef.current && registerEmptyVoiceTurn('mic-failed')) {
+                finishSpeaking();
+            }
+            return;
+        }
+
+        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+        const audioContext = AudioContextClass ? new AudioContextClass() : null;
+        const source = audioContext?.createMediaStreamSource(stream);
+        const analyser = audioContext?.createAnalyser();
+        if (analyser) {
+            analyser.fftSize = 1024;
+            source?.connect(analyser);
+        }
+
+        const contentType = MediaRecorder.isTypeSupported?.('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+        const recorder = new MediaRecorder(stream, {mimeType: contentType});
+        const chunks: Blob[] = [];
+        const startedAt = performance.now();
+        let frame = 0;
+        let stopped = false;
+        let silentSince = 0;
+        const data = new Uint8Array(analyser?.fftSize || 1024);
+
+        const cleanup = () => {
+            if (frame) {
+                window.cancelAnimationFrame(frame);
+            }
+            source?.disconnect();
+            analyser?.disconnect();
+            void audioContext?.close?.();
+            stream.getTracks().forEach((track) => track.stop());
+        };
+
+        const stopRecording = (reason: string) => {
+            if (stopped) {
+                return;
+            }
+            stopped = true;
+            addSpeechMetric({
+                phase: 'asr-record-stop',
+                elapsedMs: Math.round(performance.now() - startedAt),
+                detail: reason,
+            });
+            recorder.stop();
+        };
+
+        recorder.ondataavailable = (event) => {
+            if (event.data?.size) {
+                chunks.push(event.data);
+            }
+        };
+
+        recorder.onstop = async () => {
+            cleanup();
+            if (!chunks.length) {
+                setVoiceStatus('idle');
+                if (voiceLoopRef.current && registerEmptyVoiceTurn('asr-empty-audio')) {
+                    finishSpeaking();
+                }
+                return;
+            }
+
+            setVoiceStatus('thinking');
+            try {
+                const blob = new Blob(chunks, {type: contentType});
+                const audioBase64 = await blobToBase64(blob);
+                const reply = await TranscribeAudio(audioBase64, contentType, speechLanguage) as ASRReply;
+                const content = String(reply.text || '').trim();
+                addSpeechMetric({
+                    phase: 'asr-transcribed',
+                    elapsedMs: Math.round(performance.now() - startedAt),
+                    detail: `${reply.provider || ASR_PROVIDER}: ${content || 'empty'}`,
+                });
+                if (!content || !isUsableVoiceTranscript(content, 1, {fromLoop, assistantLine})) {
+                    setVoiceStatus('idle');
+                    setEmotion('neutral');
+                    setDraft('');
+                    if (voiceLoopRef.current && registerEmptyVoiceTurn(content ? 'asr-filtered' : 'asr-empty')) {
+                        finishSpeaking();
+                    }
+                    return;
+                }
+                resetVoiceEmptyTurns();
+                setDraft(content);
+                void sendContent(content);
+            } catch (reason) {
+                setVoiceStatus('idle');
+                setVoiceError(`ASR 识别失败：${String(reason)}`);
+                if (voiceLoopRef.current && registerEmptyVoiceTurn('asr-failed')) {
+                    finishSpeaking();
+                }
+            }
+        };
+
+        setVoiceError('');
+        setVoiceStatus('listening');
+        setEmotion('thinking');
+        addSpeechMetric({phase: 'asr-record-start', elapsedMs: 0, detail: ASR_PROVIDER});
+        recorder.start();
+
+        const sample = (now: number) => {
+            if (stopped) {
+                return;
+            }
+            if (!voiceLoopRef.current && fromLoop) {
+                stopRecording('loop stopped');
+                return;
+            }
+            if (performance.now() - startedAt >= VOICE_MAX_UTTERANCE_MS) {
+                stopRecording('max-utterance');
+                return;
+            }
+            if (!analyser) {
+                frame = window.requestAnimationFrame(sample);
+                return;
+            }
+
+            analyser.getByteTimeDomainData(data);
+            let sum = 0;
+            for (let index = 0; index < data.length; index += 1) {
+                const value = (data[index] - 128) / 128;
+                sum += value * value;
+            }
+            const rms = Math.sqrt(sum / data.length);
+            const elapsed = performance.now() - startedAt;
+            if (elapsed > 450 && rms < VOICE_GATE_THRESHOLD * 0.65) {
+                silentSince = silentSince || now;
+                if (now - silentSince >= VOICE_AUTO_SUBMIT_SILENCE_MS) {
+                    stopRecording(`silence rms=${rms.toFixed(3)}`);
+                    return;
+                }
+            } else {
+                silentSince = 0;
+            }
+            frame = window.requestAnimationFrame(sample);
+        };
+        frame = window.requestAnimationFrame(sample);
+    }
+
+    async function startVoiceInput(fromLoop = false) {
+        if (ASR_PROVIDER !== 'browser' && ASR_PROVIDER !== 'webspeech') {
+            await startModelASRVoiceInput(fromLoop);
+            return;
+        }
+        await startBrowserVoiceInput(fromLoop);
+    }
+
+    async function startBrowserVoiceInput(fromLoop = false) {
+        if (!fromLoop) {
+            voiceLoopRef.current = effectiveContinuousVoiceMode;
             resetVoiceEmptyTurns();
         }
         clearRelistenTimer();
@@ -1498,17 +1824,58 @@ function App() {
         window.speechSynthesis?.cancel?.();
         const recognition = new SpeechRecognition();
         recognitionRef.current = recognition;
-        recognition.lang = 'zh-CN';
-        recognition.continuous = false;
+        recognition.lang = speechRecognitionLang(speechLanguage);
+        recognition.continuous = Boolean(fromLoop && voiceLoopRef.current);
         recognition.interimResults = true;
 
         let finalTranscript = '';
         let latestTranscript = '';
         let bestConfidence = 0;
         let recognitionFailed = false;
+        let silenceTimer = 0;
+        let maxUtteranceTimer = 0;
+        let autoStopping = false;
         setVoiceError('');
         setVoiceStatus('listening');
         setEmotion('thinking');
+
+        const clearVoiceTimers = () => {
+            if (silenceTimer) {
+                window.clearTimeout(silenceTimer);
+                silenceTimer = 0;
+            }
+            if (maxUtteranceTimer) {
+                window.clearTimeout(maxUtteranceTimer);
+                maxUtteranceTimer = 0;
+            }
+        };
+
+        const stopAfterSpeechPause = (reason: string) => {
+            if (!fromLoop || autoStopping || !latestTranscript.trim()) {
+                return;
+            }
+            autoStopping = true;
+            addSpeechMetric({
+                phase: 'voice-auto-submit',
+                elapsedMs: 0,
+                detail: reason,
+            });
+            recognition.stop?.();
+        };
+
+        const scheduleAutoSubmit = () => {
+            if (!fromLoop || !latestTranscript.trim()) {
+                return;
+            }
+            if (silenceTimer) {
+                window.clearTimeout(silenceTimer);
+            }
+            silenceTimer = window.setTimeout(() => stopAfterSpeechPause('silence'), VOICE_AUTO_SUBMIT_SILENCE_MS);
+        };
+
+        if (fromLoop) {
+            maxUtteranceTimer = window.setTimeout(() => stopAfterSpeechPause('max-utterance'), VOICE_MAX_UTTERANCE_MS);
+        }
 
         recognition.onresult = (event: any) => {
             let interimTranscript = '';
@@ -1524,12 +1891,14 @@ function App() {
             }
             latestTranscript = (finalTranscript || interimTranscript).trim();
             setDraft(latestTranscript);
+            scheduleAutoSubmit();
             if (latestTranscript && !isPetMode) {
                 setIsTextInputOpen(true);
             }
         };
 
         recognition.onerror = (event: any) => {
+            clearVoiceTimers();
             recognitionFailed = true;
             recognitionRef.current = null;
             const errorName = String(event.error || '');
@@ -1545,6 +1914,7 @@ function App() {
         };
 
         recognition.onend = () => {
+            clearVoiceTimers();
             if (recognitionFailed) {
                 return;
             }
@@ -1573,6 +1943,7 @@ function App() {
         try {
             recognition.start();
         } catch (reason) {
+            clearVoiceTimers();
             recognitionRef.current = null;
             setVoiceStatus('idle');
             if (voiceLoopRef.current) {
@@ -1617,7 +1988,7 @@ function App() {
                 }}
                 disabled={isSending || voiceStatus === 'thinking'}
             >
-                {voiceStatus === 'listening' ? '停止' : (continuousVoiceMode ? '连续' : '语音')}
+                {voiceStatus === 'listening' ? '停止' : (freeConversationMode ? '自由' : effectiveContinuousVoiceMode ? '连续' : '语音')}
             </button>
             {isTextInputOpen && (
                 <button type="submit" disabled={isSending || !draft.trim()}>
@@ -1733,10 +2104,27 @@ function App() {
                             <button
                                 type="button"
                                 className="ghost-button"
-                                aria-pressed={continuousVoiceMode}
-                                onClick={() => setContinuousVoiceMode((value) => !value)}
+                                aria-pressed={freeConversationMode}
+                                onClick={() => setConversationMode((value) => value === 'free' ? 'manual' : 'free')}
                             >
-                                持续对话 {continuousVoiceMode ? '开' : '关'}
+                                自由聊天 {freeConversationMode ? '开' : '关'}
+                            </button>
+                            <button
+                                type="button"
+                                className="ghost-button"
+                                aria-pressed={effectiveContinuousVoiceMode}
+                                onClick={() => setContinuousVoiceMode((value) => !value)}
+                                disabled={freeConversationMode}
+                            >
+                                持续对话 {effectiveContinuousVoiceMode ? '开' : '关'}
+                            </button>
+                            <button
+                                type="button"
+                                className="ghost-button"
+                                aria-pressed={speechLanguage === 'ja'}
+                                onClick={() => setSpeechLanguage((value) => value === 'zh' ? 'ja' : 'zh')}
+                            >
+                                语音 {speechLanguage === 'zh' ? '中文' : '日语'}
                             </button>
                             {SHOW_SPEECH_DEBUG && (
                                 <button
@@ -1761,14 +2149,14 @@ function App() {
                     </header>
 
                     <div className="message-feed" ref={feedRef}>
-                        {messages.length === 0 && (
+                        {displayedMessages.length === 0 && (
                             <div className="empty-state">
                                 <strong>第一步已经就位。</strong>
                                 <span>试试输入“你好”或“记住我喜欢中文简洁回复”。</span>
                             </div>
                         )}
 
-                        {messages.map((message) => (
+                        {displayedMessages.map((message) => (
                             <article className={`message ${message.role}`} key={message.id}>
                             <span className="message-role">{message.role === 'user' ? '你' : DESKTOP_PET_NAME}</span>
                                 <p>{message.content}</p>
