@@ -111,6 +111,10 @@ const ENABLE_STREAMING_TTS = ((import.meta.env.VITE_ENABLE_STREAMING_TTS as stri
 const ENABLE_REALTIME_SPEECH = ((import.meta.env.VITE_REALTIME_SPEECH as string | undefined) || 'false').trim().toLowerCase() === 'true';
 const SHOW_SPEECH_DEBUG = ((import.meta.env.VITE_SHOW_SPEECH_DEBUG as string | undefined) || 'false').trim().toLowerCase() === 'true';
 const ASR_PROVIDER = ((import.meta.env.VITE_ASR_PROVIDER as string | undefined) || 'browser').trim().toLowerCase();
+const ASR_LANGUAGE = (() => {
+    const value = ((import.meta.env.VITE_ASR_LANGUAGE as string | undefined) || 'zh').trim().toLowerCase();
+    return value === 'auto' ? 'auto' : value.startsWith('ja') ? 'ja' : 'zh';
+})();
 const DEFAULT_SPEECH_LANGUAGE = ((import.meta.env.VITE_SPEECH_LANGUAGE as string | undefined) || 'ja').trim().toLowerCase().startsWith('zh') ? 'zh' : 'ja';
 const PROACTIVE_ENABLED = ((import.meta.env.VITE_PROACTIVE_ENABLED as string | undefined) || 'true').trim().toLowerCase() === 'true';
 const PROACTIVE_IDLE_MINUTES = Number((import.meta.env.VITE_PROACTIVE_IDLE_MINUTES as string | undefined) || '8');
@@ -119,8 +123,12 @@ const PROACTIVE_QUIET_HOURS = ((import.meta.env.VITE_PROACTIVE_QUIET_HOURS as st
 const PROACTIVE_CHECK_SECONDS = Number((import.meta.env.VITE_PROACTIVE_CHECK_SECONDS as string | undefined) || '30');
 const PROACTIVE_FREE_MODE_ENABLED = ((import.meta.env.VITE_PROACTIVE_FREE_MODE_ENABLED as string | undefined) || 'true').trim().toLowerCase() === 'true';
 const PROACTIVE_PLUGIN_CONTEXT_HINT_MINUTES = Number((import.meta.env.VITE_PROACTIVE_PLUGIN_CONTEXT_HINT_MINUTES as string | undefined) || '20');
-const PROACTIVE_CHANCE_PERCENT = clamp(Number((import.meta.env.VITE_PROACTIVE_CHANCE_PERCENT as string | undefined) || '35'), 0, 100);
-const PROACTIVE_MAX_PER_HOUR = Number((import.meta.env.VITE_PROACTIVE_MAX_PER_HOUR as string | undefined) || '3');
+const PROACTIVE_CHANCE_PERCENT = clamp(Number((import.meta.env.VITE_PROACTIVE_CHANCE_PERCENT as string | undefined) || '65'), 0, 100);
+const PROACTIVE_MAX_PER_HOUR = Number((import.meta.env.VITE_PROACTIVE_MAX_PER_HOUR as string | undefined) || '8');
+const FOLLOW_UP_ENABLED = ((import.meta.env.VITE_FOLLOW_UP_ENABLED as string | undefined) || 'true').trim().toLowerCase() === 'true';
+const FOLLOW_UP_CHANCE_PERCENT = clamp(Number((import.meta.env.VITE_FOLLOW_UP_CHANCE_PERCENT as string | undefined) || '55'), 0, 100);
+const FOLLOW_UP_DELAY_MS = Number((import.meta.env.VITE_FOLLOW_UP_DELAY_MS as string | undefined) || '1800');
+const FOLLOW_UP_COOLDOWN_MS = Number((import.meta.env.VITE_FOLLOW_UP_COOLDOWN_MS as string | undefined) || '12000');
 const MAX_VISIBLE_CHAT_ROUNDS = Number((import.meta.env.VITE_MAX_VISIBLE_CHAT_ROUNDS as string | undefined) || '20');
 const DEFAULT_CONVERSATION_MODE = ((import.meta.env.VITE_CONVERSATION_MODE as string | undefined) || 'manual').trim().toLowerCase() === 'free' ? 'free' : 'manual';
 const VOICE_RELISTEN_DELAY_MS = 280;
@@ -202,6 +210,14 @@ function normalizeSpeechLanguage(value: string | null | undefined) {
 
 function speechRecognitionLang(language: string) {
     return normalizeSpeechLanguage(language) === 'zh' ? 'zh-CN' : 'ja-JP';
+}
+
+function asrRecognitionLanguage(speechLanguage: string) {
+    return ASR_LANGUAGE === 'auto' ? normalizeSpeechLanguage(speechLanguage) : ASR_LANGUAGE;
+}
+
+function asrProviderLanguage(speechLanguage: string) {
+    return ASR_LANGUAGE === 'auto' ? '' : asrRecognitionLanguage(speechLanguage);
 }
 
 function isInterruptedPlaybackError(reason: unknown) {
@@ -377,12 +393,15 @@ function App() {
     const voiceStatusRef = useRef('idle');
     const voiceLoopRef = useRef(false);
     const voiceEmptyTurnsRef = useRef(0);
+    const voiceStartInFlightRef = useRef(false);
     const relistenTimerRef = useRef<number | null>(null);
     const voiceGateCancelRef = useRef<(() => void) | null>(null);
     const voiceGateStreamRef = useRef<MediaStream | null>(null);
     const lastUserActivityRef = useRef(Date.now());
     const lastProactiveAtRef = useRef(0);
     const lastProactiveContextHintAtRef = useRef(0);
+    const lastFollowUpAtRef = useRef(0);
+    const followUpTimerRef = useRef<number | null>(null);
     const proactiveSpeechTimestampsRef = useRef<number[]>([]);
     const proactiveInFlightRef = useRef(false);
 
@@ -400,7 +419,7 @@ function App() {
     );
     const displayedMessages = useMemo(
         () => visibleChatMessages(messages, MAX_VISIBLE_CHAT_ROUNDS),
-        [messages],
+        [messages, MAX_VISIBLE_CHAT_ROUNDS],
     );
 
     useEffect(() => {
@@ -517,6 +536,13 @@ function App() {
         if (relistenTimerRef.current) {
             window.clearTimeout(relistenTimerRef.current);
             relistenTimerRef.current = null;
+        }
+    }
+
+    function clearFollowUpTimer() {
+        if (followUpTimerRef.current) {
+            window.clearTimeout(followUpTimerRef.current);
+            followUpTimerRef.current = null;
         }
     }
 
@@ -725,17 +751,25 @@ function App() {
             return;
         }
 
-        voiceLoopRef.current = true;
-        if (
-            voiceStatus === 'idle' &&
-            !isSending &&
-            !recognitionRef.current &&
-            !voiceGateStreamRef.current &&
-            relistenTimerRef.current === null
-        ) {
-            void startVoiceInput(true);
-        }
-    }, [freeConversationMode, isSending, voiceStatus]);
+        const ensureFreeVoiceLoop = () => {
+            voiceLoopRef.current = true;
+            if (
+                voiceStatusRef.current === 'idle' &&
+                !isSendingRef.current &&
+                !voiceStartInFlightRef.current &&
+                !recognitionRef.current &&
+                !bargeRecognitionRef.current &&
+                !voiceGateStreamRef.current &&
+                relistenTimerRef.current === null
+            ) {
+                void startVoiceInput(true);
+            }
+        };
+
+        ensureFreeVoiceLoop();
+        const interval = window.setInterval(ensureFreeVoiceLoop, 1200);
+        return () => window.clearInterval(interval);
+    }, [freeConversationMode]);
 
     useEffect(() => {
         if (!canUseWailsRuntime()) {
@@ -808,15 +842,18 @@ function App() {
                 return;
             }
 
-            if (
-                isPetMode &&
-                !event.ctrlKey &&
+            const isVoiceShortcut = !event.ctrlKey &&
                 !event.metaKey &&
                 !event.altKey &&
                 event.key.toLowerCase() === 'v' &&
-                !isEditableTarget(event.target)
-            ) {
+                (isPetMode || freeConversationMode) &&
+                (freeConversationMode || !isEditableTarget(event.target));
+            if (isVoiceShortcut) {
                 event.preventDefault();
+                if (freeConversationMode) {
+                    startManualVoiceInput();
+                    return;
+                }
                 if (voiceStatus === 'listening') {
                     voiceLoopRef.current = false;
                     cancelVoiceGate();
@@ -832,7 +869,7 @@ function App() {
                     return;
                 }
                 if (!isSending && voiceStatus !== 'thinking') {
-                    void startVoiceInput();
+                    startManualVoiceInput();
                 }
                 return;
             }
@@ -853,7 +890,7 @@ function App() {
 
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [effectiveContinuousVoiceMode, isPetMode, isSending, voiceStatus]);
+    }, [effectiveContinuousVoiceMode, freeConversationMode, isPetMode, isSending, voiceStatus]);
 
     useEffect(() => {
         if (isTextInputOpen) {
@@ -869,6 +906,7 @@ function App() {
             if (relistenTimerRef.current) {
                 window.clearTimeout(relistenTimerRef.current);
             }
+            clearFollowUpTimer();
             audioRef.current?.pause();
             window.speechSynthesis?.cancel?.();
             document.documentElement.classList.remove('pet-window');
@@ -950,6 +988,41 @@ function App() {
         void sendContent(content);
     }
 
+    function startManualVoiceInput() {
+        clearFollowUpTimer();
+        if (isSendingRef.current || voiceStatusRef.current === 'thinking') {
+            return;
+        }
+
+        const restartSoon = () => {
+            window.setTimeout(() => void startVoiceInput(false), 80);
+        };
+
+        if (voiceStatusRef.current === 'speaking') {
+            stopCurrentAudio();
+            setVoiceStatus('idle');
+            restartSoon();
+            return;
+        }
+
+        if (
+            voiceStatusRef.current === 'listening' ||
+            recognitionRef.current ||
+            voiceGateStreamRef.current ||
+            voiceStartInFlightRef.current
+        ) {
+            cancelVoiceGate();
+            recognitionRef.current?.abort?.();
+            recognitionRef.current = null;
+            voiceStartInFlightRef.current = false;
+            setVoiceStatus('idle');
+            restartSoon();
+            return;
+        }
+
+        void startVoiceInput(false);
+    }
+
     function startBargeInListening(playbackId: number) {
         if (!effectiveContinuousVoiceMode || !voiceLoopRef.current || bargeRecognitionRef.current || recognitionRef.current) {
             return;
@@ -961,7 +1034,7 @@ function App() {
 
         const recognition = new SpeechRecognition();
         bargeRecognitionRef.current = recognition;
-        recognition.lang = speechRecognitionLang(speechLanguage);
+        recognition.lang = speechRecognitionLang(asrRecognitionLanguage(speechLanguage));
         recognition.continuous = true;
         recognition.interimResults = true;
 
@@ -1462,6 +1535,56 @@ function App() {
         void speakText(speechContentForResponse(response));
     }
 
+    function scheduleFollowUp(trigger = 'reply-follow-up') {
+        if (!FOLLOW_UP_ENABLED || (!isPetMode && !freeConversationMode)) {
+            return;
+        }
+        if (followUpTimerRef.current || proactiveInFlightRef.current) {
+            return;
+        }
+        const now = Date.now();
+        if (now - lastFollowUpAtRef.current < FOLLOW_UP_COOLDOWN_MS) {
+            return;
+        }
+        if (Math.random() * 100 >= FOLLOW_UP_CHANCE_PERCENT) {
+            return;
+        }
+
+        followUpTimerRef.current = window.setTimeout(() => {
+            followUpTimerRef.current = null;
+            if (
+                proactiveInFlightRef.current ||
+                isSendingRef.current ||
+                recognitionRef.current ||
+                bargeRecognitionRef.current ||
+                voiceGateStreamRef.current ||
+                voiceStatusRef.current !== 'idle' ||
+                isWithinQuietHours(PROACTIVE_QUIET_HOURS)
+            ) {
+                return;
+            }
+
+            proactiveInFlightRef.current = true;
+            lastFollowUpAtRef.current = Date.now();
+            lastProactiveAtRef.current = Date.now();
+            GenerateProactiveMessage(trigger)
+                .then((response: ChatResponse) => {
+                    setMessages(response.messages ?? []);
+                    setEmotion(response.emotion || response.reply?.emotion || 'neutral');
+                    setAgentStatus(response.agentStatus || 'offline');
+                    setAgentProvider(response.agentProvider || 'unknown');
+                    setProviderError(response.providerError || '');
+                    speakResponse(response);
+                })
+                .catch((reason) => {
+                    console.warn('Follow-up message failed:', reason);
+                })
+                .finally(() => {
+                    proactiveInFlightRef.current = false;
+                });
+        }, Math.max(600, FOLLOW_UP_DELAY_MS));
+    }
+
     async function sendContent(rawContent: string) {
         const content = rawContent.trim();
         if (!content || isSendingRef.current) {
@@ -1469,6 +1592,7 @@ function App() {
         }
 
         resetVoiceEmptyTurns();
+        clearFollowUpTimer();
         lastUserActivityRef.current = Date.now();
         setDraft('');
         setIsTextInputOpen(false);
@@ -1499,6 +1623,7 @@ function App() {
             setAgentProvider(response.agentProvider || 'unknown');
             setProviderError(response.providerError || '');
             speakResponse(response);
+            scheduleFollowUp('reply-follow-up');
         } catch (reason) {
             setError(String(reason));
             finishSpeaking();
@@ -1705,7 +1830,7 @@ function App() {
             try {
                 const blob = new Blob(chunks, {type: contentType});
                 const audioBase64 = await blobToBase64(blob);
-                const reply = await TranscribeAudio(audioBase64, contentType, speechLanguage) as ASRReply;
+                const reply = await TranscribeAudio(audioBase64, contentType, asrProviderLanguage(speechLanguage)) as ASRReply;
                 const content = String(reply.text || '').trim();
                 addSpeechMetric({
                     phase: 'asr-transcribed',
@@ -1736,7 +1861,7 @@ function App() {
         setVoiceError('');
         setVoiceStatus('listening');
         setEmotion('thinking');
-        addSpeechMetric({phase: 'asr-record-start', elapsedMs: 0, detail: ASR_PROVIDER});
+        addSpeechMetric({phase: 'asr-record-start', elapsedMs: 0, detail: `${ASR_PROVIDER}; language=${asrProviderLanguage(speechLanguage) || 'auto'}`});
         recorder.start();
 
         const sample = (now: number) => {
@@ -1779,11 +1904,19 @@ function App() {
     }
 
     async function startVoiceInput(fromLoop = false) {
-        if (ASR_PROVIDER !== 'browser' && ASR_PROVIDER !== 'webspeech') {
-            await startModelASRVoiceInput(fromLoop);
+        if (voiceStartInFlightRef.current) {
             return;
         }
-        await startBrowserVoiceInput(fromLoop);
+        voiceStartInFlightRef.current = true;
+        try {
+            if (ASR_PROVIDER !== 'browser' && ASR_PROVIDER !== 'webspeech') {
+                await startModelASRVoiceInput(fromLoop);
+                return;
+            }
+            await startBrowserVoiceInput(fromLoop);
+        } finally {
+            voiceStartInFlightRef.current = false;
+        }
     }
 
     async function startBrowserVoiceInput(fromLoop = false) {
@@ -1824,7 +1957,7 @@ function App() {
         window.speechSynthesis?.cancel?.();
         const recognition = new SpeechRecognition();
         recognitionRef.current = recognition;
-        recognition.lang = speechRecognitionLang(speechLanguage);
+        recognition.lang = speechRecognitionLang(asrRecognitionLanguage(speechLanguage));
         recognition.continuous = Boolean(fromLoop && voiceLoopRef.current);
         recognition.interimResults = true;
 
@@ -1979,12 +2112,7 @@ function App() {
                 type="button"
                 className={`voice-button voice-${voiceStatus}`}
                 onClick={() => {
-                    if (voiceStatus === 'speaking') {
-                        audioRef.current?.pause();
-                        window.speechSynthesis?.cancel?.();
-                        setVoiceStatus('idle');
-                    }
-                    void startVoiceInput();
+                    startManualVoiceInput();
                 }}
                 disabled={isSending || voiceStatus === 'thinking'}
             >

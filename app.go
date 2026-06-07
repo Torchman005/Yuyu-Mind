@@ -2753,6 +2753,7 @@ Rules:
 - Low interruption. Do not demand an answer.
 - Pick one intent: notice, encourage, lightly tease, or suggest one tiny next step.
 - If recent context is technical, gently refer to it without summarizing the whole task.
+- If this is a reply-follow-up, add a fresh small afterthought instead of answering the user again.
 - If the trigger includes screen-context, use live context only when it gives a specific natural comment.
 - If there is no useful context, simply check in warmly.
 - Do not repeat recent assistant wording.
@@ -2789,6 +2790,8 @@ func describeProactiveTrigger(trigger string) string {
 		description = "The desktop pet has been quiet for a while and may make one small companion comment."
 	case "free-idle":
 		description = "Full mode free conversation is enabled and the user has been idle for a while."
+	case "reply-follow-up":
+		description = "The companion may add one natural short follow-up after its last answer, like a real conversation."
 	default:
 		description = "The companion may make one low-interruption proactive comment."
 	}
@@ -2828,9 +2831,13 @@ func (a *App) saveMessage(role string, content string, emotion string) (Message,
 func (a *App) fetchMessages() ([]Message, error) {
 	rows, err := a.db.Query(`
 SELECT id, role, content, emotion, created_at
-FROM messages
-ORDER BY id ASC
-LIMIT 80`)
+FROM (
+	SELECT id, role, content, emotion, created_at
+	FROM messages
+	ORDER BY id DESC
+	LIMIT 80
+)
+ORDER BY id ASC`)
 	if err != nil {
 		return nil, err
 	}

@@ -156,6 +156,7 @@ def get_whisper_model() -> Any:
 
 
 def transcribe_audio_payload(audio_base64: str, content_type: str, language: str = "") -> dict[str, Any]:
+    load_dotenv()
     provider = asr_provider()
     if provider not in {"faster_whisper", "faster-whisper", "whisper"}:
         raise RuntimeError(f"Unsupported ASR_PROVIDER for agent ASR: {provider}")
@@ -649,7 +650,7 @@ class AgentHandler(BaseHTTPRequestHandler):
                     "provider": get_provider_name(),
                     "model": current_model(),
                     "baseUrl": current_base_url(),
-                    "capabilities": ["chat", "speechText", "plugins"],
+                    "capabilities": ["chat", "speechText", "plugins", "asr"],
                     "plugins": list_plugins(),
                     "supportedProviders": sorted(PROVIDERS.keys()),
                 }
