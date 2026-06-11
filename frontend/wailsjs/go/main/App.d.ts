@@ -25,3 +25,5 @@ export function SynthesizeSpeechStream(arg1:string):Promise<main.SpeechStreamSta
 export function TranscribeAudio(arg1:string,arg2:string,arg3:string):Promise<main.ASRReply>;
 
 export function UpdatePetHitTest(arg1:main.PetHitTestState):Promise<void>;
+
+export function UpdateRuntimeSettings(arg1:main.RuntimeSettings):Promise<void>;

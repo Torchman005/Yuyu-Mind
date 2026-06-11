@@ -49,3 +49,7 @@ export function TranscribeAudio(arg1, arg2, arg3) {
 export function UpdatePetHitTest(arg1) {
   return window['go']['main']['App']['UpdatePetHitTest'](arg1);
 }
+
+export function UpdateRuntimeSettings(arg1) {
+  return window['go']['main']['App']['UpdateRuntimeSettings'](arg1);
+}

@@ -11,6 +11,7 @@ import {
     SynthesizeSpeechStream,
     TranscribeAudio,
     UpdatePetHitTest,
+    UpdateRuntimeSettings,
 } from '../wailsjs/go/main/App';
 import {
     EventsOn,
@@ -58,6 +59,14 @@ type SpeechMetric = {
     detail?: string;
 };
 
+type AssistantAckEvent = {
+    content?: string;
+    speechText?: string;
+    emotion?: string;
+    plugin?: string;
+    action?: string;
+};
+
 type FishLiveProbeResult = {
     ok?: boolean;
     error?: string;
@@ -87,11 +96,14 @@ const PET_MODE_KEY = 'yuyu.petMode';
 const PET_SCALE_KEY = 'yuyu.petScale';
 const CONTINUOUS_VOICE_KEY = 'yuyu.continuousVoice';
 const CONVERSATION_MODE_KEY = 'yuyu.conversationMode';
+const REPLY_LANGUAGE_KEY = 'yuyu.replyLanguage';
 const SPEECH_LANGUAGE_KEY = 'yuyu.speechLanguage';
+const PET_MOUSE_SHORTCUT_KEY = 'yuyu.petMouseShortcut';
 const LEGACY_PET_MODE_KEY = 'mochi.petMode';
 const LEGACY_PET_SCALE_KEY = 'mochi.petScale';
 const LEGACY_CONTINUOUS_VOICE_KEY = 'mochi.continuousVoice';
 const PET_CONTROLS_SHORTCUT = 'Ctrl + Shift + M';
+const DEFAULT_PET_MOUSE_SHORTCUT = 'Ctrl+H';
 const PET_BASE_WIDTH = 380;
 const PET_BASE_HEIGHT = 560;
 const PET_MIN_SCALE = 0.6;
@@ -116,6 +128,7 @@ const ASR_LANGUAGE = (() => {
     return value === 'auto' ? 'auto' : value.startsWith('ja') ? 'ja' : 'zh';
 })();
 const DEFAULT_SPEECH_LANGUAGE = ((import.meta.env.VITE_SPEECH_LANGUAGE as string | undefined) || 'ja').trim().toLowerCase().startsWith('zh') ? 'zh' : 'ja';
+const DEFAULT_REPLY_LANGUAGE = normalizeReplyLanguage((import.meta.env.VITE_REPLY_LANGUAGE as string | undefined) || 'zh_ja');
 const PROACTIVE_ENABLED = ((import.meta.env.VITE_PROACTIVE_ENABLED as string | undefined) || 'true').trim().toLowerCase() === 'true';
 const PROACTIVE_IDLE_MINUTES = Number((import.meta.env.VITE_PROACTIVE_IDLE_MINUTES as string | undefined) || '8');
 const PROACTIVE_COOLDOWN_MINUTES = Number((import.meta.env.VITE_PROACTIVE_COOLDOWN_MINUTES as string | undefined) || '15');
@@ -208,6 +221,17 @@ function normalizeSpeechLanguage(value: string | null | undefined) {
     return String(value || '').trim().toLowerCase().startsWith('zh') ? 'zh' : 'ja';
 }
 
+function normalizeReplyLanguage(value: string | null | undefined) {
+    const language = String(value || '').trim().toLowerCase();
+    if (['ja', 'jp', 'japanese'].includes(language)) {
+        return 'ja';
+    }
+    if (['zh', 'cn', 'chinese'].includes(language)) {
+        return 'zh';
+    }
+    return 'zh_ja';
+}
+
 function speechRecognitionLang(language: string) {
     return normalizeSpeechLanguage(language) === 'zh' ? 'zh-CN' : 'ja-JP';
 }
@@ -218,6 +242,62 @@ function asrRecognitionLanguage(speechLanguage: string) {
 
 function asrProviderLanguage(speechLanguage: string) {
     return ASR_LANGUAGE === 'auto' ? '' : asrRecognitionLanguage(speechLanguage);
+}
+
+function normalizeShortcut(value: string | null | undefined) {
+    const raw = String(value || '').trim();
+    if (!raw) {
+        return DEFAULT_PET_MOUSE_SHORTCUT;
+    }
+    const compact = raw.replace(/\s+/g, '').toLowerCase();
+    if (compact === 'ctrl+m' || compact === 'control+m' || compact === 'ctrl+shift+m' || compact === 'control+shift+m') {
+        return DEFAULT_PET_MOUSE_SHORTCUT;
+    }
+    return raw;
+}
+
+function shortcutLabel(value: string) {
+    return normalizeShortcut(value).replace(/\+/g, ' + ');
+}
+
+function shortcutFromEvent(event: KeyboardEvent) {
+    const key = event.key.length === 1 ? event.key.toUpperCase() : event.key;
+    if (['Control', 'Shift', 'Alt', 'Meta'].includes(key)) {
+        return '';
+    }
+    const parts: string[] = [];
+    if (event.ctrlKey) {
+        parts.push('Ctrl');
+    }
+    if (event.shiftKey) {
+        parts.push('Shift');
+    }
+    if (event.altKey) {
+        parts.push('Alt');
+    }
+    if (event.metaKey) {
+        parts.push('Meta');
+    }
+    if (parts.length === 0) {
+        return '';
+    }
+    parts.push(key === ' ' ? 'Space' : key);
+    return parts.join('+');
+}
+
+function keyboardEventMatchesShortcut(event: KeyboardEvent, shortcut: string) {
+    const parts = normalizeShortcut(shortcut).toLowerCase().replace(/\s+/g, '').split('+').filter(Boolean);
+    const key = parts[parts.length - 1] || '';
+    const hasCtrl = parts.includes('ctrl') || parts.includes('control');
+    const hasShift = parts.includes('shift');
+    const hasAlt = parts.includes('alt');
+    const hasMeta = parts.includes('meta');
+    const eventKey = event.key === ' ' ? 'space' : event.key.toLowerCase();
+    return event.ctrlKey === hasCtrl &&
+        event.shiftKey === hasShift &&
+        event.altKey === hasAlt &&
+        event.metaKey === hasMeta &&
+        eventKey === key;
 }
 
 function isInterruptedPlaybackError(reason: unknown) {
@@ -368,17 +448,23 @@ function App() {
     const [isSending, setIsSending] = useState(false);
     const [isObservingScreen, setIsObservingScreen] = useState(false);
     const [error, setError] = useState('');
+    const [taskAckLine, setTaskAckLine] = useState('');
     const [voiceStatus, setVoiceStatus] = useState('idle');
     const [voiceError, setVoiceError] = useState('');
     const [mouthLevel, setMouthLevel] = useState(0);
     const [speechMetrics, setSpeechMetrics] = useState<SpeechMetric[]>([]);
     const [isPetMode, setIsPetMode] = useState(() => (localStorage.getItem(PET_MODE_KEY) ?? localStorage.getItem(LEGACY_PET_MODE_KEY)) === 'true');
     const [petScale, setPetScale] = useState(readStoredPetScale);
+    const [isPetMousePassthrough, setIsPetMousePassthrough] = useState(false);
     const [isPetControlsOpen, setIsPetControlsOpen] = useState(false);
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [isCapturingPetShortcut, setIsCapturingPetShortcut] = useState(false);
     const [isTextInputOpen, setIsTextInputOpen] = useState(false);
     const [continuousVoiceMode, setContinuousVoiceMode] = useState(() => (localStorage.getItem(CONTINUOUS_VOICE_KEY) ?? localStorage.getItem(LEGACY_CONTINUOUS_VOICE_KEY)) === 'true');
     const [conversationMode, setConversationMode] = useState(() => localStorage.getItem(CONVERSATION_MODE_KEY) === 'free' ? 'free' : DEFAULT_CONVERSATION_MODE);
+    const [replyLanguage, setReplyLanguage] = useState(() => normalizeReplyLanguage(localStorage.getItem(REPLY_LANGUAGE_KEY) || DEFAULT_REPLY_LANGUAGE));
     const [speechLanguage, setSpeechLanguage] = useState(() => normalizeSpeechLanguage(localStorage.getItem(SPEECH_LANGUAGE_KEY) || DEFAULT_SPEECH_LANGUAGE));
+    const [petMouseShortcut, setPetMouseShortcut] = useState(() => normalizeShortcut(localStorage.getItem(PET_MOUSE_SHORTCUT_KEY) || DEFAULT_PET_MOUSE_SHORTCUT));
     const freeConversationMode = conversationMode === 'free';
     const effectiveContinuousVoiceMode = continuousVoiceMode || freeConversationMode;
     const feedRef = useRef<HTMLDivElement>(null);
@@ -406,13 +492,16 @@ function App() {
     const proactiveInFlightRef = useRef(false);
 
     const assistantLine = useMemo(() => {
+        if (taskAckLine.trim()) {
+            return taskAckLine;
+        }
         if (isSending || voiceStatus === 'thinking') {
             return '让我想想...';
         }
 
         const last = [...messages].reverse().find((message) => message.role === 'assistant');
         return last?.content ?? `你好，我是 ${DESKTOP_PET_NAME}。现在可以通过文字聊天和你互动。`;
-    }, [isSending, messages, voiceStatus]);
+    }, [isSending, messages, taskAckLine, voiceStatus]);
     const avatarPerformance = useMemo(
         () => inferAvatarPerformance(assistantLine, emotion, voiceStatus === 'speaking'),
         [assistantLine, emotion, voiceStatus],
@@ -433,6 +522,112 @@ function App() {
             })
             .catch((reason) => setError(String(reason)));
     }, []);
+
+    useEffect(() => {
+        if (!canUseWailsRuntime()) {
+            return;
+        }
+
+        const unsubscribe = EventsOn('mochi:chat:reply', (response: ChatResponse) => {
+            setTaskAckLine('');
+            setMessages(response.messages ?? []);
+            setEmotion(response.emotion || response.reply?.emotion || 'neutral');
+            setAgentStatus(response.agentStatus || 'online');
+            setAgentProvider(response.agentProvider || agentProvider);
+            setProviderError(response.providerError || '');
+            speakResponse(response);
+        });
+        return () => {
+            unsubscribe();
+        };
+    }, [agentProvider, speechLanguage]);
+
+    useEffect(() => {
+        if (!canUseWailsRuntime()) {
+            return;
+        }
+
+        const unsubscribe = EventsOn('mochi:assistant:ack', (event: AssistantAckEvent) => {
+            const content = String(event?.content || '').trim();
+            if (!content) {
+                return;
+            }
+            const speechText = String(event?.speechText || '').trim();
+            const emotionValue = event?.emotion || 'focused';
+            setTaskAckLine(content);
+            setEmotion(emotionValue);
+            setMessages((items) => [
+                ...items.filter((message) => message.id >= 0),
+                {
+                    id: -Date.now(),
+                    role: 'assistant',
+                    content,
+                    emotion: emotionValue,
+                    createdAt: new Date().toISOString(),
+                },
+            ]);
+            speakResponse({
+                reply: {
+                    id: -Date.now(),
+                    role: 'assistant',
+                    content,
+                    emotion: emotionValue,
+                    createdAt: new Date().toISOString(),
+                },
+                speechText,
+                emotion: emotionValue,
+            });
+        });
+        return () => {
+            unsubscribe();
+        };
+    }, [speechLanguage]);
+
+    useEffect(() => {
+        if (!canUseWailsRuntime()) {
+            return;
+        }
+
+        const unsubscribe = EventsOn('mochi:pet:controls-toggle', () => {
+            if (isPetMode) {
+                setIsPetControlsOpen((value) => !value);
+                return;
+            }
+            setIsPetMode(true);
+            setIsPetControlsOpen(false);
+        });
+        return () => {
+            unsubscribe();
+        };
+    }, [isPetMode]);
+
+    useEffect(() => {
+        if (!canUseWailsRuntime()) {
+            return;
+        }
+
+        const unsubscribe = EventsOn('mochi:pet:voice-input', () => {
+            if (!isPetMode || isSendingRef.current || voiceStatusRef.current === 'thinking') {
+                return;
+            }
+            if (voiceStatusRef.current === 'listening') {
+                voiceLoopRef.current = false;
+                cancelVoiceGate();
+                recognitionRef.current?.stop?.();
+                setVoiceStatus('idle');
+                return;
+            }
+            if (voiceStatusRef.current === 'speaking') {
+                audioRef.current?.pause();
+                window.speechSynthesis?.cancel?.();
+                setVoiceStatus('idle');
+            }
+            startManualVoiceInput();
+        });
+        return () => {
+            unsubscribe();
+        };
+    }, [isPetMode]);
 
     useEffect(() => {
         const markActivity = () => {
@@ -710,6 +905,7 @@ function App() {
 
         if (!isPetMode) {
             setIsPetControlsOpen(false);
+            setIsPetMousePassthrough(false);
         }
 
         if (!canUseWailsRuntime()) {
@@ -728,6 +924,19 @@ function App() {
     }, [isPetMode, petScale]);
 
     useEffect(() => {
+        if (!canUseWailsRuntime()) {
+            return;
+        }
+
+        const unsubscribe = EventsOn('mochi:pet:mouse-mode', (event: { forcePassthrough?: boolean }) => {
+            setIsPetMousePassthrough(Boolean(event?.forcePassthrough));
+        });
+        return () => {
+            unsubscribe();
+        };
+    }, []);
+
+    useEffect(() => {
         localStorage.setItem(CONTINUOUS_VOICE_KEY, String(continuousVoiceMode));
         if (!effectiveContinuousVoiceMode) {
             voiceLoopRef.current = false;
@@ -739,8 +948,19 @@ function App() {
     }, [conversationMode]);
 
     useEffect(() => {
+        localStorage.setItem(REPLY_LANGUAGE_KEY, replyLanguage);
+        if (canUseWailsRuntime()) {
+            void UpdateRuntimeSettings({replyLanguage});
+        }
+    }, [replyLanguage]);
+
+    useEffect(() => {
         localStorage.setItem(SPEECH_LANGUAGE_KEY, speechLanguage);
     }, [speechLanguage]);
+
+    useEffect(() => {
+        localStorage.setItem(PET_MOUSE_SHORTCUT_KEY, petMouseShortcut);
+    }, [petMouseShortcut]);
 
     useEffect(() => {
         voiceStatusRef.current = voiceStatus;
@@ -786,7 +1006,7 @@ function App() {
                     return;
                 }
                 if (!isPetMode) {
-                    void UpdatePetHitTest({enabled: false, controlsOpen: false, x: 0, y: 0, width: 0, height: 0});
+                    void UpdatePetHitTest({enabled: false, controlsOpen: false, forcePassthrough: false, mouseShortcut: petMouseShortcut, x: 0, y: 0, width: 0, height: 0});
                     return;
                 }
 
@@ -803,6 +1023,8 @@ function App() {
                 void UpdatePetHitTest({
                     enabled: true,
                     controlsOpen: isPetControlsOpen,
+                    forcePassthrough: isPetMousePassthrough,
+                    mouseShortcut: petMouseShortcut,
                     x,
                     y,
                     width,
@@ -819,9 +1041,9 @@ function App() {
             window.cancelAnimationFrame(frame);
             window.clearInterval(interval);
             window.removeEventListener('resize', reportPetHitTest);
-            void UpdatePetHitTest({enabled: false, controlsOpen: false, x: 0, y: 0, width: 0, height: 0});
+            void UpdatePetHitTest({enabled: false, controlsOpen: false, forcePassthrough: false, mouseShortcut: petMouseShortcut, x: 0, y: 0, width: 0, height: 0});
         };
-    }, [isPetMode, petScale, isPetControlsOpen]);
+    }, [isPetMode, petScale, isPetControlsOpen, isPetMousePassthrough, petMouseShortcut]);
 
     useEffect(() => {
         function onKeyDown(event: KeyboardEvent) {
@@ -874,29 +1096,64 @@ function App() {
                 return;
             }
 
+            const isMouseModeShortcut = keyboardEventMatchesShortcut(event, petMouseShortcut) && isPetMode;
+            if (isMouseModeShortcut) {
+                event.preventDefault();
+                if (!canUseWailsRuntime()) {
+                    setIsPetMousePassthrough((value) => !value);
+                }
+                return;
+            }
+
             if (!event.ctrlKey || !event.shiftKey || event.key.toLowerCase() !== 'm') {
                 return;
             }
 
             event.preventDefault();
-            if (isPetMode) {
-                setIsPetControlsOpen((value) => !value);
-                return;
-            }
+            if (!canUseWailsRuntime()) {
+                if (isPetMode) {
+                    setIsPetControlsOpen((value) => !value);
+                    return;
+                }
 
-            setIsPetMode(true);
-            setIsPetControlsOpen(false);
+                setIsPetMode(true);
+                setIsPetControlsOpen(false);
+            }
         }
 
         window.addEventListener('keydown', onKeyDown);
         return () => window.removeEventListener('keydown', onKeyDown);
-    }, [effectiveContinuousVoiceMode, freeConversationMode, isPetMode, isSending, voiceStatus]);
+    }, [effectiveContinuousVoiceMode, freeConversationMode, isPetMode, isSending, petMouseShortcut, voiceStatus]);
 
     useEffect(() => {
         if (isTextInputOpen) {
             composerInputRef.current?.focus();
         }
     }, [isTextInputOpen]);
+
+    useEffect(() => {
+        if (!isCapturingPetShortcut) {
+            return;
+        }
+
+        function captureShortcut(event: KeyboardEvent) {
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.key === 'Escape') {
+                setIsCapturingPetShortcut(false);
+                return;
+            }
+            const shortcut = shortcutFromEvent(event);
+            if (!shortcut) {
+                return;
+            }
+            setPetMouseShortcut(normalizeShortcut(shortcut));
+            setIsCapturingPetShortcut(false);
+        }
+
+        window.addEventListener('keydown', captureShortcut, true);
+        return () => window.removeEventListener('keydown', captureShortcut, true);
+    }, [isCapturingPetShortcut]);
 
     useEffect(() => {
         return () => {
@@ -1597,6 +1854,7 @@ function App() {
         setDraft('');
         setIsTextInputOpen(false);
         setIsPetControlsOpen(false);
+        setTaskAckLine('');
         isSendingRef.current = true;
         setIsSending(true);
         setError('');
@@ -1617,6 +1875,7 @@ function App() {
 
         try {
             const response = await SendMessage(content) as ChatResponse;
+            setTaskAckLine('');
             setMessages(response.messages ?? []);
             setEmotion(response.emotion || response.reply?.emotion || 'neutral');
             setAgentStatus(response.agentStatus || 'offline');
@@ -1636,6 +1895,18 @@ function App() {
     function sendMessage(event: FormEvent) {
         event.preventDefault();
         void sendContent(draft);
+    }
+
+    const dialogMode = freeConversationMode ? 'free' : continuousVoiceMode ? 'continuous' : 'manual';
+
+    function updateDialogMode(value: string) {
+        if (value === 'free') {
+            setConversationMode('free');
+            setContinuousVoiceMode(true);
+            return;
+        }
+        setConversationMode('manual');
+        setContinuousVoiceMode(value === 'continuous');
     }
 
     function resizePetWithWheel(event: WheelEvent<HTMLElement>) {
@@ -2126,6 +2397,68 @@ function App() {
         </form>
     );
 
+    const settingsPanel = (
+        <div className="settings-panel" aria-label="设置">
+            <section className="settings-section">
+                <div>
+                    <h2>快捷键</h2>
+                    <p>桌宠穿透点击和移动状态切换</p>
+                </div>
+                <div className="settings-row">
+                    <span>穿透/移动</span>
+                    <div className="settings-inline">
+                        <button
+                            type="button"
+                            className="shortcut-capture"
+                            aria-pressed={isCapturingPetShortcut}
+                            onClick={() => setIsCapturingPetShortcut(true)}
+                        >
+                            {isCapturingPetShortcut ? '按下组合键...' : shortcutLabel(petMouseShortcut)}
+                        </button>
+                        <button type="button" className="settings-reset" onClick={() => setPetMouseShortcut(DEFAULT_PET_MOUSE_SHORTCUT)}>
+                            重置
+                        </button>
+                    </div>
+                </div>
+                <small>默认 Ctrl + H。穿透后也可以用这个快捷键切回移动状态。</small>
+            </section>
+
+            <section className="settings-section">
+                <div>
+                    <h2>对话模式</h2>
+                    <p>选择手动输入、连续语音或自由聊天</p>
+                </div>
+                <div className="segmented-control" role="group" aria-label="对话模式">
+                    <button type="button" aria-pressed={dialogMode === 'manual'} onClick={() => updateDialogMode('manual')}>手动</button>
+                    <button type="button" aria-pressed={dialogMode === 'continuous'} onClick={() => updateDialogMode('continuous')}>连续</button>
+                    <button type="button" aria-pressed={dialogMode === 'free'} onClick={() => updateDialogMode('free')}>自由</button>
+                </div>
+            </section>
+
+            <section className="settings-section">
+                <div>
+                    <h2>对话语言</h2>
+                    <p>控制聊天文字和语音使用的语言</p>
+                </div>
+                <label className="settings-field">
+                    <span>文字回复</span>
+                    <select value={replyLanguage} onChange={(event) => setReplyLanguage(normalizeReplyLanguage(event.target.value))}>
+                        <option value="zh_ja">中文文字 + 日语语音</option>
+                        <option value="zh">跟随用户 / 中文优先</option>
+                        <option value="ja">全日语</option>
+                    </select>
+                </label>
+                <label className="settings-field">
+                    <span>语音播放</span>
+                    <select value={speechLanguage} onChange={(event) => setSpeechLanguage(normalizeSpeechLanguage(event.target.value))}>
+                        <option value="ja">日语</option>
+                        <option value="zh">中文</option>
+                    </select>
+                </label>
+            </section>
+        </div>
+    );
+
     return (
         <main className={isPetMode ? 'app-shell pet-mode' : 'app-shell'}>
             <section className="stage" aria-label="Yuyu Live2D 舞台" onWheel={resizePetWithWheel}>
@@ -2173,6 +2506,14 @@ function App() {
                     <div className="pet-controls" aria-label="桌宠控制">
                         {composer}
                         <div className="pet-mode-actions">
+                            <button
+                                type="button"
+                                className="pet-mode-toggle"
+                                aria-pressed={isPetMousePassthrough}
+                                onClick={() => setIsPetMousePassthrough((value) => !value)}
+                            >
+                                {isPetMousePassthrough ? '穿透点击' : '移动状态'}
+                            </button>
                             <button type="button" className="pet-mode-toggle" onClick={() => void observeScreen()} disabled={isSending || isObservingScreen}>
                                 看屏幕
                             </button>
@@ -2183,7 +2524,7 @@ function App() {
                                 完整模式
                             </button>
                         </div>
-                        <span className="pet-shortcut">{PET_CONTROLS_SHORTCUT} · V 语音输入</span>
+                        <span className="pet-shortcut">{shortcutLabel(petMouseShortcut)} 穿透/移动 · {PET_CONTROLS_SHORTCUT} · V 语音输入</span>
                     </div>
                 ) : !isPetMode && (
                     <div className="stage-tools">
@@ -2232,27 +2573,10 @@ function App() {
                             <button
                                 type="button"
                                 className="ghost-button"
-                                aria-pressed={freeConversationMode}
-                                onClick={() => setConversationMode((value) => value === 'free' ? 'manual' : 'free')}
+                                aria-pressed={isSettingsOpen}
+                                onClick={() => setIsSettingsOpen((value) => !value)}
                             >
-                                自由聊天 {freeConversationMode ? '开' : '关'}
-                            </button>
-                            <button
-                                type="button"
-                                className="ghost-button"
-                                aria-pressed={effectiveContinuousVoiceMode}
-                                onClick={() => setContinuousVoiceMode((value) => !value)}
-                                disabled={freeConversationMode}
-                            >
-                                持续对话 {effectiveContinuousVoiceMode ? '开' : '关'}
-                            </button>
-                            <button
-                                type="button"
-                                className="ghost-button"
-                                aria-pressed={speechLanguage === 'ja'}
-                                onClick={() => setSpeechLanguage((value) => value === 'zh' ? 'ja' : 'zh')}
-                            >
-                                语音 {speechLanguage === 'zh' ? '中文' : '日语'}
+                                设置
                             </button>
                             {SHOW_SPEECH_DEBUG && (
                                 <button
@@ -2276,21 +2600,23 @@ function App() {
                         </div>
                     </header>
 
-                    <div className="message-feed" ref={feedRef}>
-                        {displayedMessages.length === 0 && (
-                            <div className="empty-state">
-                                <strong>第一步已经就位。</strong>
-                                <span>试试输入“你好”或“记住我喜欢中文简洁回复”。</span>
-                            </div>
-                        )}
+                    {isSettingsOpen ? settingsPanel : (
+                        <div className="message-feed" ref={feedRef}>
+                            {displayedMessages.length === 0 && (
+                                <div className="empty-state">
+                                    <strong>第一步已经就位。</strong>
+                                    <span>试试输入“你好”或“记住我喜欢中文简洁回复”。</span>
+                                </div>
+                            )}
 
-                        {displayedMessages.map((message) => (
-                            <article className={`message ${message.role}`} key={message.id}>
-                            <span className="message-role">{message.role === 'user' ? '你' : DESKTOP_PET_NAME}</span>
-                                <p>{message.content}</p>
-                            </article>
-                        ))}
-                    </div>
+                            {displayedMessages.map((message) => (
+                                <article className={`message ${message.role}`} key={message.id}>
+                                <span className="message-role">{message.role === 'user' ? '你' : DESKTOP_PET_NAME}</span>
+                                    <p>{message.content}</p>
+                                </article>
+                            ))}
+                        </div>
+                    )}
 
                     {providerError && <div className="error">Provider fallback: {providerError}</div>}
                     {error && <div className="error">{error}</div>}

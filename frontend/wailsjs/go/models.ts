@@ -144,6 +144,8 @@ export namespace main {
 	export class PetHitTestState {
 	    enabled: boolean;
 	    controlsOpen: boolean;
+	    forcePassthrough: boolean;
+	    mouseShortcut: string;
 	    x: number;
 	    y: number;
 	    width: number;
@@ -157,6 +159,8 @@ export namespace main {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.enabled = source["enabled"];
 	        this.controlsOpen = source["controlsOpen"];
+	        this.forcePassthrough = source["forcePassthrough"];
+	        this.mouseShortcut = source["mouseShortcut"];
 	        this.x = source["x"];
 	        this.y = source["y"];
 	        this.width = source["width"];
@@ -232,6 +236,18 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+	export class RuntimeSettings {
+	    replyLanguage: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new RuntimeSettings(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.replyLanguage = source["replyLanguage"];
+	    }
 	}
 	export class SpeechReply {
 	    audioBase64: string;

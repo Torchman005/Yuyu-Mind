@@ -579,6 +579,109 @@ h1 {
     margin: 0;
 }
 
+.settings-panel {
+    min-height: 0;
+    overflow-y: auto;
+    display: grid;
+    gap: 14px;
+    align-content: start;
+    padding: 2px 4px 14px;
+}
+
+.settings-section {
+    display: grid;
+    gap: 12px;
+    border-top: 1px solid rgba(30, 37, 40, 0.12);
+    padding-top: 14px;
+}
+
+.settings-section:first-child {
+    border-top: 0;
+    padding-top: 0;
+}
+
+.settings-section h2 {
+    margin: 0 0 4px;
+    font-size: 17px;
+    letter-spacing: 0;
+}
+
+.settings-section p,
+.settings-section small {
+    margin: 0;
+    color: #63706f;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.settings-row,
+.settings-field {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.settings-row > span,
+.settings-field > span {
+    color: #344247;
+    font-size: 14px;
+}
+
+.settings-inline {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.shortcut-capture,
+.settings-reset,
+.segmented-control button,
+.settings-field select {
+    min-height: 36px;
+    border: 1px solid rgba(31, 111, 101, 0.24);
+    border-radius: 6px;
+    background: #ffffff;
+    color: #315f57;
+    font-size: 14px;
+}
+
+.shortcut-capture,
+.settings-reset,
+.segmented-control button {
+    padding: 0 12px;
+    cursor: pointer;
+}
+
+.shortcut-capture {
+    min-width: 132px;
+    font-weight: 700;
+}
+
+.shortcut-capture[aria-pressed="true"],
+.segmented-control button[aria-pressed="true"] {
+    background: #dff0ec;
+    color: #194f48;
+    border-color: #9bcac0;
+}
+
+.settings-reset {
+    color: #63706f;
+}
+
+.segmented-control {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+}
+
+.settings-field select {
+    width: min(260px, 58%);
+    padding: 0 10px;
+}
+
 .error {
     color: #9d2f39;
     background: #ffe8e6;

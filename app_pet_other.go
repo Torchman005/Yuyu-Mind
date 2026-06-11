@@ -5,3 +5,6 @@ package main
 func (a *App) UpdatePetHitTest(state PetHitTestState) error {
 	return nil
 }
+
+func (a *App) startPetModeHotkey() {
+}

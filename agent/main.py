@@ -200,6 +200,25 @@ def reply_language() -> str:
     return (os.environ.get("YUYU_REPLY_LANGUAGE") or os.environ.get("MOCHI_REPLY_LANGUAGE", "zh_ja")).strip().lower() or "zh_ja"
 
 
+def normalize_reply_language(value: str) -> str:
+    language = (value or "").strip().lower()
+    if language in {"zh_ja", "zh-ja", "dual", "bilingual"}:
+        return "zh_ja"
+    if language in {"ja", "jp", "japanese"}:
+        return "ja"
+    if language in {"zh", "cn", "chinese"}:
+        return "zh"
+    return ""
+
+
+def apply_reply_language(value: str) -> None:
+    language = normalize_reply_language(value)
+    if not language:
+        return
+    os.environ["YUYU_REPLY_LANGUAGE"] = language
+    os.environ["MOCHI_REPLY_LANGUAGE"] = language
+
+
 def desktop_pet_name() -> str:
     return (os.environ.get("YUYU_DESKTOP_PET_NAME") or os.environ.get("MOCHI_DESKTOP_PET_NAME", "Yuyu")).strip() or "Yuyu"
 
@@ -686,6 +705,7 @@ class AgentHandler(BaseHTTPRequestHandler):
         memories = payload.get("memories", [])
         history = payload.get("history", [])
         request_mode = str(payload.get("mode", "chat")).strip().lower() or "chat"
+        apply_reply_language(str(payload.get("replyLanguage", "")).strip())
         if not isinstance(memories, list):
             memories = []
         if not isinstance(history, list):

@@ -84,6 +84,14 @@ type SpeechStreamEvent struct {
 	Detail      string `json:"detail,omitempty"`
 }
 
+type AssistantAckEvent struct {
+	Content    string `json:"content"`
+	SpeechText string `json:"speechText,omitempty"`
+	Emotion    string `json:"emotion,omitempty"`
+	Plugin     string `json:"plugin,omitempty"`
+	Action     string `json:"action,omitempty"`
+}
+
 type FishLiveProbeResult struct {
 	OK        bool     `json:"ok"`
 	Error     string   `json:"error,omitempty"`
@@ -93,19 +101,26 @@ type FishLiveProbeResult struct {
 }
 
 type PetHitTestState struct {
-	Enabled      bool    `json:"enabled"`
-	ControlsOpen bool    `json:"controlsOpen"`
-	X            float64 `json:"x"`
-	Y            float64 `json:"y"`
-	Width        float64 `json:"width"`
-	Height       float64 `json:"height"`
+	Enabled          bool    `json:"enabled"`
+	ControlsOpen     bool    `json:"controlsOpen"`
+	ForcePassthrough bool    `json:"forcePassthrough"`
+	MouseShortcut    string  `json:"mouseShortcut"`
+	X                float64 `json:"x"`
+	Y                float64 `json:"y"`
+	Width            float64 `json:"width"`
+	Height           float64 `json:"height"`
+}
+
+type RuntimeSettings struct {
+	ReplyLanguage string `json:"replyLanguage"`
 }
 
 type agentRequest struct {
-	Message  string    `json:"message"`
-	History  []Message `json:"history"`
-	Memories []string  `json:"memories"`
-	Mode     string    `json:"mode,omitempty"`
+	Message       string    `json:"message"`
+	History       []Message `json:"history"`
+	Memories      []string  `json:"memories"`
+	Mode          string    `json:"mode,omitempty"`
+	ReplyLanguage string    `json:"replyLanguage,omitempty"`
 }
 
 type agentResponse struct {
@@ -146,9 +161,21 @@ type PluginInvokeResult struct {
 	Error       string         `json:"error"`
 	Summary     string         `json:"summary"`
 	Metadata    map[string]any `json:"metadata"`
+	Events      []PluginEvent  `json:"events"`
 	Vision      map[string]any `json:"vision"`
 	ImageBase64 string         `json:"imageBase64"`
 	ContentType string         `json:"contentType"`
+}
+
+type PluginEvent struct {
+	ID          string         `json:"id"`
+	Type        string         `json:"type"`
+	User        string         `json:"user"`
+	Text        string         `json:"text"`
+	Priority    int            `json:"priority"`
+	ShouldReply bool           `json:"shouldReply"`
+	Speak       bool           `json:"speak"`
+	Metadata    map[string]any `json:"metadata"`
 }
 
 type PluginContextCandidate struct {
@@ -170,6 +197,7 @@ type App struct {
 	agentStatus  string
 	provider     string
 	providerErr  string
+	eventSeen    map[string]time.Time
 }
 
 func NewApp() *App {
@@ -179,6 +207,7 @@ func NewApp() *App {
 		agentURL:     "http://127.0.0.1:8765",
 		agentStatus:  "offline",
 		provider:     "unknown",
+		eventSeen:    map[string]time.Time{},
 	}
 }
 
@@ -192,6 +221,8 @@ func (a *App) startup(ctx context.Context) {
 		println("database startup error:", err.Error())
 	}
 	a.refreshAgentStatus()
+	a.startPetModeHotkey()
+	go a.pollPluginEvents()
 }
 
 func loadDotenv() {
@@ -232,6 +263,19 @@ func loadDotenv() {
 			continue
 		}
 		_ = os.Setenv(key, value)
+	}
+}
+
+func normalizeReplyLanguage(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "zh_ja", "zh-ja", "dual", "bilingual":
+		return "zh_ja"
+	case "ja", "jp", "japanese":
+		return "ja"
+	case "zh", "cn", "chinese":
+		return "zh"
+	default:
+		return ""
 	}
 }
 
@@ -2318,6 +2362,15 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 	}, nil
 }
 
+func (a *App) UpdateRuntimeSettings(settings RuntimeSettings) error {
+	replyLanguage := normalizeReplyLanguage(settings.ReplyLanguage)
+	if replyLanguage != "" {
+		_ = os.Setenv("YUYU_REPLY_LANGUAGE", replyLanguage)
+		_ = os.Setenv("MOCHI_REPLY_LANGUAGE", replyLanguage)
+	}
+	return nil
+}
+
 func (a *App) ObserveScreen(prompt string) (ChatReply, error) {
 	if a.db == nil {
 		return ChatReply{}, errors.New("database is not ready")
@@ -2327,6 +2380,14 @@ func (a *App) ObserveScreen(prompt string) (ChatReply, error) {
 	if prompt == "" {
 		prompt = "看一下当前屏幕，告诉我你注意到了什么。"
 	}
+
+	a.emitTaskAck(AssistantAckEvent{
+		Content:    "我看看屏幕上有什么。",
+		SpeechText: "画面をちょっと見てみるね。",
+		Emotion:    "focused",
+		Plugin:     "screen",
+		Action:     "observe",
+	})
 
 	observation, err := a.invokeAgentPlugin("screen", "observe", map[string]any{
 		"prompt":       prompt,
@@ -2442,6 +2503,194 @@ func (a *App) invokeAgentPlugin(plugin string, action string, payload map[string
 	return result, nil
 }
 
+func (a *App) pollPluginEvents() {
+	ticker := time.NewTicker(time.Duration(intEnv("YUYU_PLUGIN_EVENT_POLL_SECONDS", 2)) * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			a.pollPluginEventsOnce()
+		case <-a.ctx.Done():
+			return
+		}
+	}
+}
+
+func (a *App) pollPluginEventsOnce() {
+	if a.ctx == nil || a.db == nil || !envEnabledDefault("YUYU_PLUGIN_EVENTS_ENABLED", true) {
+		return
+	}
+	reply, err := a.ListPlugins()
+	if err != nil {
+		return
+	}
+	for _, plugin := range reply.Plugins {
+		config := pluginEventConfig(plugin)
+		if config == nil {
+			continue
+		}
+		action := strings.TrimSpace(stringValue(config["action"]))
+		if action == "" {
+			action = "poll"
+		}
+		if !pluginHasLoadedAction(plugin, action) {
+			continue
+		}
+		result, err := a.invokeAgentPlugin(plugin.Name, action, map[string]any{
+			"maxEvents": intValue(config["maxEventsPerPoll"], 3),
+		})
+		if err != nil || !result.OK {
+			continue
+		}
+		limit := intValue(config["maxRepliesPerPoll"], 1)
+		replied := 0
+		for _, event := range result.Events {
+			if limit > 0 && replied >= limit {
+				break
+			}
+			if !event.ShouldReply || !a.markPluginEventSeen(plugin.Name, event) {
+				continue
+			}
+			if err := a.respondToPluginEvent(plugin, event); err == nil {
+				replied++
+			}
+		}
+	}
+}
+
+func pluginEventConfig(plugin PluginInfo) map[string]any {
+	modes, ok := plugin.Context["modes"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	raw, ok := modes["event"].(map[string]any)
+	if !ok {
+		raw, ok = modes["live"].(map[string]any)
+	}
+	if !ok {
+		return nil
+	}
+	if enabled, ok := raw["enabled"].(bool); ok && !enabled {
+		return nil
+	}
+	return raw
+}
+
+func (a *App) markPluginEventSeen(plugin string, event PluginEvent) bool {
+	id := strings.TrimSpace(event.ID)
+	if id == "" {
+		id = fmt.Sprintf("%s:%s:%s:%s", plugin, event.Type, event.User, event.Text)
+	}
+	key := plugin + ":" + id
+	now := time.Now()
+	for seenKey, seenAt := range a.eventSeen {
+		if now.Sub(seenAt) > 30*time.Minute {
+			delete(a.eventSeen, seenKey)
+		}
+	}
+	if _, ok := a.eventSeen[key]; ok {
+		return false
+	}
+	a.eventSeen[key] = now
+	return true
+}
+
+func (a *App) respondToPluginEvent(plugin PluginInfo, event PluginEvent) error {
+	content := buildPluginEventPrompt(plugin, event)
+	pluginContexts, pluginContextErrs := a.collectPluginContexts("chat", event.Text)
+	if len(pluginContexts) > 0 {
+		content = buildPluginEventContextPrompt(plugin, event, pluginContexts)
+	}
+	history, err := a.fetchMessages()
+	if err != nil {
+		return err
+	}
+	memories, err := a.fetchMemories()
+	if err != nil {
+		return err
+	}
+	agentReply, err := a.askAgentWithMode(content, history, memories, "proactive")
+	if err != nil {
+		return err
+	}
+	a.agentStatus = "online"
+	a.provider = strings.TrimSpace(agentReply.Provider)
+	a.providerErr = strings.TrimSpace(agentReply.ProviderError)
+	if a.provider == "" {
+		a.provider = "agent"
+	}
+	if len(pluginContextErrs) > 0 {
+		if strings.TrimSpace(a.providerErr) != "" {
+			a.providerErr += " | "
+		}
+		a.providerErr += "live event plugin context failed: " + strings.Join(pluginContextErrs, "; ")
+	}
+	reply, err := a.saveMessage("assistant", agentReply.Text, normalizedEmotion(agentReply.Emotion))
+	if err != nil {
+		return err
+	}
+	a.saveMemoryCandidates(agentReply.MemoryCandidates, reply.ID)
+	messages, err := a.fetchMessages()
+	if err != nil {
+		return err
+	}
+	chatReply := ChatReply{
+		Messages:      messages,
+		Reply:         reply,
+		SpeechText:    chooseSpeechText(agentReply, reply.Content),
+		Emotion:       reply.Emotion,
+		AgentStatus:   a.agentStatus,
+		AgentProvider: a.provider,
+		ProviderError: a.providerErr,
+	}
+	runtime.EventsEmit(a.ctx, "mochi:chat:reply", chatReply)
+	return nil
+}
+
+func buildPluginEventPrompt(plugin PluginInfo, event PluginEvent) string {
+	metadata, _ := json.Marshal(event.Metadata)
+	return fmt.Sprintf(`A live plugin event arrived from %s.
+Event type: %s
+User: %s
+Text: %s
+Priority: %d
+Metadata JSON: %s
+
+Reply as the desktop companion in one short, live-stream-friendly line.
+If this is chat/danmaku, respond naturally to the viewer.
+Do not mention plugin internals, queues, polling, or hidden state.`, plugin.DisplayName, event.Type, event.User, event.Text, event.Priority, string(metadata))
+}
+
+func buildPluginEventContextPrompt(plugin PluginInfo, event PluginEvent, contexts []PluginContextCandidate) string {
+	base := buildPluginEventPrompt(plugin, event)
+	var details strings.Builder
+	for _, context := range contexts {
+		metadata, _ := json.Marshal(context.Result.Metadata)
+		vision, _ := json.Marshal(context.Result.Vision)
+		summary := strings.TrimSpace(context.Result.Summary)
+		if summary == "" {
+			summary = "The plugin returned no summary."
+		}
+		details.WriteString(fmt.Sprintf(`Provider: %s
+Plugin: %s.%s
+Summary:
+%s
+Metadata JSON:
+%s
+Details JSON:
+%s
+
+`, context.ProviderName, context.Plugin, context.Action, summary, string(metadata), string(vision)))
+	}
+	return fmt.Sprintf(`%s
+
+The live viewer message also requested an external capability. Use this plugin context when replying:
+%s
+
+Answer the viewer naturally in one short live-stream-friendly line. If a task result is available, include the useful result directly.`, base, strings.TrimSpace(details.String()))
+}
+
 func (a *App) collectPluginContexts(mode string, message string) ([]PluginContextCandidate, []string) {
 	if !envEnabledDefaultCompat("YUYU_PLUGIN_CONTEXT_ENABLED", "MOCHI_PLUGIN_CONTEXT_ENABLED", true) {
 		return nil, nil
@@ -2500,8 +2749,14 @@ func (a *App) maybeInvokePluginContext(plugin PluginInfo, mode string, message s
 		return PluginContextCandidate{}, false, nil
 	}
 
+	if mode == "chat" {
+		a.emitPluginTaskAck(plugin, action, message)
+	}
+
 	result, err := a.invokeAgentPlugin(plugin.Name, action, map[string]any{
 		"prompt":       pluginContextPrompt(rawMode, message),
+		"message":      message,
+		"query":        message,
 		"includeImage": false,
 	})
 	if err != nil {
@@ -2522,6 +2777,63 @@ func (a *App) maybeInvokePluginContext(plugin PluginInfo, mode string, message s
 		Result:       result,
 		ProviderName: plugin.DisplayName,
 	}, true, nil
+}
+
+func (a *App) emitPluginTaskAck(plugin PluginInfo, action string, message string) {
+	content, speechText := pluginTaskAckText(plugin.Name, action, message)
+	if strings.TrimSpace(content) == "" {
+		return
+	}
+	a.emitTaskAck(AssistantAckEvent{
+		Content:    content,
+		SpeechText: speechText,
+		Emotion:    "focused",
+		Plugin:     plugin.Name,
+		Action:     action,
+	})
+}
+
+func (a *App) emitTaskAck(event AssistantAckEvent) {
+	if a.ctx == nil || strings.TrimSpace(event.Content) == "" {
+		return
+	}
+	runtime.EventsEmit(a.ctx, "mochi:assistant:ack", event)
+}
+
+func pluginTaskAckText(plugin string, action string, message string) (string, string) {
+	_ = action
+	query := summarizeAckSubject(message)
+	switch plugin {
+	case "web_search":
+		if query != "" {
+			return fmt.Sprintf("我去搜搜看「%s」。", query), fmt.Sprintf("%sについて、ちょっと調べてみるね。", query)
+		}
+		return "我去网上搜搜看。", "ちょっとネットで調べてみるね。"
+	case "screen":
+		return "我看看屏幕上有什么。", "画面をちょっと見てみるね。"
+	case "netease_music":
+		if query != "" {
+			return fmt.Sprintf("我去网易云找找「%s」。", query), fmt.Sprintf("%sを、网易云で探してみるね。", query)
+		}
+		return "我去网易云音乐看看。", "网易云音乐をちょっと見てみるね。"
+	default:
+		return "", ""
+	}
+}
+
+func summarizeAckSubject(message string) string {
+	text := strings.TrimSpace(message)
+	text = strings.Trim(text, " \t\r\n。.!?！？")
+	replacers := []string{"帮我", "请", "麻烦", "搜索一下", "搜一下", "搜索", "查一下", "联网查", "上网查", "网上查", "看看", "看一下"}
+	for _, replacer := range replacers {
+		text = strings.TrimSpace(strings.TrimPrefix(text, replacer))
+	}
+	text = strings.Trim(text, " ：:，,。.!?！？")
+	runes := []rune(text)
+	if len(runes) > 24 {
+		return string(runes[:24]) + "..."
+	}
+	return text
 }
 
 func pluginHasLoadedAction(plugin PluginInfo, action string) bool {
@@ -2690,10 +3002,11 @@ func (a *App) askAgent(content string, history []Message, memories []string) (ag
 
 func (a *App) askAgentWithMode(content string, history []Message, memories []string, mode string) (agentResponse, error) {
 	payload, err := json.Marshal(agentRequest{
-		Message:  content,
-		History:  history,
-		Memories: memories,
-		Mode:     mode,
+		Message:       content,
+		History:       history,
+		Memories:      memories,
+		Mode:          mode,
+		ReplyLanguage: normalizeReplyLanguage(envFirst("YUYU_REPLY_LANGUAGE", "MOCHI_REPLY_LANGUAGE")),
 	})
 	if err != nil {
 		return agentResponse{}, err

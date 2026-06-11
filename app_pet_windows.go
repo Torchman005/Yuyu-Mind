@@ -5,10 +5,13 @@ package main
 import (
 	"errors"
 	"math"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
 	"unsafe"
+
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
 type winPoint struct {
@@ -25,20 +28,27 @@ type winRect struct {
 
 const (
 	gwlExStyle       = -20
+	vkControl        = 0x11
 	wsExTransparent  = 0x00000020
 	wsExLayered      = 0x00080000
 	petHitPollPeriod = 45 * time.Millisecond
+	petHotkeyPeriod  = 35 * time.Millisecond
 )
 
 var (
 	petHitMu             sync.Mutex
 	petHitState          PetHitTestState
+	petHotkey            = petShortcutSpec{Ctrl: true, Key: 0x48}
+	petControlsHotkey    = petShortcutSpec{Ctrl: true, Shift: true, Key: 0x4D}
+	petVoiceHotkey       = petShortcutSpec{Ctrl: true, Key: 0x56}
 	petHitPollStarted    bool
+	petHotkeyStarted     bool
 	petMousePassthrough  bool
 	petWindowHandleCache uintptr
 
 	user32                = syscall.NewLazyDLL("user32.dll")
 	procFindWindowW       = user32.NewProc("FindWindowW")
+	procGetAsyncKeyState  = user32.NewProc("GetAsyncKeyState")
 	procGetCursorPos      = user32.NewProc("GetCursorPos")
 	procGetWindowRect     = user32.NewProc("GetWindowRect")
 	procGetWindowLongPtrW = user32.NewProc("GetWindowLongPtrW")
@@ -67,7 +77,189 @@ func sanitizePetHitTestState(state PetHitTestState) PetHitTestState {
 	if !isFinite(state.X) || !isFinite(state.Y) || !isFinite(state.Width) || !isFinite(state.Height) {
 		return PetHitTestState{}
 	}
+	state.MouseShortcut = normalizePetShortcut(state.MouseShortcut)
 	return state
+}
+
+func (a *App) startPetModeHotkey() {
+	petHitMu.Lock()
+	if petHotkeyStarted {
+		petHitMu.Unlock()
+		return
+	}
+	petHotkeyStarted = true
+	petHitMu.Unlock()
+
+	go a.pollPetModeHotkey()
+}
+
+func (a *App) pollPetModeHotkey() {
+	ticker := time.NewTicker(petHotkeyPeriod)
+	defer ticker.Stop()
+
+	wasDown := false
+	controlsWasDown := false
+	voiceWasDown := false
+	for {
+		select {
+		case <-ticker.C:
+			petHitMu.Lock()
+			state := petHitState
+			hotkey := petHotkey
+			controlsHotkey := petControlsHotkey
+			voiceHotkey := petVoiceHotkey
+			petHitMu.Unlock()
+			isDown := hotkey.isDown()
+			if isDown && !wasDown {
+				forcePassthrough := togglePetForcePassthrough()
+				if a.ctx != nil {
+					runtime.EventsEmit(a.ctx, "mochi:pet:mouse-mode", map[string]any{
+						"forcePassthrough": forcePassthrough,
+					})
+				}
+			}
+			wasDown = isDown
+			controlsDown := controlsHotkey.isDown()
+			if controlsDown && !controlsWasDown && a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "mochi:pet:controls-toggle", map[string]any{})
+			}
+			controlsWasDown = controlsDown
+			voiceDown := voiceHotkey.isDown()
+			if voiceDown && !voiceWasDown && state.Enabled && state.ForcePassthrough && a.ctx != nil {
+				runtime.EventsEmit(a.ctx, "mochi:pet:voice-input", map[string]any{})
+			}
+			voiceWasDown = voiceDown
+		case <-a.ctx.Done():
+			return
+		}
+	}
+}
+
+func asyncKeyDown(key int) bool {
+	state, _, _ := procGetAsyncKeyState.Call(uintptr(key))
+	return state&0x8000 != 0
+}
+
+type petShortcutSpec struct {
+	Ctrl  bool
+	Shift bool
+	Alt   bool
+	Key   int
+}
+
+func (shortcut petShortcutSpec) isDown() bool {
+	if shortcut.Key == 0 {
+		return false
+	}
+	if shortcut.Ctrl != asyncKeyDown(vkControl) {
+		return false
+	}
+	if shortcut.Shift != asyncKeyDown(0x10) {
+		return false
+	}
+	if shortcut.Alt != asyncKeyDown(0x12) {
+		return false
+	}
+	return asyncKeyDown(shortcut.Key)
+}
+
+func normalizePetShortcut(value string) string {
+	shortcut := strings.TrimSpace(value)
+	if shortcut == "" {
+		return "Ctrl+H"
+	}
+	compact := strings.ToUpper(strings.ReplaceAll(shortcut, " ", ""))
+	switch compact {
+	case "CTRL+M", "CONTROL+M", "CTRL+SHIFT+M", "CONTROL+SHIFT+M":
+		return "Ctrl+H"
+	}
+	return shortcut
+}
+
+func parsePetShortcut(value string) (petShortcutSpec, bool) {
+	parts := strings.Split(strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(value), " ", "")), "+")
+	shortcut := petShortcutSpec{}
+	for _, part := range parts {
+		switch part {
+		case "CTRL", "CONTROL":
+			shortcut.Ctrl = true
+		case "SHIFT":
+			shortcut.Shift = true
+		case "ALT":
+			shortcut.Alt = true
+		case "":
+		default:
+			key, ok := petShortcutKey(part)
+			if !ok || shortcut.Key != 0 {
+				return petShortcutSpec{}, false
+			}
+			shortcut.Key = key
+		}
+	}
+	if shortcut.Key == 0 || (!shortcut.Ctrl && !shortcut.Shift && !shortcut.Alt) {
+		return petShortcutSpec{}, false
+	}
+	return shortcut, true
+}
+
+func petShortcutKey(key string) (int, bool) {
+	if len(key) == 1 {
+		character := key[0]
+		if character >= 'A' && character <= 'Z' {
+			return int(character), true
+		}
+		if character >= '0' && character <= '9' {
+			return int(character), true
+		}
+	}
+	switch key {
+	case "SPACE":
+		return 0x20, true
+	case "TAB":
+		return 0x09, true
+	case "F1":
+		return 0x70, true
+	case "F2":
+		return 0x71, true
+	case "F3":
+		return 0x72, true
+	case "F4":
+		return 0x73, true
+	case "F5":
+		return 0x74, true
+	case "F6":
+		return 0x75, true
+	case "F7":
+		return 0x76, true
+	case "F8":
+		return 0x77, true
+	case "F9":
+		return 0x78, true
+	case "F10":
+		return 0x79, true
+	case "F11":
+		return 0x7A, true
+	case "F12":
+		return 0x7B, true
+	default:
+		return 0, false
+	}
+}
+
+func togglePetForcePassthrough() bool {
+	petHitMu.Lock()
+	if !petHitState.Enabled {
+		petHitState.ForcePassthrough = false
+		petHitMu.Unlock()
+		applyPetHitTest()
+		return false
+	}
+	petHitState.ForcePassthrough = !petHitState.ForcePassthrough
+	forcePassthrough := petHitState.ForcePassthrough
+	petHitMu.Unlock()
+
+	applyPetHitTest()
+	return forcePassthrough
 }
 
 func isFinite(value float64) bool {
@@ -86,10 +278,15 @@ func pollPetHitTest() {
 func applyPetHitTest() {
 	petHitMu.Lock()
 	state := petHitState
+	if shortcut, ok := parsePetShortcut(state.MouseShortcut); ok {
+		petHotkey = shortcut
+	}
 	petHitMu.Unlock()
 
 	shouldPassThrough := false
-	if state.Enabled && !state.ControlsOpen {
+	if state.Enabled && state.ForcePassthrough {
+		shouldPassThrough = true
+	} else if state.Enabled && !state.ControlsOpen {
 		inside, err := cursorInsidePetHitRect(state)
 		shouldPassThrough = err == nil && !inside
 	}
