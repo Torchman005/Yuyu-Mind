@@ -1,0 +1,46 @@
+{
+  "active_provider": {
+    "provider_id": "openai",
+    "model": "gpt-4o"
+  },
+  "providers": {
+    "openai": {
+      "name": "OpenAI",
+      "base_url": "https://api.openai.com/v1",
+      "api_key": "sk-xxx",
+      "model": "gpt-4o",
+      "disabled": false
+    },
+    "deepseek": {
+      "name": "DeepSeek",
+      "base_url": "https://api.deepseek.com",
+      "api_key": "sk-xxx",
+      "model": "deepseek-chat",
+      "disabled": false
+    },
+    "moonshot": {
+      "name": "Moonshot",
+      "base_url": "https://api.moonshot.cn/v1",
+      "api_key": "sk-xxx",
+      "model": "moonshot-v1-8k",
+      "disabled": false
+    },
+    "ollama": {
+      "name": "Ollama",
+      "base_url": "http://localhost:11434/v1",
+      "api_key": "",
+      "model": "llama3",
+      "disabled": false
+    }
+  },
+  "app": {
+    "theme": "system",
+    "language": "zh-CN",
+    "max_turns": 20,
+    "db_path": ""
+  },
+  "memory": {
+    "max_turns": 20,
+    "max_tokens_est": 0
+  }
+}
