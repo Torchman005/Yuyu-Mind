@@ -66,11 +66,11 @@ type Cubism5Renderer = {
     }) => Promise<AvatarController> | AvatarController;
 };
 
-const avatarRenderer = (import.meta.env.VITE_AVATAR_RENDERER as string | undefined) || 'css';
-const modelUrl = import.meta.env.VITE_LIVE2D_MODEL_URL as string | undefined;
+const avatarRenderer = (import.meta.env.VITE_AVATAR_RENDERER as string | undefined) || 'pixi';
+const modelUrl = (import.meta.env.VITE_LIVE2D_MODEL_URL as string | undefined) || '/models/yumi/yumi.4096.model3.json';
 const cubism5CoreUrl = import.meta.env.VITE_CUBISM5_CORE_URL as string | undefined;
 const cubism5RendererUrl = '/live2d/cubism5/mochi-cubism5-renderer.v2.js';
-const legacyCubismCoreUrl = import.meta.env.VITE_LIVE2D_CUBISM_CORE_URL as string | undefined;
+const legacyCubismCoreUrl = (import.meta.env.VITE_LIVE2D_CUBISM_CORE_URL as string | undefined) || '/live2d/live2dcubismcore.min.js';
 const cubism2CoreUrl = (import.meta.env.VITE_LIVE2D_CUBISM2_CORE_URL as string | undefined) || '/live2d/live2d.min.js';
 const live2dDebug = (import.meta.env.VITE_LIVE2D_DEBUG as string | undefined) === 'true';
 

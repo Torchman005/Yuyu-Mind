@@ -11,7 +11,7 @@ import {
     SynthesizeSpeechStream,
     TranscribeAudio,
     UpdatePetHitTest,
-} from '../wailsjs/go/main/App';
+} from '../wailsjs/go/app/App';
 import {
     EventsOn,
     Quit,
@@ -21,25 +21,11 @@ import {
     WindowSetBackgroundColour,
     WindowSetSize,
 } from '../wailsjs/runtime/runtime';
+import {app} from '../wailsjs/go/models';
 import {AvatarPerformance, Live2DStage} from './components/Live2DStage';
 
-type Message = {
-    id: number;
-    role: string;
-    content: string;
-    emotion: string;
-    createdAt: string;
-};
-
-type ChatResponse = {
-    messages?: Message[];
-    reply?: Message;
-    speechText?: string;
-    emotion?: string;
-    agentStatus?: string;
-    agentProvider?: string;
-    providerError?: string;
-};
+type Message = app.CompanionMessage;
+type ChatResponse = app.ChatReply;
 
 type SpeechStreamEvent = {
     sessionId?: string;
@@ -424,14 +410,14 @@ function App() {
 
     useEffect(() => {
         GetState()
-            .then((state) => {
+            .then((state: app.AppState) => {
                 setMessages(state.messages ?? []);
                 setEmotion(state.emotion || 'neutral');
                 setAgentStatus(state.agentStatus || 'offline');
                 setAgentProvider(state.agentProvider || 'unknown');
                 setProviderError(state.providerError || '');
             })
-            .catch((reason) => setError(String(reason)));
+            .catch((reason: unknown) => setError(String(reason)));
     }, []);
 
     useEffect(() => {
@@ -510,7 +496,7 @@ function App() {
                     setProviderError(response.providerError || '');
                     speakResponse(response);
                 })
-                .catch((reason) => {
+                .catch((reason: unknown) => {
                     console.warn('Proactive message failed:', reason);
                 })
                 .finally(() => {
@@ -1576,7 +1562,7 @@ function App() {
                     setProviderError(response.providerError || '');
                     speakResponse(response);
                 })
-                .catch((reason) => {
+                .catch((reason: unknown) => {
                     console.warn('Follow-up message failed:', reason);
                 })
                 .finally(() => {
@@ -2190,10 +2176,9 @@ function App() {
                         <button type="button" onClick={() => void observeScreen()} disabled={isSending || isObservingScreen}>
                             {isObservingScreen ? '观察中' : '看屏幕'}
                         </button>
-                        <button type="button">Live2D</button>
-                        <button type="button">记忆</button>
-                        <button type="button">插件</button>
-                        <button type="button">屏幕</button>
+                        <span className="stage-tag">Live2D</span>
+                        <span className="stage-tag">本地记忆</span>
+                        <span className="stage-tag">{voiceStatus === 'speaking' ? '朗读中' : voiceStatus === 'listening' ? '聆听中' : '待机'}</span>
                     </div>
                 )}
             </section>
@@ -2201,9 +2186,9 @@ function App() {
             {!isPetMode && (
                 <section className="chat-panel" aria-label={`${DESKTOP_PET_NAME} chat`}>
                     <header>
-                        <div>
-                            <p className="eyebrow">Desktop Companion MVP</p>
-                            <h1>文字聊天与本地记忆</h1>
+                        <div className="header-title">
+                            <p className="eyebrow">Desktop Companion</p>
+                            <h1>{DESKTOP_PET_NAME}</h1>
                         </div>
                         <div className="header-actions">
                             <button
@@ -2272,7 +2257,7 @@ function App() {
                             >
                                 清空聊天
                             </button>
-                            <span className={`pill agent-${agentStatus}`}>Agent {agentStatus} · {agentProvider}</span>
+                            <span className={`pill agent-${agentStatus}`}>{agentStatus} · {agentProvider}</span>
                         </div>
                     </header>
 
@@ -2292,7 +2277,7 @@ function App() {
                         ))}
                     </div>
 
-                    {providerError && <div className="error">Provider fallback: {providerError}</div>}
+                    {providerError && <div className="error">模型状态：{providerError}</div>}
                     {error && <div className="error">{error}</div>}
                     {voiceError && <div className="error">{voiceError}</div>}
 

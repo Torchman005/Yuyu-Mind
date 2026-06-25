@@ -22,10 +22,9 @@ func NewAgentTemplate(systemPrompt string, toolDescriptions []string) (*compose.
 	// 构建带工具说明的完整系统提示词。
 	fullSystemPrompt := buildAgentSystemPrompt(systemPrompt, toolDescriptions)
 
-	graph.AddNode("template", compose.InvokableFunc(func(
+	err := graph.AddLambdaNode("template", compose.InvokableLambda(func(
 		ctx context.Context,
 		input AgentTemplateInput,
-		opts ...compose.Option,
 	) ([]*schema.Message, error) {
 		messages := make([]*schema.Message, 0, len(input.History)+2)
 
@@ -48,9 +47,16 @@ func NewAgentTemplate(systemPrompt string, toolDescriptions []string) (*compose.
 
 		return messages, nil
 	}))
+	if err != nil {
+		return nil, err
+	}
 
-	graph.AddEdge(compose.START, "template")
-	graph.AddEdge("template", compose.END)
+	if err := graph.AddEdge(compose.START, "template"); err != nil {
+		return nil, err
+	}
+	if err := graph.AddEdge("template", compose.END); err != nil {
+		return nil, err
+	}
 
 	return graph, nil
 }

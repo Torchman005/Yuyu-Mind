@@ -19,10 +19,9 @@ func NewChatTemplate(systemPrompt string) (*compose.Graph[ChatTemplateInput, []*
 	graph := compose.NewGraph[ChatTemplateInput, []*schema.Message]()
 
 	// 构建消息模板函数。
-	graph.AddNode("template", compose.InvokableFunc(func(
+	err := graph.AddLambdaNode("template", compose.InvokableLambda(func(
 		ctx context.Context,
 		input ChatTemplateInput,
-		opts ...compose.Option,
 	) ([]*schema.Message, error) {
 		messages := make([]*schema.Message, 0, len(input.History)+2)
 
@@ -45,9 +44,16 @@ func NewChatTemplate(systemPrompt string) (*compose.Graph[ChatTemplateInput, []*
 
 		return messages, nil
 	}))
+	if err != nil {
+		return nil, err
+	}
 
-	graph.AddEdge(compose.START, "template")
-	graph.AddEdge("template", compose.END)
+	if err := graph.AddEdge(compose.START, "template"); err != nil {
+		return nil, err
+	}
+	if err := graph.AddEdge("template", compose.END); err != nil {
+		return nil, err
+	}
 
 	return graph, nil
 }
