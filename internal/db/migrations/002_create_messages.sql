@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS messages (
     content         TEXT NOT NULL,
     tool_calls      TEXT,
     tool_call_id    TEXT,
+    source_kind     TEXT,
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 

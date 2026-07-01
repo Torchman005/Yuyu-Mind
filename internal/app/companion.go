@@ -253,7 +253,7 @@ func (a *App) SynthesizeSpeech(text string) (SpeechReply, error) {
 	if strings.TrimSpace(text) == "" {
 		return SpeechReply{}, errors.New("speech text cannot be empty")
 	}
-	return SpeechReply{}, errors.New("cloud TTS is not configured in this build")
+	return a.synthesizeFishSpeech(text)
 }
 
 func (a *App) SynthesizeSpeechStream(text string) (SpeechStreamStart, error) {
@@ -280,11 +280,7 @@ func (a *App) TranscribeAudio(audioBase64 string, contentType string, language s
 }
 
 func (a *App) ProbeFishLive() (FishLiveProbeResult, error) {
-	return FishLiveProbeResult{
-		OK:     false,
-		Error:  "Fish Audio live TTS is not configured in this build",
-		Events: []string{"not-configured"},
-	}, nil
+	return a.probeFishSpeech()
 }
 
 func (a *App) ListPlugins() (PluginListReply, error) {

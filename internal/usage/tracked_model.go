@@ -2,6 +2,7 @@ package usage
 
 import (
 	"context"
+	"fmt"
 	"io"
 
 	"github.com/cloudwego/eino/components/model"
@@ -10,12 +11,12 @@ import (
 
 // TrackedChatModel 包装真实模型，在不改变调用方 API 的前提下收集 token 用量。
 type TrackedChatModel struct {
-	inner     model.ChatModel
+	inner     model.BaseChatModel
 	collector *Collector
 }
 
 // NewTrackedChatModel 创建带 token 追踪能力的模型包装器。
-func NewTrackedChatModel(inner model.ChatModel, collector *Collector) *TrackedChatModel {
+func NewTrackedChatModel(inner model.BaseChatModel, collector *Collector) *TrackedChatModel {
 	return &TrackedChatModel{inner: inner, collector: collector}
 }
 
@@ -62,9 +63,17 @@ func (m *TrackedChatModel) Stream(ctx context.Context, input []*schema.Message, 
 	return outReader, nil
 }
 
-// BindTools 透传工具绑定，保持与原模型一致的能力。
-func (m *TrackedChatModel) BindTools(tools []*schema.ToolInfo) error {
-	return m.inner.BindTools(tools)
+// WithTools 透传工具绑定，并继续复用同一个 token 收集器。
+func (m *TrackedChatModel) WithTools(tools []*schema.ToolInfo) (model.ToolCallingChatModel, error) {
+	toolModel, ok := m.inner.(model.ToolCallingChatModel)
+	if !ok {
+		return nil, fmt.Errorf("chat model does not support tool calling")
+	}
+	innerWithTools, err := toolModel.WithTools(tools)
+	if err != nil {
+		return nil, err
+	}
+	return NewTrackedChatModel(innerWithTools, m.collector), nil
 }
 
 func (m *TrackedChatModel) collectStreamUsage(chunks []*schema.Message) {

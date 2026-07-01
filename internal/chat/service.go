@@ -3,75 +3,222 @@ package chat
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
+	"strings"
 	"time"
 
-	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
-	"github.com/cloudwego/eino/schema"
 	"github.com/google/uuid"
-	"github.com/yuyu-mind/backend/internal/ai/pipeline"
-	aiProvider "github.com/yuyu-mind/backend/internal/ai/provider"
-	"github.com/yuyu-mind/backend/internal/ai/template"
 	"github.com/yuyu-mind/backend/internal/config"
 	"github.com/yuyu-mind/backend/internal/db"
 	"github.com/yuyu-mind/backend/internal/memory"
 	"github.com/yuyu-mind/backend/internal/usage"
 	pkgTypes "github.com/yuyu-mind/backend/pkg/types"
+
+	aiProvider "github.com/yuyu-mind/backend/internal/ai/provider"
 )
 
-// Emitter 负责把流式事件发送给前端。
 type Emitter interface {
 	Emit(event ChatEvent)
 }
 
-// Service 编排聊天请求，连接模型供应商、Pipeline、记忆和数据库。
 type Service struct {
 	cfg         *config.Config
 	db          *db.DB
 	providerReg *aiProvider.Registry
 	toolReg     interface{ GetAll() []tool.BaseTool }
-	memory      memory.Store
+	shortMemory memory.Store
+	longMemory  *memory.ServiceMemory
+	runtimes    *RuntimeManager
+	sender      *SendService
 }
 
-// NewService 创建聊天服务。
 func NewService(
 	cfg *config.Config,
 	database *db.DB,
 	providerReg *aiProvider.Registry,
 	toolReg interface{ GetAll() []tool.BaseTool },
 	memStore memory.Store,
+	longMemory *memory.ServiceMemory,
 ) *Service {
 	return &Service{
 		cfg:         cfg,
 		db:          database,
 		providerReg: providerReg,
 		toolReg:     toolReg,
-		memory:      memStore,
+		shortMemory: memStore,
+		longMemory:  longMemory,
+		runtimes:    NewRuntimeManager(memStore),
+		sender:      NewSendService(database, cfg.Chat),
 	}
 }
 
-// StreamChat 处理一次聊天请求，并通过 emitter 推送流式事件。
 func (s *Service) StreamChat(ctx context.Context, req ChatRequest, emitter Emitter) error {
 	startedAt := time.Now()
-	mode := "chat"
-	if req.UseTools {
-		mode = "agent"
-	}
-	collector := usage.NewCollector()
 
-	// 读取当前激活的供应商配置。
+	msg, err := s.normalizeRequest(req)
+	if err != nil {
+		emitError(emitter, err)
+		return err
+	}
+
+	rt := s.runtimes.Get(msg.SessionID)
+	snapshot, accepted, err := rt.Ingest(ctx, msg)
+	if err != nil {
+		emitError(emitter, fmt.Errorf("ingest message: %w", err))
+		return fmt.Errorf("ingest message: %w", err)
+	}
+	if !accepted {
+		emitDone(emitter)
+		return nil
+	}
+
+	if err := s.persistInboundMessage(ctx, msg); err != nil {
+		emitError(emitter, err)
+		return err
+	}
+
+	gate := NewTurnGate(s.cfg.Chat).Evaluate(snapshot)
+	if !gate.ShouldPlan {
+		rt.CompleteNoReply()
+		slog.Debug("turn gate kept message pending",
+			"conversation_id", msg.ConversationID,
+			"score", gate.Score,
+			"threshold", gate.Threshold,
+			"reasons", strings.Join(gate.Reasons, ","),
+		)
+		emitDone(emitter)
+		return nil
+	}
+
+	collector := usage.NewCollector()
+	trackedModel, providerID, modelName, err := s.createTrackedModel(ctx, collector)
+	if err != nil {
+		emitError(emitter, err)
+		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "orchestrated", collector, time.Since(startedAt), "failed", err)
+		return err
+	}
+
+	rt.MarkRunning()
+	planner := NewPlannerAgent(trackedModel, s.cfg.Chat)
+	decision, err := planner.Plan(ctx, snapshot, gate)
+	if err != nil {
+		rt.CompleteNoReply()
+		emitError(emitter, err)
+		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "planner", collector, time.Since(startedAt), "failed", err)
+		return err
+	}
+
+	memories, toolResults, err := s.preparePlannerContext(ctx, snapshot, decision, emitter)
+	if err != nil {
+		rt.CompleteNoReply()
+		emitError(emitter, err)
+		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "planner", collector, time.Since(startedAt), "failed", err)
+		return err
+	}
+
+	switch decision.Action {
+	case "wait":
+		rt.CompleteNoReply()
+		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "planner_wait", collector, time.Since(startedAt), "success", nil)
+		emitDone(emitter)
+		return nil
+	case "reply", "query_memory", "tool":
+		// query_memory and tool are planning steps; the visible answer still
+		// comes exclusively from the Replyer.
+	default:
+		err := fmt.Errorf("planner returned unsupported action %q", decision.Action)
+		rt.CompleteNoReply()
+		emitError(emitter, err)
+		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "planner", collector, time.Since(startedAt), "failed", err)
+		return err
+	}
+
+	replyer := NewReplyerAgent(trackedModel, s.cfg.Chat)
+	reply, err := replyer.Reply(ctx, snapshot, decision, memories, toolResults)
+	if err != nil {
+		rt.CompleteNoReply()
+		emitError(emitter, err)
+		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "replyer", collector, time.Since(startedAt), "failed", err)
+		return err
+	}
+
+	if _, err := s.sender.SendGuidedReply(ctx, rt, snapshot, reply, emitter); err != nil {
+		rt.CompleteNoReply()
+		emitError(emitter, err)
+		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "send", collector, time.Since(startedAt), "failed", err)
+		return err
+	}
+
+	s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "orchestrated", collector, time.Since(startedAt), "success", nil)
+	emitDone(emitter)
+	return nil
+}
+
+func (s *Service) normalizeRequest(req ChatRequest) (NormalizedMessage, error) {
+	content := strings.TrimSpace(req.Content)
+	if content == "" {
+		return NormalizedMessage{}, fmt.Errorf("message content is empty")
+	}
+	conversationID := strings.TrimSpace(req.ConversationID)
+	if conversationID == "" {
+		return NormalizedMessage{}, fmt.Errorf("conversation_id is required")
+	}
+	sessionID := strings.TrimSpace(req.SessionID)
+	if sessionID == "" {
+		sessionID = conversationID
+	}
+	messageID := strings.TrimSpace(req.MessageID)
+	if messageID == "" {
+		messageID = uuid.New().String()
+	}
+	senderID := strings.TrimSpace(req.SenderID)
+	if senderID == "" {
+		senderID = "user"
+	}
+	sourceKind := strings.TrimSpace(req.SourceKind)
+	if sourceKind == "" {
+		sourceKind = "inbound_user"
+	}
+	mentioned := req.Mentioned
+	if botName := strings.TrimSpace(s.cfg.Chat.BotName); botName != "" {
+		mentioned = mentioned || strings.Contains(strings.ToLower(content), strings.ToLower(botName))
+	}
+
+	return NormalizedMessage{
+		ID:             messageID,
+		SessionID:      sessionID,
+		ConversationID: conversationID,
+		SenderID:       senderID,
+		SenderName:     req.SenderName,
+		Content:        content,
+		Mentioned:      mentioned,
+		SourceKind:     sourceKind,
+		CreatedAt:      time.Now(),
+	}, nil
+}
+
+func (s *Service) persistInboundMessage(ctx context.Context, msg NormalizedMessage) error {
+	if err := s.db.Messages.Create(ctx, &db.Message{
+		ID:             msg.ID,
+		ConversationID: msg.ConversationID,
+		Role:           "user",
+		Content:        msg.Content,
+		SourceKind:     msg.SourceKind,
+		CreatedAt:      msg.CreatedAt,
+	}); err != nil {
+		return fmt.Errorf("persist inbound message: %w", err)
+	}
+	return nil
+}
+
+func (s *Service) createTrackedModel(ctx context.Context, collector *usage.Collector) (*usage.TrackedChatModel, string, string, error) {
 	providerCfg, err := s.cfg.GetActiveProviderConfig()
 	if err != nil {
-		emitter.Emit(ChatEvent{Type: EventTypeError, Content: err.Error()})
-		return fmt.Errorf("get provider config: %w", err)
+		return nil, "", "", fmt.Errorf("get provider config: %w", err)
 	}
-
 	providerID := s.cfg.ActiveProvider.ProviderID
 	modelName := providerCfg.Model
-
-	// 创建 ChatModel，并包装 token 追踪逻辑。
 	chatModel, err := s.providerReg.Create(ctx, pkgTypes.ProviderConfig{
 		ID:      providerID,
 		Name:    providerCfg.Name,
@@ -80,149 +227,50 @@ func (s *Service) StreamChat(ctx context.Context, req ChatRequest, emitter Emitt
 		Model:   modelName,
 	})
 	if err != nil {
-		emitter.Emit(ChatEvent{Type: EventTypeError, Content: fmt.Sprintf("Failed to create model: %v", err)})
-		s.persistTokenUsage(ctx, req.ConversationID, providerID, modelName, mode, collector, time.Since(startedAt), "failed", err)
-		return fmt.Errorf("create model: %w", err)
+		return nil, providerID, modelName, fmt.Errorf("create model: %w", err)
 	}
-	trackedModel := usage.NewTrackedChatModel(chatModel, collector)
+	return usage.NewTrackedChatModel(chatModel, collector), providerID, modelName, nil
+}
 
-	// 加载会话历史，失败时降级为空上下文。
-	history, err := s.memory.GetHistory(ctx, req.ConversationID)
+func (s *Service) preparePlannerContext(
+	ctx context.Context,
+	snapshot TurnSnapshot,
+	decision PlannerDecision,
+	emitter Emitter,
+) ([]string, []ToolResult, error) {
+	var memories []string
+	var err error
+	if decision.NeedMemory || decision.Action == "query_memory" {
+		memories, err = QueryPlannerMemory(ctx, s.longMemory, snapshot, decision)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	toolResults, err := ExecutePlannerTools(ctx, s.toolReg.GetAll(), decision.ToolCalls)
 	if err != nil {
-		slog.Warn("failed to load history, starting fresh", "error", err)
-		history = nil
+		return nil, nil, err
 	}
-
-	// 根据请求选择普通聊天或 Agent 工具调用链路。
-	var assistantMsg *schema.Message
-	if req.UseTools {
-		assistantMsg, err = s.runAgentPipeline(ctx, trackedModel, history, req, emitter)
-	} else {
-		assistantMsg, err = s.runChatPipeline(ctx, trackedModel, history, req, emitter)
+	for _, result := range toolResults {
+		if emitter != nil {
+			emitter.Emit(ChatEvent{Type: EventTypeToolResult, ToolName: result.Name, Content: result.Result})
+		}
 	}
+	return memories, toolResults, nil
+}
 
-	if err != nil {
+func emitError(emitter Emitter, err error) {
+	if emitter != nil && err != nil {
 		emitter.Emit(ChatEvent{Type: EventTypeError, Content: err.Error()})
-		s.persistTokenUsage(ctx, req.ConversationID, providerID, modelName, mode, collector, time.Since(startedAt), "failed", err)
-		return err
 	}
-
-	// 保存用户消息和助手回复。
-	userMsg := &schema.Message{Role: schema.User, Content: req.Content}
-	if err := s.memory.AppendMessages(ctx, req.ConversationID, []*schema.Message{userMsg, assistantMsg}); err != nil {
-		slog.Error("failed to persist messages", "error", err)
-	}
-	s.persistTokenUsage(ctx, req.ConversationID, providerID, modelName, mode, collector, time.Since(startedAt), "success", nil)
-
-	// 通知前端本次流式响应结束。
-	emitter.Emit(ChatEvent{Type: EventTypeDone})
-	return nil
 }
 
-// runChatPipeline 执行不带工具调用的普通聊天链路。
-func (s *Service) runChatPipeline(
-	ctx context.Context,
-	chatModel model.ChatModel,
-	history []*schema.Message,
-	req ChatRequest,
-	emitter Emitter,
-) (*schema.Message, error) {
-	tmpl, err := template.NewChatTemplate("You are a helpful assistant.")
-	if err != nil {
-		return nil, fmt.Errorf("create chat template: %w", err)
+func emitDone(emitter Emitter) {
+	if emitter != nil {
+		emitter.Emit(ChatEvent{Type: EventTypeDone})
 	}
-
-	runnable, err := pipeline.BuildChatChain(chatModel, tmpl)
-	if err != nil {
-		return nil, fmt.Errorf("build chat chain: %w", err)
-	}
-
-	// 流式读取响应，同时保留 chunk 中的 ResponseMeta。
-	streamReader, err := runnable.Stream(ctx, pipeline.ChatChainInput{
-		Query:   req.Content,
-		History: history,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("stream chat: %w", err)
-	}
-	defer streamReader.Close()
-
-	chunks := make([]*schema.Message, 0, 32)
-	for {
-		chunk, err := streamReader.Recv()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("receive chat stream: %w", err)
-		}
-		chunks = append(chunks, chunk)
-		if chunk.Content != "" {
-			emitter.Emit(ChatEvent{Type: EventTypeToken, Content: chunk.Content})
-		}
-	}
-
-	if len(chunks) == 0 {
-		return &schema.Message{Role: schema.Assistant}, nil
-	}
-
-	msg, err := schema.ConcatMessages(chunks)
-	if err != nil {
-		return nil, fmt.Errorf("concat chat stream: %w", err)
-	}
-	if msg.Role == "" {
-		msg.Role = schema.Assistant
-	}
-	return msg, nil
 }
 
-// runAgentPipeline 执行带工具调用的 Agent 链路。
-func (s *Service) runAgentPipeline(
-	ctx context.Context,
-	chatModel model.ChatModel,
-	history []*schema.Message,
-	req ChatRequest,
-	emitter Emitter,
-) (*schema.Message, error) {
-	// 汇总工具描述，写入系统提示词。
-	tools := s.toolReg.GetAll()
-	toolDescs := make([]string, 0, len(tools))
-	for _, t := range tools {
-		info, err := t.Info(ctx)
-		if err != nil {
-			continue
-		}
-		toolDescs = append(toolDescs, fmt.Sprintf("%s: %s", info.Name, info.Desc))
-	}
-
-	tmpl, err := template.NewAgentTemplate("You are a helpful assistant.", toolDescs)
-	if err != nil {
-		return nil, fmt.Errorf("create agent template: %w", err)
-	}
-
-	runnable, err := pipeline.BuildAgentGraph(chatModel, tmpl, tools, 10)
-	if err != nil {
-		return nil, fmt.Errorf("build agent graph: %w", err)
-	}
-
-	// 执行 Agent 图。
-	result, err := runnable.Invoke(ctx, pipeline.AgentGraphInput{
-		Query:   req.Content,
-		History: history,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("invoke agent: %w", err)
-	}
-
-	// 当前 Agent 图是非流式执行，完成后一次性发送最终回复。
-	if result.Content != "" {
-		emitter.Emit(ChatEvent{Type: EventTypeToken, Content: result.Content})
-	}
-
-	return result, nil
-}
-
-// CreateConversation 创建新会话。
 func (s *Service) CreateConversation(ctx context.Context, title string) (*db.Conversation, error) {
 	providerCfg, _ := s.cfg.GetActiveProviderConfig()
 	conv := &db.Conversation{
@@ -239,37 +287,30 @@ func (s *Service) CreateConversation(ctx context.Context, title string) (*db.Con
 	return conv, nil
 }
 
-// ListConversations 返回所有会话。
 func (s *Service) ListConversations(ctx context.Context) ([]*db.Conversation, error) {
 	return s.db.Conversations.List(ctx)
 }
 
-// DeleteConversation 删除会话及其关联数据。
 func (s *Service) DeleteConversation(ctx context.Context, id string) error {
 	return s.db.Conversations.Delete(ctx, id)
 }
 
-// GetMessages 返回指定会话的所有消息。
 func (s *Service) GetMessages(ctx context.Context, convID string) ([]*db.Message, error) {
 	return s.db.Messages.ListByConversation(ctx, convID)
 }
 
-// ListTokenUsageByConversation 返回指定会话的 token 用量明细。
 func (s *Service) ListTokenUsageByConversation(ctx context.Context, convID string) ([]*db.TokenUsageRecord, error) {
 	return s.db.TokenUsage.ListByConversation(ctx, convID)
 }
 
-// GetTokenUsageSummary 返回全局 token 用量总览。
 func (s *Service) GetTokenUsageSummary(ctx context.Context) (*db.TokenUsageSummary, error) {
 	return s.db.TokenUsage.Summary(ctx)
 }
 
-// GetTokenUsageSummaryByConversation 返回指定会话的 token 用量总览。
 func (s *Service) GetTokenUsageSummaryByConversation(ctx context.Context, convID string) (*db.TokenUsageSummary, error) {
 	return s.db.TokenUsage.SummaryByConversation(ctx, convID)
 }
 
-// GetTokenUsageByProviderModel 按供应商和模型维度汇总 token 用量。
 func (s *Service) GetTokenUsageByProviderModel(ctx context.Context) ([]*db.TokenUsageSummary, error) {
 	return s.db.TokenUsage.SummaryByProviderModel(ctx)
 }
@@ -285,6 +326,9 @@ func (s *Service) persistTokenUsage(
 	status string,
 	requestErr error,
 ) {
+	if providerID == "" || modelName == "" {
+		return
+	}
 	snapshot := collector.Snapshot()
 	record := &db.TokenUsageRecord{
 		ID:               uuid.New().String(),

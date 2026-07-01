@@ -77,7 +77,7 @@ func (a *App) Startup(ctx context.Context) {
 
 	a.memStore = memory.NewSQLiteStore(database.Messages, cfg.Memory.MaxTurns)
 	a.memorySvc = memory.NewServiceMemory(database.Memories)
-	a.chatSvc = chat.NewService(cfg, database, a.providerReg, a.toolReg, a.memStore)
+	a.chatSvc = chat.NewService(cfg, database, a.providerReg, a.toolReg, a.memStore, a.memorySvc)
 	a.agentSvc = agent.NewService(database, agent.NewDefaultExecutor(), slog.Default())
 	a.agentSvc.Start(ctx)
 

@@ -39,6 +39,18 @@
     "max_turns": 20,
     "db_path": ""
   },
+  "chat": {
+    "bot_name": "Yuyu",
+    "persona": "A warm, attentive private voice companion. Be concise, specific, and natural in one-on-one conversation.",
+    "style_notes": "Use short spoken sentences. Do not expose internal reasoning, tool names, or memory records.",
+    "reply_threshold": 0.45,
+    "reply_frequency": 1,
+    "average_message_interval_seconds": 8,
+    "min_reply_interval_seconds": 0,
+    "max_reply_chars": 500,
+    "split_max_chars": 90,
+    "allow_typo_simulation": false
+  },
   "memory": {
     "max_turns": 20,
     "max_tokens_est": 0

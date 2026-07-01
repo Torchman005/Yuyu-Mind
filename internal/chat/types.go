@@ -1,24 +1,27 @@
 package chat
 
-// ChatRequest 是前端发送的一次聊天请求。
 type ChatRequest struct {
 	ConversationID string `json:"conversation_id"`
+	SessionID      string `json:"session_id,omitempty"`
+	MessageID      string `json:"message_id,omitempty"`
+	SenderID       string `json:"sender_id,omitempty"`
+	SenderName     string `json:"sender_name,omitempty"`
 	Content        string `json:"content"`
-	UseTools       bool   `json:"use_tools"` // 是否启用工具调用
+	Mentioned      bool   `json:"mentioned,omitempty"`
+	SourceKind     string `json:"source_kind,omitempty"`
+	UseTools       bool   `json:"use_tools"`
 }
 
-// ChatEventType 标识流式事件类型。
 type ChatEventType string
 
 const (
-	EventTypeToken      ChatEventType = "token"       // 流式文本片段
-	EventTypeToolCall   ChatEventType = "tool_call"   // 模型决定调用工具
-	EventTypeToolResult ChatEventType = "tool_result" // 工具执行结果
-	EventTypeDone       ChatEventType = "done"        // 流式响应完成
-	EventTypeError      ChatEventType = "error"       // 请求发生错误
+	EventTypeToken      ChatEventType = "token"
+	EventTypeToolCall   ChatEventType = "tool_call"
+	EventTypeToolResult ChatEventType = "tool_result"
+	EventTypeDone       ChatEventType = "done"
+	EventTypeError      ChatEventType = "error"
 )
 
-// ChatEvent 表示发送给前端的流式事件。
 type ChatEvent struct {
 	Type     ChatEventType `json:"type"`
 	Content  string        `json:"content,omitempty"`
@@ -26,7 +29,6 @@ type ChatEvent struct {
 	ToolName string        `json:"tool_name,omitempty"`
 }
 
-// ConversationInfo 是返回给前端的会话摘要。
 type ConversationInfo struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
@@ -36,17 +38,16 @@ type ConversationInfo struct {
 	UpdatedAt string `json:"updated_at"`
 }
 
-// MessageInfo 是返回给前端的单条消息。
 type MessageInfo struct {
 	ID         string `json:"id"`
 	Role       string `json:"role"`
 	Content    string `json:"content"`
 	ToolCalls  string `json:"tool_calls,omitempty"`
 	ToolCallID string `json:"tool_call_id,omitempty"`
+	SourceKind string `json:"source_kind,omitempty"`
 	CreatedAt  string `json:"created_at"`
 }
 
-// TokenUsageInfo 是一次请求的 token 用量明细。
 type TokenUsageInfo struct {
 	ID               string `json:"id"`
 	ConversationID   string `json:"conversation_id"`
@@ -63,7 +64,6 @@ type TokenUsageInfo struct {
 	CreatedAt        string `json:"created_at"`
 }
 
-// TokenUsageSummary 是 token 用量聚合结果。
 type TokenUsageSummary struct {
 	ConversationID    string `json:"conversation_id,omitempty"`
 	Provider          string `json:"provider,omitempty"`

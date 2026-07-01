@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -8,7 +9,6 @@ import (
 	"sync"
 )
 
-// Config 保存应用的全部配置。
 type Config struct {
 	mu       sync.RWMutex
 	filePath string
@@ -16,39 +16,68 @@ type Config struct {
 	ActiveProvider ActiveProvider      `json:"active_provider"`
 	Providers      map[string]Provider `json:"providers"`
 	App            AppConfig           `json:"app"`
+	Chat           ChatConfig          `json:"chat"`
 	Memory         MemoryConfig        `json:"memory"`
+	Speech         SpeechConfig        `json:"speech"`
 }
 
-// ActiveProvider 标识当前选中的模型供应商和模型。
+// ActiveProvider identifies the selected model provider and model.
 type ActiveProvider struct {
 	ProviderID string `json:"provider_id"`
 	Model      string `json:"model"`
 }
 
-// Provider 保存模型供应商的凭据和端点信息。
+// Provider stores model provider credentials and endpoint settings.
 type Provider struct {
 	Name     string `json:"name"`
 	BaseURL  string `json:"base_url"`
 	APIKey   string `json:"api_key"`
-	Model    string `json:"model"` // 该供应商的默认模型
+	Model    string `json:"model"`
 	Disabled bool   `json:"disabled"`
 }
 
-// AppConfig 保存应用通用配置。
+// AppConfig stores general application settings.
 type AppConfig struct {
 	Theme    string `json:"theme"`
 	Language string `json:"language"`
-	MaxTurns int    `json:"max_turns"` // 上下文中保留的最大对话轮数
-	DBPath   string `json:"db_path"`   // 数据库绝对路径；为空时使用默认路径
+	MaxTurns int    `json:"max_turns"`
+	DBPath   string `json:"db_path"`
 }
 
-// MemoryConfig 保存会话记忆配置。
+// ChatConfig stores backend chat orchestration settings.
+type ChatConfig struct {
+	BotName                       string  `json:"bot_name"`
+	Persona                       string  `json:"persona"`
+	StyleNotes                    string  `json:"style_notes"`
+	ReplyThreshold                float64 `json:"reply_threshold"`
+	ReplyFrequency                float64 `json:"reply_frequency"`
+	AverageMessageIntervalSeconds int     `json:"average_message_interval_seconds"`
+	MinReplyIntervalSeconds       int     `json:"min_reply_interval_seconds"`
+	MaxReplyChars                 int     `json:"max_reply_chars"`
+	SplitMaxChars                 int     `json:"split_max_chars"`
+	AllowTypoSimulation           bool    `json:"allow_typo_simulation"`
+}
+
+// MemoryConfig stores conversation memory settings.
 type MemoryConfig struct {
-	MaxTurns     int `json:"max_turns"`      // 最大历史轮数，0 表示不限制
-	MaxTokensEst int `json:"max_tokens_est"` // 历史消息粗略 token 预算，0 表示不限制
+	MaxTurns     int `json:"max_turns"`
+	MaxTokensEst int `json:"max_tokens_est"`
 }
 
-// DefaultConfig 返回默认配置。
+// SpeechConfig stores speech service settings.
+type SpeechConfig struct {
+	FishAudio FishAudioConfig `json:"fish_audio"`
+}
+
+// FishAudioConfig stores Fish Audio TTS settings.
+type FishAudioConfig struct {
+	BaseURL     string `json:"base_url"`
+	APIKey      string `json:"api_key"`
+	ReferenceID string `json:"reference_id"`
+	Format      string `json:"format"`
+}
+
+// DefaultConfig returns the default application configuration.
 func DefaultConfig() *Config {
 	return &Config{
 		ActiveProvider: ActiveProvider{
@@ -86,14 +115,32 @@ func DefaultConfig() *Config {
 			Language: "zh-CN",
 			MaxTurns: 20,
 		},
+		Chat: ChatConfig{
+			BotName:                       "Yuyu",
+			Persona:                       "A warm, attentive private voice companion. Be concise, specific, and natural in one-on-one conversation.",
+			StyleNotes:                    "Use short spoken sentences. Do not expose internal reasoning, tool names, or memory records.",
+			ReplyThreshold:                0.45,
+			ReplyFrequency:                1.0,
+			AverageMessageIntervalSeconds: 8,
+			MinReplyIntervalSeconds:       0,
+			MaxReplyChars:                 500,
+			SplitMaxChars:                 90,
+			AllowTypoSimulation:           false,
+		},
 		Memory: MemoryConfig{
 			MaxTurns:     20,
 			MaxTokensEst: 0,
 		},
+		Speech: SpeechConfig{
+			FishAudio: FishAudioConfig{
+				BaseURL: "https://api.fish.audio",
+				Format:  "mp3",
+			},
+		},
 	}
 }
 
-// configDir 返回当前系统下的 Yuyu Mind 配置目录。
+// configDir returns the Yuyu Mind configuration directory.
 func configDir() (string, error) {
 	dir, err := os.UserConfigDir()
 	if err != nil {
@@ -102,7 +149,7 @@ func configDir() (string, error) {
 	return filepath.Join(dir, "Yuyu-Mind"), nil
 }
 
-// defaultDBPath 返回默认数据库文件路径。
+// defaultDBPath returns the default SQLite database path.
 func defaultDBPath() (string, error) {
 	dir, err := configDir()
 	if err != nil {
@@ -111,7 +158,7 @@ func defaultDBPath() (string, error) {
 	return filepath.Join(dir, "yuyu-mind.db"), nil
 }
 
-// Load 从磁盘读取配置；配置不存在时创建默认配置。
+// Load reads config from disk and creates a default config when missing.
 func Load() (*Config, error) {
 	dir, err := configDir()
 	if err != nil {
@@ -124,12 +171,10 @@ func Load() (*Config, error) {
 		if os.IsNotExist(err) {
 			cfg := DefaultConfig()
 			cfg.filePath = filePath
-			// 设置默认数据库路径。
 			if cfg.App.DBPath == "" {
 				dbPath, _ := defaultDBPath()
 				cfg.App.DBPath = dbPath
 			}
-			// 保存默认配置。
 			if mkdirErr := os.MkdirAll(dir, 0o755); mkdirErr != nil {
 				return nil, fmt.Errorf("create config dir: %w", mkdirErr)
 			}
@@ -143,6 +188,7 @@ func Load() (*Config, error) {
 
 	cfg := DefaultConfig()
 	cfg.filePath = filePath
+	data = bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf})
 	if err := json.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
@@ -153,7 +199,7 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// Save 将当前配置写入磁盘。
+// Save writes the current config to disk.
 func (c *Config) Save() error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -181,7 +227,7 @@ func (c *Config) Save() error {
 	return nil
 }
 
-// GetActiveProviderConfig 返回当前激活供应商的配置。
+// GetActiveProviderConfig returns the currently active provider settings.
 func (c *Config) GetActiveProviderConfig() (Provider, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
@@ -190,14 +236,13 @@ func (c *Config) GetActiveProviderConfig() (Provider, error) {
 	if !ok {
 		return Provider{}, fmt.Errorf("provider %q not found", c.ActiveProvider.ProviderID)
 	}
-	// 如果 ActiveProvider 指定了模型，则覆盖供应商默认模型。
 	if c.ActiveProvider.Model != "" {
 		p.Model = c.ActiveProvider.Model
 	}
 	return p, nil
 }
 
-// SetActiveProvider 更新当前激活的供应商和模型。
+// SetActiveProvider updates the currently active provider and model.
 func (c *Config) SetActiveProvider(providerID, model string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -212,7 +257,7 @@ func (c *Config) SetActiveProvider(providerID, model string) error {
 	return nil
 }
 
-// UpdateProvider 更新供应商配置。
+// UpdateProvider updates a provider configuration.
 func (c *Config) UpdateProvider(id string, p Provider) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

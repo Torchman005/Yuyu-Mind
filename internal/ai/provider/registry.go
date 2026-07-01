@@ -10,7 +10,7 @@ import (
 )
 
 // Factory 根据 ProviderConfig 创建 ChatModel 实例。
-type Factory func(ctx context.Context, cfg types.ProviderConfig) (model.ChatModel, error)
+type Factory func(ctx context.Context, cfg types.ProviderConfig) (model.BaseChatModel, error)
 
 // Registry 管理模型供应商工厂。
 type Registry struct {
@@ -33,7 +33,7 @@ func (r *Registry) Register(providerID string, factory Factory) {
 }
 
 // Create 使用已注册的工厂创建指定供应商的 ChatModel。
-func (r *Registry) Create(ctx context.Context, cfg types.ProviderConfig) (model.ChatModel, error) {
+func (r *Registry) Create(ctx context.Context, cfg types.ProviderConfig) (model.BaseChatModel, error) {
 	r.mu.RLock()
 	factory, ok := r.factories[cfg.ID]
 	r.mu.RUnlock()

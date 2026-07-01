@@ -15,7 +15,7 @@ type AgentGraphInput = template.AgentTemplateInput
 type AgentGraphOutput = *schema.Message
 
 func BuildAgentGraph(
-	chatModel model.ChatModel,
+	chatModel model.ToolCallingChatModel,
 	tmpl *compose.Graph[AgentGraphInput, []*schema.Message],
 	tools []tool.BaseTool,
 	maxIterations int,
@@ -29,6 +29,15 @@ func BuildAgentGraph(
 		return nil, fmt.Errorf("compile agent template: %w", err)
 	}
 
+	toolInfos, err := collectToolInfos(context.Background(), tools)
+	if err != nil {
+		return nil, err
+	}
+	toolModel, err := chatModel.WithTools(toolInfos)
+	if err != nil {
+		return nil, fmt.Errorf("bind tools to chat model: %w", err)
+	}
+
 	chain := compose.NewChain[AgentGraphInput, AgentGraphOutput]()
 	chain.AppendLambda(compose.InvokableLambda(func(ctx context.Context, input AgentGraphInput) (AgentGraphOutput, error) {
 		messages, err := templateRunnable.Invoke(ctx, input)
@@ -38,7 +47,7 @@ func BuildAgentGraph(
 
 		var reply *schema.Message
 		for i := 0; i < maxIterations; i++ {
-			reply, err = chatModel.Generate(ctx, messages)
+			reply, err = toolModel.Generate(ctx, messages)
 			if err != nil {
 				return nil, fmt.Errorf("generate agent reply: %w", err)
 			}
@@ -61,6 +70,18 @@ func BuildAgentGraph(
 		return nil, fmt.Errorf("compile agent graph: %w", err)
 	}
 	return runnable, nil
+}
+
+func collectToolInfos(ctx context.Context, tools []tool.BaseTool) ([]*schema.ToolInfo, error) {
+	toolInfos := make([]*schema.ToolInfo, 0, len(tools))
+	for _, t := range tools {
+		info, err := t.Info(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("get tool info: %w", err)
+		}
+		toolInfos = append(toolInfos, info)
+	}
+	return toolInfos, nil
 }
 
 func executeToolCalls(ctx context.Context, msg *schema.Message, tools []tool.BaseTool) ([]*schema.Message, error) {

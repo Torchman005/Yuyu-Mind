@@ -28,6 +28,7 @@ const (
 	wsExTransparent  = 0x00000020
 	wsExLayered      = 0x00080000
 	petHitPollPeriod = 45 * time.Millisecond
+	petDockHitHeight = 76
 )
 
 var (
@@ -115,6 +116,11 @@ func cursorInsidePetHitRect(state PetHitTestState) (bool, error) {
 
 	clientX := float64(point.X - rect.Left)
 	clientY := float64(point.Y - rect.Top)
+	windowHeight := float64(rect.Bottom - rect.Top)
+	if clientY <= petDockHitHeight || clientY >= windowHeight-petDockHitHeight {
+		return true, nil
+	}
+
 	if clientX < state.X ||
 		clientX > state.X+state.Width ||
 		clientY < state.Y ||

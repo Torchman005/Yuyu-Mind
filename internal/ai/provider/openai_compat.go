@@ -12,7 +12,7 @@ import (
 // NewOpenAICompatFactory 创建 OpenAI 兼容供应商的工厂。
 // OpenAI、DeepSeek、Moonshot 等兼容 OpenAI API 的服务都可以复用。
 func NewOpenAICompatFactory() Factory {
-	return func(ctx context.Context, cfg types.ProviderConfig) (model.ChatModel, error) {
+	return func(ctx context.Context, cfg types.ProviderConfig) (model.BaseChatModel, error) {
 		if cfg.BaseURL == "" {
 			return nil, fmt.Errorf("base_url is required for provider %q", cfg.ID)
 		}

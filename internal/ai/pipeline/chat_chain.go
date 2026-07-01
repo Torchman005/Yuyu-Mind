@@ -12,7 +12,7 @@ import (
 
 type ChatChainInput = template.ChatTemplateInput
 
-func BuildChatChain(chatModel model.ChatModel, tmpl *compose.Graph[ChatChainInput, []*schema.Message]) (compose.Runnable[ChatChainInput, *schema.Message], error) {
+func BuildChatChain(chatModel model.BaseChatModel, tmpl *compose.Graph[ChatChainInput, []*schema.Message]) (compose.Runnable[ChatChainInput, *schema.Message], error) {
 	chain := compose.NewChain[ChatChainInput, *schema.Message]()
 	chain.AppendGraph(tmpl)
 	chain.AppendChatModel(chatModel)

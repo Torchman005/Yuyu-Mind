@@ -12,7 +12,7 @@ import (
 // NewOllamaFactory 创建 Ollama 本地模型工厂。
 // Ollama 在 /v1 暴露 OpenAI 兼容接口，因此复用 OpenAI 适配器。
 func NewOllamaFactory() Factory {
-	return func(ctx context.Context, cfg types.ProviderConfig) (model.ChatModel, error) {
+	return func(ctx context.Context, cfg types.ProviderConfig) (model.BaseChatModel, error) {
 		baseURL := cfg.BaseURL
 		if baseURL == "" {
 			baseURL = "http://localhost:11434/v1"

@@ -6,6 +6,9 @@ import (
 	"embed"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -28,6 +31,10 @@ type DB struct {
 
 // New 打开 SQLite 数据库、执行迁移，并初始化所有仓储。
 func New(dbPath string) (*DB, error) {
+	if err := ensureDBDir(dbPath); err != nil {
+		return nil, err
+	}
+
 	sqlDB, err := sql.Open("sqlite", dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -51,6 +58,9 @@ func New(dbPath string) (*DB, error) {
 	if err := runMigrations(sqlDB); err != nil {
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := ensureSchemaExtensions(sqlDB); err != nil {
+		return nil, fmt.Errorf("ensure schema extensions: %w", err)
+	}
 
 	slog.Info("database opened", "path", dbPath)
 
@@ -64,6 +74,21 @@ func New(dbPath string) (*DB, error) {
 		AgentEvents:   NewAgentEventRepo(sqlDB),
 		Memories:      NewMemoryRepo(sqlDB),
 	}, nil
+}
+
+func ensureDBDir(dbPath string) error {
+	if dbPath == "" || dbPath == ":memory:" || strings.HasPrefix(dbPath, "file:") {
+		return nil
+	}
+
+	dir := filepath.Dir(dbPath)
+	if dir == "." || dir == "" {
+		return nil
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return fmt.Errorf("create database dir: %w", err)
+	}
+	return nil
 }
 
 // Close 关闭数据库连接。
@@ -135,4 +160,40 @@ func indexOf(s, substr string) int {
 		}
 	}
 	return -1
+}
+
+func ensureSchemaExtensions(db *sql.DB) error {
+	ok, err := columnExists(db, "messages", "source_kind")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN source_kind TEXT`); err != nil {
+			return fmt.Errorf("add messages.source_kind: %w", err)
+		}
+	}
+	return nil
+}
+
+func columnExists(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return false, fmt.Errorf("pragma table_info %s: %w", table, err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false, fmt.Errorf("scan table_info %s: %w", table, err)
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }
