@@ -166,3 +166,5 @@
 - **Planner 健壮性**：抽出 `parsePlannerDecision` 纯函数（JSON 解析 + 情绪归一化）；`Plan` 在解析失败时**重试一次**（附「只返回 JSON」提示），空 action 兜底为 `reply`（不再直接报错）。`chat_test.go` 新增 4 个解析用例。缓解真实 LLM 返回不规范 JSON 导致整轮对话失败的问题。`go build`/`go test ./internal/chat` 通过。
 - **插件工具进 Worker 工具集**：`app.go` 用 `workerToolReg`（`tools.Registry`）承载 Worker 工具；`agent.NewLLMExecutor` 改为接收 `toolProvider func() []tool.BaseTool`（动态读取，允许运行期注册）；插件 `RegisterTool` 双写 Planner + Worker 注册表。补齐了「PPT/游戏等重任务插件应作为 Worker 工具」的架构缺口。`go build`/`go test ./internal/...` 通过。
 - **插件开发指南**：新增 `docs/PLUGIN-GUIDE.md`（接口/Manifest/Host/示例/挂载/约定/路线图），完成 M6 生态的文档部分。
+- **配置/用量测试加固**：新增 `internal/config/config_test.go`（默认值/激活切换/更新 provider，不触盘）与 `internal/usage/collector_test.go`（累计/TotalTokens 回退/nil 安全）。至此 9 个包全绿。`go test ./internal/...` 通过。
+- **Git 提交流程**：全量成果提交 `1a54913` 并推送 `dev`；此后每阶段完成即 commit + push。

@@ -66,6 +66,8 @@
 
 - [x] Wails 项目骨架、`main.go`/`app.go` 绑定层、窗口参数（1024×768，可切桌宠透明窗口）。
 - [x] 配置系统：多 Provider（OpenAI/DeepSeek/Moonshot/Ollama）+ 激活切换 + 本地 `config.json` 持久化。
+- [x] 配置单测（`internal/config/config_test.go`：默认值/激活切换/更新 provider）。
+- [x] Token 用量单测（`internal/usage/collector_test.go`：累计/TotalTokens 回退/nil 安全）。
 - [x] SQLite 仓储 + 迁移（会话/消息/设置/token 用量/异步任务/记忆）。
 - [x] OpenAI 兼容 Provider 与 Ollama Provider（复用 OpenAI 适配器）。
 - [x] Web Search 真实实现（`internal/ai/tools/web_search.go`：`SearchProvider` 接口 + DuckDuckGo 后端（免 Key）+ 结果解析；`web_search_test.go` 用 fake provider + 响应解析测试）。
