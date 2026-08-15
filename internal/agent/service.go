@@ -17,10 +17,16 @@ type runningTask struct {
 	cancel context.CancelFunc
 }
 
+// Notifier 在任务状态或事件发生变化时通知宿主（用于推送到前端）。
+type Notifier interface {
+	NotifyTaskChanged(taskID string)
+}
+
 type Service struct {
 	db       *db.DB
 	executor Executor
 	logger   *slog.Logger
+	notifier Notifier
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -46,6 +52,17 @@ func NewService(database *db.DB, executor Executor, logger *slog.Logger) *Servic
 		wakeup:      make(chan struct{}, 1),
 		workerSlots: make(chan struct{}, 4),
 		running:     make(map[string]runningTask),
+	}
+}
+
+// SetNotifier 注入任务变更通知器（可选；未注入时不推送）。
+func (s *Service) SetNotifier(notifier Notifier) {
+	s.notifier = notifier
+}
+
+func (s *Service) notifyChanged(taskID string) {
+	if s.notifier != nil && taskID != "" {
+		s.notifier.NotifyTaskChanged(taskID)
 	}
 }
 
@@ -217,6 +234,8 @@ func (s *Service) runTask(ctx context.Context, task *db.AgentTask) {
 			_ = s.addEvent(context.Background(), task.ID, EventTypeAudit, "warn", "任务已取消。", nil)
 		case errors.Is(err, errTaskWaitingInput):
 			_ = s.addEvent(context.Background(), task.ID, EventTypeAudit, "info", "任务已挂起，等待顶层 Agent 补充信息。", nil)
+		case errors.Is(err, errTaskWaitingApproval):
+			_ = s.addEvent(context.Background(), task.ID, EventTypeAudit, "info", "任务已挂起，等待审批。", nil)
 		default:
 			s.failTask(context.Background(), task.ID, err)
 		}
@@ -239,7 +258,7 @@ func (s *Service) failTask(ctx context.Context, taskID string, err error) {
 }
 
 func (s *Service) addEvent(ctx context.Context, taskID, eventType, level, message string, payload any) error {
-	return s.db.AgentEvents.AddEvent(ctx, &db.AgentTaskEvent{
+	err := s.db.AgentEvents.AddEvent(ctx, &db.AgentTaskEvent{
 		ID:        uuid.New().String(),
 		TaskID:    taskID,
 		Type:      eventType,
@@ -248,6 +267,10 @@ func (s *Service) addEvent(ctx context.Context, taskID, eventType, level, messag
 		Payload:   encodeJSON(payload),
 		CreatedAt: time.Now(),
 	})
+	if err == nil {
+		s.notifyChanged(taskID)
+	}
+	return err
 }
 
 func (s *Service) notifyScheduler() {

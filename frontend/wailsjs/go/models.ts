@@ -60,6 +60,10 @@ export namespace app {
 	    role: string;
 	    content: string;
 	    emotion: string;
+	    mood: string;
+	    energy: number;
+	    gesture: string;
+	    hand: string;
 	    createdAt: string;
 	
 	    static createFrom(source: any = {}) {
@@ -72,6 +76,10 @@ export namespace app {
 	        this.role = source["role"];
 	        this.content = source["content"];
 	        this.emotion = source["emotion"];
+	        this.mood = source["mood"];
+	        this.energy = source["energy"];
+	        this.gesture = source["gesture"];
+	        this.hand = source["hand"];
 	        this.createdAt = source["createdAt"];
 	    }
 	}
@@ -118,6 +126,10 @@ export namespace app {
 	    reply: CompanionMessage;
 	    speechText: string;
 	    emotion: string;
+	    mood: string;
+	    energy: number;
+	    gesture: string;
+	    hand: string;
 	    agentStatus: string;
 	    agentProvider: string;
 	    providerError: string;
@@ -132,6 +144,10 @@ export namespace app {
 	        this.reply = this.convertValues(source["reply"], CompanionMessage);
 	        this.speechText = source["speechText"];
 	        this.emotion = source["emotion"];
+	        this.mood = source["mood"];
+	        this.energy = source["energy"];
+	        this.gesture = source["gesture"];
+	        this.hand = source["hand"];
 	        this.agentStatus = source["agentStatus"];
 	        this.agentProvider = source["agentProvider"];
 	        this.providerError = source["providerError"];

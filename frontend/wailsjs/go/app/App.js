@@ -34,6 +34,14 @@ export function DeleteConversation(arg1) {
   return window['go']['app']['App']['DeleteConversation'](arg1);
 }
 
+export function DisablePlugin(arg1) {
+  return window['go']['app']['App']['DisablePlugin'](arg1);
+}
+
+export function EnablePlugin(arg1) {
+  return window['go']['app']['App']['EnablePlugin'](arg1);
+}
+
 export function GenerateProactiveMessage(arg1) {
   return window['go']['app']['App']['GenerateProactiveMessage'](arg1);
 }
@@ -68,6 +76,10 @@ export function GetTokenUsageSummary() {
 
 export function GetTokenUsageSummaryByConversation(arg1) {
   return window['go']['app']['App']['GetTokenUsageSummaryByConversation'](arg1);
+}
+
+export function InvokePluginAction(arg1, arg2, arg3) {
+  return window['go']['app']['App']['InvokePluginAction'](arg1, arg2, arg3);
 }
 
 export function ListAgentTaskEvents(arg1) {

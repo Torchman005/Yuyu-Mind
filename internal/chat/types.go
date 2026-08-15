@@ -18,6 +18,7 @@ const (
 	EventTypeToken      ChatEventType = "token"
 	EventTypeToolCall   ChatEventType = "tool_call"
 	EventTypeToolResult ChatEventType = "tool_result"
+	EventTypeEmotion    ChatEventType = "emotion"
 	EventTypeDone       ChatEventType = "done"
 	EventTypeError      ChatEventType = "error"
 )
@@ -27,6 +28,13 @@ type ChatEvent struct {
 	Content  string        `json:"content,omitempty"`
 	ToolID   string        `json:"tool_id,omitempty"`
 	ToolName string        `json:"tool_name,omitempty"`
+
+	// 情绪 Schema（见 emotion.go）。EventTypeEmotion 事件携带完整表演参数。
+	Emotion string  `json:"emotion,omitempty"`
+	Mood    string  `json:"mood,omitempty"`
+	Energy  float64 `json:"energy,omitempty"`
+	Gesture string  `json:"gesture,omitempty"`
+	Hand    string  `json:"hand,omitempty"`
 }
 
 type ConversationInfo struct {

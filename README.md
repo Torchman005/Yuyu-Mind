@@ -151,7 +151,7 @@ main.go                         Wails 应用入口
 app.go                          Wails 绑定包装
 internal/app/                   Wails 生命周期与前端可调用方法
 internal/agent/                 异步任务调度、Worker Runtime、Executor 接口
-internal/ai/                    Eino Provider、Pipeline、Template、Tools、Callback
+internal/ai/                    Eino Provider、Tools、Callback
 internal/chat/                  聊天服务编排
 internal/config/                本地配置管理
 internal/db/                    SQLite 仓储和迁移
@@ -170,19 +170,23 @@ frontend/                       Wails 前端占位
 - 配置加载、保存、Provider 切换
 - SQLite 会话、消息、设置仓储
 - OpenAI 兼容 Provider、Ollama Provider
-- Chat Service
+- Chat Service（Planner/Replyer 两段式 + TurnGate）
 - Wails 后端绑定
 - Token 用量追踪
-- 异步任务系统
-- Memory Gateway
-- 任务上下文投影和快照
+- 异步任务系统（Submit/Claim/Run/Cancel/审批/补答）
+- Memory Gateway 与任务上下文投影快照
+- 情绪管线（LLM 结构化情绪 → Live2D 表演参数 → 持久化）
+- 插件系统（进程内接口 + 注册表 + 生命周期 + 权限声明 + 动作派发 + 前端面板）
+- 电脑工具（工作区隔离 + 文件读写/列目录 + 命令执行 + Worker 审批流）
+- Worker 真实执行器（LLM 工具循环）
+- 任务闭环（Planner 识别任务 → 提交 → 执行 → 事件回传前端）
 
 仍需处理：
 
-- Eino `compose` API 适配当前版本。
-- `frontend/dist` 当前仍是占位目录，全量构建会因嵌入资源不存在而失败。
-- 默认 Worker 目前只做任务包校验，后续需要接入真实执行 Agent。
-- Web Search 工具仍是占位实现。
+- `frontend/dist` 需本地 `npm run build` 生成（沙箱内 esbuild 无法打包）。
+- 剪贴板 / 屏幕截图工具（Windows 特定）。
+- 插件子进程 sidecar 协议（第三方二进制插件，阶段 2）。
+- 游戏操控（键鼠合成，高风险需审批）。
 
 ## 开发命令
 

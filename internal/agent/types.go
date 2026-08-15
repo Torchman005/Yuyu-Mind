@@ -60,6 +60,13 @@ type InputPayload struct {
 	Answer string `json:"answer"`
 }
 
+// ApprovalRequest 是 Worker 请求审批的操作描述。
+type ApprovalRequest struct {
+	Action string `json:"action"` // 操作名，如 write_file / execute_command
+	Target string `json:"target"` // 操作对象，如文件路径或命令
+	Reason string `json:"reason"` // 为什么需要此操作
+}
+
 func encodeJSON(value any) string {
 	if value == nil {
 		return ""

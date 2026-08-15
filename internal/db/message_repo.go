@@ -15,6 +15,11 @@ type Message struct {
 	ToolCalls      string    `json:"tool_calls,omitempty"`
 	ToolCallID     string    `json:"tool_call_id,omitempty"`
 	SourceKind     string    `json:"source_kind,omitempty"`
+	Emotion        string    `json:"emotion,omitempty"`
+	Mood           string    `json:"mood,omitempty"`
+	Energy         float64   `json:"energy,omitempty"`
+	Gesture        string    `json:"gesture,omitempty"`
+	Hand           string    `json:"hand,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 }
 
@@ -28,9 +33,10 @@ func NewMessageRepo(db *sql.DB) *MessageRepo {
 
 func (r *MessageRepo) Create(ctx context.Context, m *Message) error {
 	_, err := r.db.ExecContext(ctx,
-		`INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, source_kind, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		m.ID, m.ConversationID, m.Role, m.Content, nullableString(m.ToolCalls), nullableString(m.ToolCallID), nullableString(m.SourceKind), m.CreatedAt,
+		`INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, source_kind, emotion, mood, energy, gesture, hand, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ID, m.ConversationID, m.Role, m.Content, nullableString(m.ToolCalls), nullableString(m.ToolCallID), nullableString(m.SourceKind),
+		nullableString(m.Emotion), nullableString(m.Mood), m.Energy, nullableString(m.Gesture), nullableString(m.Hand), m.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert message: %w", err)
@@ -46,8 +52,8 @@ func (r *MessageRepo) CreateBatch(ctx context.Context, msgs []*Message) error {
 	defer tx.Rollback()
 
 	stmt, err := tx.PrepareContext(ctx,
-		`INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, source_kind, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO messages (id, conversation_id, role, content, tool_calls, tool_call_id, source_kind, emotion, mood, energy, gesture, hand, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 	)
 	if err != nil {
 		return fmt.Errorf("prepare insert: %w", err)
@@ -56,7 +62,8 @@ func (r *MessageRepo) CreateBatch(ctx context.Context, msgs []*Message) error {
 
 	for _, m := range msgs {
 		if _, err := stmt.ExecContext(ctx,
-			m.ID, m.ConversationID, m.Role, m.Content, nullableString(m.ToolCalls), nullableString(m.ToolCallID), nullableString(m.SourceKind), m.CreatedAt,
+			m.ID, m.ConversationID, m.Role, m.Content, nullableString(m.ToolCalls), nullableString(m.ToolCallID), nullableString(m.SourceKind),
+			nullableString(m.Emotion), nullableString(m.Mood), m.Energy, nullableString(m.Gesture), nullableString(m.Hand), m.CreatedAt,
 		); err != nil {
 			return fmt.Errorf("insert message %s: %w", m.ID, err)
 		}
@@ -67,7 +74,7 @@ func (r *MessageRepo) CreateBatch(ctx context.Context, msgs []*Message) error {
 
 func (r *MessageRepo) ListByConversation(ctx context.Context, convID string) ([]*Message, error) {
 	rows, err := r.db.QueryContext(ctx,
-		`SELECT id, conversation_id, role, content, tool_calls, tool_call_id, source_kind, created_at
+		`SELECT id, conversation_id, role, content, tool_calls, tool_call_id, source_kind, emotion, mood, energy, gesture, hand, created_at
 		 FROM messages WHERE conversation_id = ? ORDER BY created_at ASC`, convID,
 	)
 	if err != nil {
@@ -78,13 +85,19 @@ func (r *MessageRepo) ListByConversation(ctx context.Context, convID string) ([]
 	var messages []*Message
 	for rows.Next() {
 		var m Message
-		var toolCalls, toolCallID, sourceKind sql.NullString
-		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Role, &m.Content, &toolCalls, &toolCallID, &sourceKind, &m.CreatedAt); err != nil {
+		var toolCalls, toolCallID, sourceKind, emotion, mood, gesture, hand sql.NullString
+		var energy sql.NullFloat64
+		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Role, &m.Content, &toolCalls, &toolCallID, &sourceKind, &emotion, &mood, &energy, &gesture, &hand, &m.CreatedAt); err != nil {
 			return nil, fmt.Errorf("scan message: %w", err)
 		}
 		m.ToolCalls = toolCalls.String
 		m.ToolCallID = toolCallID.String
 		m.SourceKind = sourceKind.String
+		m.Emotion = emotion.String
+		m.Mood = mood.String
+		m.Energy = energy.Float64
+		m.Gesture = gesture.String
+		m.Hand = hand.String
 		messages = append(messages, &m)
 	}
 	return messages, rows.Err()

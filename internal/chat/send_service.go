@@ -32,6 +32,7 @@ func (s *SendService) SendGuidedReply(
 	rt *ConversationRuntime,
 	snapshot TurnSnapshot,
 	raw string,
+	emotion EmotionInfo,
 	emitter Emitter,
 ) ([]string, error) {
 	cleaned := postprocessReply(raw)
@@ -58,6 +59,11 @@ func (s *SendService) SendGuidedReply(
 			Role:           "assistant",
 			Content:        part,
 			SourceKind:     "guided_reply",
+			Emotion:        emotion.Emotion,
+			Mood:           emotion.Mood,
+			Energy:         emotion.Energy,
+			Gesture:        emotion.Gesture,
+			Hand:           emotion.Hand,
 			CreatedAt:      now,
 		}); err != nil {
 			return nil, fmt.Errorf("persist guided reply: %w", err)

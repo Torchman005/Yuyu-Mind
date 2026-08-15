@@ -21,11 +21,50 @@ type PlannerDecision struct {
 	MemoryQuery       string            `json:"memory_query,omitempty"`
 	ToolCalls         []PlannerToolCall `json:"tool_calls,omitempty"`
 	ReplyInstructions string            `json:"reply_instructions,omitempty"`
+	Task              *TaskPlan         `json:"task,omitempty"`
+
+	// 情绪 Schema（见 emotion.go）。由 Planner 在决策阶段一次性产出，
+	// 早于流式 TTS 播放，前端据此驱动 Live2D 表情与表演。
+	Emotion string  `json:"emotion,omitempty"`
+	Mood    string  `json:"mood,omitempty"`
+	Energy  float64 `json:"energy,omitempty"`
+	Gesture string  `json:"gesture,omitempty"`
+	Hand    string  `json:"hand,omitempty"`
 }
 
 type PlannerToolCall struct {
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments,omitempty"`
+}
+
+// TaskPlan 是 Planner 决定创建异步任务时输出的任务包（LLM 友好 JSON）。
+type TaskPlan struct {
+	Title          string   `json:"title,omitempty"`
+	Goal           string   `json:"goal"`
+	Instructions   string   `json:"instructions"`
+	Workspace      string   `json:"workspace,omitempty"`
+	Constraints    []string `json:"constraints,omitempty"`
+	AllowedActions []string `json:"allowed_actions,omitempty"`
+}
+
+// EmotionInfo 是情绪表演参数的结构化载体（取值见 emotion.go）。
+type EmotionInfo struct {
+	Emotion string
+	Mood    string
+	Energy  float64
+	Gesture string
+	Hand    string
+}
+
+// EmotionInfo 从 Planner 决策中提取情绪表演参数。
+func (d PlannerDecision) EmotionInfo() EmotionInfo {
+	return EmotionInfo{
+		Emotion: d.Emotion,
+		Mood:    d.Mood,
+		Energy:  d.Energy,
+		Gesture: d.Gesture,
+		Hand:    d.Hand,
+	}
 }
 
 type ToolResult struct {
@@ -55,12 +94,23 @@ Allowed action values:
 - "wait": no visible reply now; keep observing.
 - "query_memory": reply likely depends on previous facts, preferences, commitments, or shared events; request memory first.
 - "tool": call one or more available tools before reply.
+- "task": the request is a concrete multi-step job (write code, create or edit files, build a document/slide deck). Do NOT do it inline; return a "task" payload so it runs in the background.
 
 Rules:
 - Prefer "wait" when the user message is only a weak backchannel and the gate reason is weak.
 - Use memory only when the reply clearly depends on past facts, preferences, shared experiences, commitments, task progress, or profile information.
 - Never include final reply text. The Replyer will write the visible message.
-- target_message_id must be the user message you are responding to.`),
+- target_message_id must be the user message you are responding to.
+- Use "task" only when the user asks to produce or modify something concrete (files, code, documents). Otherwise prefer "reply".
+- For "task", include a "task" object with: "title" (short), "goal" (one sentence), "instructions" (concrete steps), "constraints" (optional array), and "allowed_actions" (array of tool names; available: "list_files", "read_file", "write_file", "execute_command"). Use "write_file" only when creating/modifying files, and "execute_command" only when the task must run a command; otherwise just "read_file" and "list_files".
+
+Emotion output (always include these fields):
+- "emotion": one of neutral|happy|focused|thinking|sad|surprised. This drives the avatar facial expression.
+- "mood": one of calm|cheer|curious|confident|comfort|surprised|playful. Broader emotional tone.
+- "energy": a number from 0.0 to 1.0. How lively the delivery should be.
+- "gesture": one of none|bounce|tilt|lean|playfulSway|surprisePop|comfortNod.
+- "hand": one of none|left|right|both.
+Choose values that match the reply you are about to ask the Replyer to write, not just the raw user text.`),
 		},
 		{
 			Role: schema.User,
@@ -81,16 +131,44 @@ Rules:
 		return PlannerDecision{}, fmt.Errorf("planner generate: %w", err)
 	}
 
-	var decision PlannerDecision
-	if err := json.Unmarshal([]byte(extractJSONObject(result.Content)), &decision); err != nil {
-		return PlannerDecision{}, fmt.Errorf("parse planner JSON %q: %w", result.Content, err)
+	decision, parseErr := parsePlannerDecision(result.Content)
+	if parseErr != nil {
+		// 真实模型偶尔返回不规范 JSON，重试一次并明确要求只返回 JSON。
+		retryMessages := append(messages, &schema.Message{
+			Role:    schema.User,
+			Content: "Your previous response was not valid JSON. Return ONLY one valid JSON object now, with no markdown fences or extra text.",
+		})
+		retryResult, retryErr := a.model.Generate(ctx, retryMessages)
+		if retryErr != nil {
+			return PlannerDecision{}, fmt.Errorf("planner generate retry: %w", retryErr)
+		}
+		decision, parseErr = parsePlannerDecision(retryResult.Content)
+		if parseErr != nil {
+			return PlannerDecision{}, parseErr
+		}
 	}
+
 	if decision.Action == "" {
-		return PlannerDecision{}, fmt.Errorf("planner returned empty action")
+		decision.Action = "reply"
+		decision.Reason = "planner returned no explicit action; defaulting to reply"
 	}
 	if decision.TargetMessageID == "" {
 		decision.TargetMessageID = snapshot.Target.ID
 	}
+	return decision, nil
+}
+
+// parsePlannerDecision 解析并归一化 Planner 的 JSON 输出（纯函数，便于测试）。
+func parsePlannerDecision(content string) (PlannerDecision, error) {
+	var decision PlannerDecision
+	if err := json.Unmarshal([]byte(extractJSONObject(content)), &decision); err != nil {
+		return PlannerDecision{}, fmt.Errorf("parse planner JSON: %w", err)
+	}
+	decision.Emotion = NormalizeEmotion(decision.Emotion)
+	decision.Mood = NormalizeMood(decision.Mood)
+	decision.Gesture = NormalizeGesture(decision.Gesture)
+	decision.Hand = NormalizeHand(decision.Hand)
+	decision.Energy = ClampEnergy(decision.Energy)
 	return decision, nil
 }
 

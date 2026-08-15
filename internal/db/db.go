@@ -163,13 +163,24 @@ func indexOf(s, substr string) int {
 }
 
 func ensureSchemaExtensions(db *sql.DB) error {
-	ok, err := columnExists(db, "messages", "source_kind")
-	if err != nil {
-		return err
+	extensions := []struct{ table, column, ddl string }{
+		{"messages", "source_kind", "ALTER TABLE messages ADD COLUMN source_kind TEXT"},
+		{"messages", "emotion", "ALTER TABLE messages ADD COLUMN emotion TEXT"},
+		{"messages", "mood", "ALTER TABLE messages ADD COLUMN mood TEXT"},
+		{"messages", "energy", "ALTER TABLE messages ADD COLUMN energy REAL"},
+		{"messages", "gesture", "ALTER TABLE messages ADD COLUMN gesture TEXT"},
+		{"messages", "hand", "ALTER TABLE messages ADD COLUMN hand TEXT"},
 	}
-	if !ok {
-		if _, err := db.Exec(`ALTER TABLE messages ADD COLUMN source_kind TEXT`); err != nil {
-			return fmt.Errorf("add messages.source_kind: %w", err)
+
+	for _, ext := range extensions {
+		ok, err := columnExists(db, ext.table, ext.column)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			if _, err := db.Exec(ext.ddl); err != nil {
+				return fmt.Errorf("add %s.%s: %w", ext.table, ext.column, err)
+			}
 		}
 	}
 	return nil

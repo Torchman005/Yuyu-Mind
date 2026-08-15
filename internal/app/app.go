@@ -4,7 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"strings"
 
+	"github.com/cloudwego/eino/components/tool"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/yuyu-mind/backend/internal/agent"
 	"github.com/yuyu-mind/backend/internal/ai/callback"
@@ -14,6 +17,7 @@ import (
 	"github.com/yuyu-mind/backend/internal/config"
 	"github.com/yuyu-mind/backend/internal/db"
 	"github.com/yuyu-mind/backend/internal/memory"
+	"github.com/yuyu-mind/backend/internal/plugin"
 	pkgTypes "github.com/yuyu-mind/backend/pkg/types"
 )
 
@@ -24,10 +28,12 @@ type App struct {
 	db          *db.DB
 	providerReg *aiProvider.Registry
 	toolReg     *tools.Registry
+	workerToolReg *tools.Registry
 	chatSvc     *chat.Service
 	agentSvc    *agent.Service
 	memorySvc   *memory.ServiceMemory
 	memStore    memory.Store
+	pluginMgr   *plugin.Manager
 }
 
 // New 创建 App 实例。
@@ -75,11 +81,68 @@ func (a *App) Startup(ctx context.Context) {
 	a.toolReg.Register("web_search", tools.NewWebSearchTool())
 	a.toolReg.Register("calculator", tools.NewCalculatorTool())
 
+	// 文件系统工具：只读（list/read）注册进 Planner；write_file 只供 Worker（需审批）。
+	workspaceRoot := cfg.App.WorkspaceRoot
+	if strings.TrimSpace(workspaceRoot) == "" {
+		if home, homeErr := os.UserHomeDir(); homeErr == nil {
+			workspaceRoot = home
+		}
+	}
+	var ws *tools.Workspace
+	if workspace, wsErr := tools.NewWorkspace(workspaceRoot); wsErr != nil {
+		slog.Warn("failed to create file workspace; file tools disabled", "error", wsErr)
+	} else {
+		ws = workspace
+		a.toolReg.Register("list_files", tools.NewListFilesTool(ws))
+		a.toolReg.Register("read_file", tools.NewReadFileTool(ws))
+	}
+
+	// Worker 工具集（含写文件与命令执行），仅 Worker 可调用；Planner 工具集不含这些危险工具。
+	// 用注册表承载，便于插件在运行期向 Worker 注入工具。
+	a.workerToolReg = tools.NewRegistry()
+	if ws != nil {
+		a.workerToolReg.Register("list_files", tools.NewListFilesTool(ws))
+		a.workerToolReg.Register("read_file", tools.NewReadFileTool(ws))
+		a.workerToolReg.Register("write_file", tools.NewWriteFileTool(ws))
+		a.workerToolReg.Register("execute_command", tools.NewCommandTool(ws))
+	}
+
 	a.memStore = memory.NewSQLiteStore(database.Messages, cfg.Memory.MaxTurns)
 	a.memorySvc = memory.NewServiceMemory(database.Memories)
 	a.chatSvc = chat.NewService(cfg, database, a.providerReg, a.toolReg, a.memStore, a.memorySvc)
-	a.agentSvc = agent.NewService(database, agent.NewDefaultExecutor(), slog.Default())
+
+	// Worker 执行器：有工作区时用真实 LLM 工具循环，否则回退默认（仅校验）。
+	executor := agent.Executor(agent.NewDefaultExecutor())
+	if ws != nil {
+		executor = agent.NewLLMExecutor(a.workerModelFactory(), a.workerToolReg.GetAll)
+	}
+	a.agentSvc = agent.NewService(database, executor, slog.Default())
+	a.agentSvc.SetNotifier(&taskNotifier{app: a})
 	a.agentSvc.Start(ctx)
+
+	// 聊天 → 任务闭环：Planner 识别到任务时经此提交异步任务。
+	a.chatSvc.SetTaskSubmitter(&taskSubmitter{
+		svc:            a.agentSvc,
+		workspace:      workspaceRoot,
+		defaultActions: []string{"list_files", "read_file"},
+	})
+
+	// 插件系统：插件注册的工具同时进入 Planner 与 Worker 工具集。
+	a.pluginMgr = plugin.NewManager(func(name string, t tool.BaseTool) error {
+		a.toolReg.Register(name, t)
+		if a.workerToolReg != nil {
+			a.workerToolReg.Register(name, t)
+		}
+		return nil
+	}, slog.Default())
+	if err := a.pluginMgr.Register(ctx, plugin.NewSystemPlugin()); err != nil {
+		slog.Error("failed to register built-in plugin", "error", err)
+	}
+	if ws != nil {
+		if err := a.pluginMgr.Register(ctx, plugin.NewWorkspacePlugin(ws)); err != nil {
+			slog.Error("failed to register workspace plugin", "error", err)
+		}
+	}
 
 	slog.Info("Yuyu Mind backend started",
 		"provider", cfg.ActiveProvider.ProviderID,
@@ -91,6 +154,9 @@ func (a *App) Startup(ctx context.Context) {
 func (a *App) Shutdown(ctx context.Context) {
 	if a.agentSvc != nil {
 		a.agentSvc.Stop()
+	}
+	if a.pluginMgr != nil {
+		a.pluginMgr.StopAll(ctx)
 	}
 	if a.db != nil {
 		if err := a.db.Close(); err != nil {

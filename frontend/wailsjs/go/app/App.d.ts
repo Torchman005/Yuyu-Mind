@@ -23,6 +23,10 @@ export function CreateConversation(arg1:string):Promise<db.Conversation>;
 
 export function DeleteConversation(arg1:string):Promise<void>;
 
+export function DisablePlugin(arg1:string):Promise<void>;
+
+export function EnablePlugin(arg1:string):Promise<void>;
+
 export function GenerateProactiveMessage(arg1:string):Promise<app.ChatReply>;
 
 export function GetActiveProvider():Promise<types.ProviderConfig>;
@@ -40,6 +44,8 @@ export function GetTokenUsageByProviderModel():Promise<Array<db.TokenUsageSummar
 export function GetTokenUsageSummary():Promise<db.TokenUsageSummary>;
 
 export function GetTokenUsageSummaryByConversation(arg1:string):Promise<db.TokenUsageSummary>;
+
+export function InvokePluginAction(arg1:string,arg2:string,arg3:Record<string, any>):Promise<Record<string, any>>;
 
 export function ListAgentTaskEvents(arg1:string):Promise<Array<db.AgentTaskEvent>>;
 

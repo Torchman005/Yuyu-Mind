@@ -20,9 +20,10 @@ test:
 tidy:
 	go mod tidy
 
-# Run without Wails (backend only, for testing)
+# Run the full Wails app from source.
+# Requires frontend/dist to exist first (run: cd frontend && npm run build).
 run-backend:
-	go run ./cmd/backend/
+	go run .
 
 # Format
 fmt:

@@ -38,10 +38,11 @@ type Provider struct {
 
 // AppConfig stores general application settings.
 type AppConfig struct {
-	Theme    string `json:"theme"`
-	Language string `json:"language"`
-	MaxTurns int    `json:"max_turns"`
-	DBPath   string `json:"db_path"`
+	Theme         string `json:"theme"`
+	Language      string `json:"language"`
+	MaxTurns      int    `json:"max_turns"`
+	DBPath        string `json:"db_path"`
+	WorkspaceRoot string `json:"workspace_root"`
 }
 
 // ChatConfig stores backend chat orchestration settings.

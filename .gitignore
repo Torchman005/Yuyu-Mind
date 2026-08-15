@@ -40,5 +40,11 @@ configs/config.json
 frontend/node_modules/
 frontend/dist/
 
+# Local Go build caches (redirected into workspace for sandboxed builds)
+.gocache/
+.gotmp/
+.gomodcache/
+.gopath/
+
 # Claude
 .claude/

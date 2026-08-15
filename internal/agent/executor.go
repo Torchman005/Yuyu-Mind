@@ -10,6 +10,7 @@ type Runtime interface {
 	Emit(ctx context.Context, eventType, level, message string, payload any) error
 	LogOperation(ctx context.Context, kind, target, summary, status string, payload any) error
 	WaitForInput(ctx context.Context, question QuestionPayload) (string, error)
+	RequestApproval(ctx context.Context, request ApprovalRequest) (bool, error)
 	CheckCancelled(ctx context.Context) error
 }
 

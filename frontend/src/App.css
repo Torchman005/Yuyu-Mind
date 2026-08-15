@@ -755,3 +755,128 @@ h1 {
         max-width: 92%;
     }
 }
+
+/* 插件面板 */
+.plugin-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    margin: 0 0 12px;
+    background: #e7ede6;
+    border: 1px solid #ccd8cf;
+    border-radius: 12px;
+    max-height: 260px;
+    overflow: auto;
+}
+
+.plugin-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.plugin-card {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    background: #ffffff;
+    border: 1px solid #d5ded5;
+    border-radius: 10px;
+}
+
+.plugin-card.disabled {
+    opacity: 0.62;
+}
+
+.plugin-card-main {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+}
+
+.plugin-card-main p {
+    margin: 2px 0;
+    font-size: 13px;
+    color: #4a5550;
+}
+
+.plugin-card-main small {
+    color: #7a857f;
+}
+
+.plugin-perms {
+    font-size: 11px;
+    color: #8a5a00;
+    background: #fdf1d7;
+    padding: 2px 6px;
+    border-radius: 6px;
+    align-self: flex-start;
+}
+
+.plugin-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: flex-end;
+}
+
+.plugin-card-actions button {
+    padding: 5px 10px;
+    font-size: 12px;
+    border: 1px solid #c6d1c8;
+    background: #f4f7f3;
+    border-radius: 8px;
+    cursor: pointer;
+}
+
+.plugin-card-actions button:hover {
+    background: #e3ebe4;
+}
+
+.plugin-result {
+    margin: 4px 0 0;
+    padding: 10px;
+    background: #101613;
+    color: #d7e7dc;
+    border-radius: 8px;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.task-error {
+    margin: 2px 0 0;
+    color: #b00020;
+    font-size: 12px;
+}
+
+.plugin-card-actions input {
+    padding: 5px 8px;
+    font-size: 12px;
+    border: 1px solid #c6d1c8;
+    border-radius: 8px;
+    min-width: 120px;
+    background: #ffffff;
+}
+
+.plugin-input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    justify-content: flex-end;
+}
+
+.plugin-input-row input {
+    flex: 1;
+    max-width: 320px;
+    padding: 6px 8px;
+    font-size: 12px;
+    border: 1px solid #c6d1c8;
+    border-radius: 8px;
+    background: #ffffff;
+}

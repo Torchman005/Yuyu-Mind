@@ -15,11 +15,15 @@ import (
 const defaultCompanionConversationID = "desktop-companion"
 
 type CompanionMessage struct {
-	ID        string `json:"id"`
-	Role      string `json:"role"`
-	Content   string `json:"content"`
-	Emotion   string `json:"emotion"`
-	CreatedAt string `json:"createdAt"`
+	ID        string  `json:"id"`
+	Role      string  `json:"role"`
+	Content   string  `json:"content"`
+	Emotion   string  `json:"emotion"`
+	Mood      string  `json:"mood"`
+	Energy    float64 `json:"energy"`
+	Gesture   string  `json:"gesture"`
+	Hand      string  `json:"hand"`
+	CreatedAt string  `json:"createdAt"`
 }
 
 type ChatReply struct {
@@ -27,6 +31,10 @@ type ChatReply struct {
 	Reply         CompanionMessage   `json:"reply"`
 	SpeechText    string             `json:"speechText"`
 	Emotion       string             `json:"emotion"`
+	Mood          string             `json:"mood"`
+	Energy        float64            `json:"energy"`
+	Gesture       string             `json:"gesture"`
+	Hand          string             `json:"hand"`
 	AgentStatus   string             `json:"agentStatus"`
 	AgentProvider string             `json:"agentProvider"`
 	ProviderError string             `json:"providerError"`
@@ -100,9 +108,14 @@ type PluginListReply struct {
 }
 
 type collectingEmitter struct {
-	mu     sync.Mutex
-	tokens strings.Builder
-	err    string
+	mu      sync.Mutex
+	tokens  strings.Builder
+	err     string
+	emotion string
+	mood    string
+	energy  float64
+	gesture string
+	hand    string
 }
 
 func (e *collectingEmitter) Emit(event chat.ChatEvent) {
@@ -111,6 +124,12 @@ func (e *collectingEmitter) Emit(event chat.ChatEvent) {
 	switch event.Type {
 	case chat.EventTypeToken:
 		e.tokens.WriteString(event.Content)
+	case chat.EventTypeEmotion:
+		e.emotion = event.Emotion
+		e.mood = event.Mood
+		e.energy = event.Energy
+		e.gesture = event.Gesture
+		e.hand = event.Hand
 	case chat.EventTypeError:
 		e.err = event.Content
 	}
@@ -120,6 +139,20 @@ func (e *collectingEmitter) content() (string, string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return strings.TrimSpace(e.tokens.String()), strings.TrimSpace(e.err)
+}
+
+// collectedEmotion 返回 Planner 产出的结构化表情；空串表示 LLM 未产出，调用方回退启发式。
+func (e *collectingEmitter) collectedEmotion() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.emotion
+}
+
+// collectedPerformance 返回 Planner 产出的完整表演参数（mood/energy/gesture/hand）。
+func (e *collectingEmitter) collectedPerformance() (string, float64, string, string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.mood, e.energy, e.gesture, e.hand
 }
 
 func (a *App) GetState() (AppState, error) {
@@ -184,14 +217,32 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 		return ChatReply{}, listErr
 	}
 	reply := latestAssistant(messages)
+	emotion := emitter.collectedEmotion()
+	if emotion == "" {
+		emotion = inferEmotion(replyText)
+	}
+	mood, energy, gesture, hand := emitter.collectedPerformance()
+	if mood == "" {
+		mood = chat.MoodCalm
+	}
 	if reply.ID == "" || reply.Content != replyText {
 		reply = CompanionMessage{
 			ID:        uuid.New().String(),
 			Role:      "assistant",
 			Content:   replyText,
-			Emotion:   inferEmotion(replyText),
+			Emotion:   emotion,
+			Mood:      mood,
+			Energy:    energy,
+			Gesture:   gesture,
+			Hand:      hand,
 			CreatedAt: time.Now().Format(time.RFC3339),
 		}
+	} else {
+		reply.Emotion = emotion
+		reply.Mood = mood
+		reply.Energy = energy
+		reply.Gesture = gesture
+		reply.Hand = hand
 	}
 
 	return ChatReply{
@@ -199,6 +250,10 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 		Reply:         reply,
 		SpeechText:    replyText,
 		Emotion:       reply.Emotion,
+		Mood:          mood,
+		Energy:        energy,
+		Gesture:       gesture,
+		Hand:          hand,
 		AgentStatus:   statusFromError(providerErr),
 		AgentProvider: a.activeProviderName(),
 		ProviderError: providerErr,
@@ -283,10 +338,6 @@ func (a *App) ProbeFishLive() (FishLiveProbeResult, error) {
 	return a.probeFishSpeech()
 }
 
-func (a *App) ListPlugins() (PluginListReply, error) {
-	return PluginListReply{OK: true, Plugins: []PluginInfo{}}, nil
-}
-
 func (a *App) ensureCompanionReady() error {
 	if a.ctx == nil || a.db == nil || a.chatSvc == nil || a.cfg == nil {
 		return errors.New("application is not ready")
@@ -317,11 +368,19 @@ func (a *App) companionMessages() ([]CompanionMessage, error) {
 	}
 	messages := make([]CompanionMessage, 0, len(rows))
 	for _, row := range rows {
+		emotion := row.Emotion
+		if emotion == "" {
+			emotion = inferEmotion(row.Content)
+		}
 		messages = append(messages, CompanionMessage{
 			ID:        row.ID,
 			Role:      row.Role,
 			Content:   row.Content,
-			Emotion:   inferEmotion(row.Content),
+			Emotion:   emotion,
+			Mood:      row.Mood,
+			Energy:    row.Energy,
+			Gesture:   row.Gesture,
+			Hand:      row.Hand,
 			CreatedAt: row.CreatedAt.Format(time.RFC3339),
 		})
 	}

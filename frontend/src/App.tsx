@@ -1,11 +1,19 @@
 import {FormEvent, WheelEvent, useEffect, useMemo, useRef, useState} from 'react';
 import './App.css';
 import {
+    AnswerAgentTaskQuestion,
+    CancelAgentTask,
     ClearChat,
+    DisablePlugin,
+    EnablePlugin,
     GenerateProactiveMessage,
     GetState,
+    InvokePluginAction,
+    ListAgentTasks,
+    ListPlugins,
     ObserveScreen,
     ProbeFishLive,
+    SendAgentTaskControl,
     SendMessage,
     SynthesizeSpeech,
     SynthesizeSpeechStream,
@@ -21,7 +29,7 @@ import {
     WindowSetBackgroundColour,
     WindowSetSize,
 } from '../wailsjs/runtime/runtime';
-import {app} from '../wailsjs/go/models';
+import {app, db} from '../wailsjs/go/models';
 import {AvatarPerformance, Live2DStage} from './components/Live2DStage';
 
 type Message = app.CompanionMessage;
@@ -60,6 +68,13 @@ type ASRReply = {
     error?: string;
 };
 
+type PerformanceHint = {
+    mood?: AvatarPerformance['mood'];
+    energy?: number;
+    gesture?: string;
+    hand?: AvatarPerformance['hand'];
+};
+
 const emotionLabel: Record<string, string> = {
     neutral: '待机',
     happy: '开心',
@@ -67,6 +82,16 @@ const emotionLabel: Record<string, string> = {
     thinking: '思考',
     sad: '低落',
     surprised: '惊讶',
+};
+
+const taskStatusLabel: Record<string, string> = {
+    queued: '排队中',
+    running: '执行中',
+    waiting_for_input: '等待补充',
+    waiting_for_approval: '待审批',
+    completed: '已完成',
+    failed: '失败',
+    cancelled: '已取消',
 };
 
 const PET_MODE_KEY = 'yuyu.petMode';
@@ -351,6 +376,14 @@ function App() {
     const [agentStatus, setAgentStatus] = useState('offline');
     const [agentProvider, setAgentProvider] = useState('unknown');
     const [providerError, setProviderError] = useState('');
+    const [plugins, setPlugins] = useState<app.PluginInfo[]>([]);
+    const [pluginsOpen, setPluginsOpen] = useState(false);
+    const [pluginResult, setPluginResult] = useState('');
+    const [pluginActionInput, setPluginActionInput] = useState('');
+    const [tasks, setTasks] = useState<db.AgentTask[]>([]);
+    const [tasksOpen, setTasksOpen] = useState(false);
+    const [taskAnswer, setTaskAnswer] = useState<Record<string, string>>({});
+    const [performanceHint, setPerformanceHint] = useState<PerformanceHint | null>(null);
     const [isSending, setIsSending] = useState(false);
     const [isObservingScreen, setIsObservingScreen] = useState(false);
     const [error, setError] = useState('');
@@ -399,10 +432,19 @@ function App() {
         const last = [...messages].reverse().find((message) => message.role === 'assistant');
         return last?.content ?? `你好，我是 ${DESKTOP_PET_NAME}。现在可以通过文字聊天和你互动。`;
     }, [isSending, messages, voiceStatus]);
-    const avatarPerformance = useMemo(
-        () => inferAvatarPerformance(assistantLine, emotion, voiceStatus === 'speaking'),
-        [assistantLine, emotion, voiceStatus],
-    );
+    const avatarPerformance = useMemo(() => {
+        const base = inferAvatarPerformance(assistantLine, emotion, voiceStatus === 'speaking');
+        if (!performanceHint) {
+            return base;
+        }
+        return {
+            ...base,
+            key: `${base.key}:llm`,
+            mood: performanceHint.mood ?? base.mood,
+            energy: typeof performanceHint.energy === 'number' ? clamp(performanceHint.energy, 0, 1) : base.energy,
+            hand: performanceHint.hand ?? base.hand,
+        };
+    }, [assistantLine, emotion, voiceStatus, performanceHint]);
     const displayedMessages = useMemo(
         () => visibleChatMessages(messages, MAX_VISIBLE_CHAT_ROUNDS),
         [messages, MAX_VISIBLE_CHAT_ROUNDS],
@@ -418,6 +460,21 @@ function App() {
                 setProviderError(state.providerError || '');
             })
             .catch((reason: unknown) => setError(String(reason)));
+    }, []);
+
+    useEffect(() => {
+        refreshPlugins();
+    }, []);
+
+    useEffect(() => {
+        refreshTasks();
+        if (!canUseWailsRuntime()) {
+            return;
+        }
+        const unsubscribe = EventsOn('agent:task:changed', () => refreshTasks());
+        return () => {
+            unsubscribe();
+        };
     }, []);
 
     useEffect(() => {
@@ -494,6 +551,7 @@ function App() {
                     setAgentStatus(response.agentStatus || 'offline');
                     setAgentProvider(response.agentProvider || 'unknown');
                     setProviderError(response.providerError || '');
+                    applyResponsePerformance(response);
                     speakResponse(response);
                 })
                 .catch((reason: unknown) => {
@@ -1560,6 +1618,7 @@ function App() {
                     setAgentStatus(response.agentStatus || 'offline');
                     setAgentProvider(response.agentProvider || 'unknown');
                     setProviderError(response.providerError || '');
+                    applyResponsePerformance(response);
                     speakResponse(response);
                 })
                 .catch((reason: unknown) => {
@@ -1608,6 +1667,7 @@ function App() {
             setAgentStatus(response.agentStatus || 'offline');
             setAgentProvider(response.agentProvider || 'unknown');
             setProviderError(response.providerError || '');
+            applyResponsePerformance(response);
             speakResponse(response);
             scheduleFollowUp('reply-follow-up');
         } catch (reason) {
@@ -1643,6 +1703,7 @@ function App() {
 
         setError('');
         setVoiceError('');
+        setPerformanceHint(null);
         try {
             const state = await ClearChat();
             setMessages(state.messages ?? []);
@@ -1650,6 +1711,98 @@ function App() {
             setAgentStatus(state.agentStatus || 'offline');
             setAgentProvider(state.agentProvider || 'unknown');
             setProviderError(state.providerError || '');
+        } catch (reason) {
+            setError(String(reason));
+        }
+    }
+
+    function applyResponsePerformance(response: ChatResponse) {
+        const mood = String(response.mood || response.reply?.mood || '').trim();
+        if (!mood) {
+            setPerformanceHint(null);
+            return;
+        }
+        setPerformanceHint({
+            mood: mood as AvatarPerformance['mood'],
+            energy: Number(response.energy ?? response.reply?.energy ?? 0),
+            gesture: String(response.gesture || response.reply?.gesture || ''),
+            hand: (response.hand || response.reply?.hand || 'none') as AvatarPerformance['hand'],
+        });
+    }
+
+    function refreshPlugins() {
+        ListPlugins()
+            .then((reply: app.PluginListReply) => setPlugins(reply.plugins ?? []))
+            .catch((reason: unknown) => setError(String(reason)));
+    }
+
+    async function togglePlugin(plugin: app.PluginInfo) {
+        try {
+            if (plugin.enabled) {
+                await DisablePlugin(plugin.name);
+            } else {
+                await EnablePlugin(plugin.name);
+            }
+            refreshPlugins();
+        } catch (reason) {
+            setError(String(reason));
+        }
+    }
+
+    async function invokePluginAction(pluginName: string, actionName: string) {
+        setPluginResult('');
+        let input: Record<string, any> = {};
+        const raw = pluginActionInput.trim();
+        if (raw) {
+            try {
+                const parsed = JSON.parse(raw);
+                input = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+            } catch {
+                setError('插件参数需为 JSON 对象，例如 {"path":"notes.md"}');
+                return;
+            }
+        }
+        try {
+            const result = await InvokePluginAction(pluginName, actionName, input);
+            setPluginResult(JSON.stringify(result, null, 2));
+        } catch (reason) {
+            setError(String(reason));
+        }
+    }
+
+    function refreshTasks() {
+        ListAgentTasks('', 50)
+            .then((items) => setTasks(items ?? []))
+            .catch((reason: unknown) => setError(String(reason)));
+    }
+
+    async function cancelTask(taskId: string) {
+        try {
+            await CancelAgentTask(taskId);
+            refreshTasks();
+        } catch (reason) {
+            setError(String(reason));
+        }
+    }
+
+    async function approveTask(taskId: string, approve: boolean) {
+        try {
+            await SendAgentTaskControl(taskId, approve ? 'approve' : 'reject', {});
+            refreshTasks();
+        } catch (reason) {
+            setError(String(reason));
+        }
+    }
+
+    async function answerTask(taskId: string) {
+        const answer = String(taskAnswer[taskId] || '').trim();
+        if (!answer) {
+            return;
+        }
+        try {
+            await AnswerAgentTaskQuestion(taskId, answer);
+            setTaskAnswer({});
+            refreshTasks();
         } catch (reason) {
             setError(String(reason));
         }
@@ -1675,6 +1828,7 @@ function App() {
             setAgentStatus(response.agentStatus || 'offline');
             setAgentProvider(response.agentProvider || 'unknown');
             setProviderError(response.providerError || '');
+            applyResponsePerformance(response);
             speakResponse(response);
         } catch (reason) {
             setError(String(reason));
@@ -2252,6 +2406,32 @@ function App() {
                             <button
                                 type="button"
                                 className="ghost-button"
+                                aria-pressed={pluginsOpen}
+                                onClick={() => {
+                                    setPluginsOpen((value) => !value);
+                                    if (!pluginsOpen) {
+                                        refreshPlugins();
+                                    }
+                                }}
+                            >
+                                插件 {plugins.length > 0 ? `(${plugins.length})` : ''}
+                            </button>
+                            <button
+                                type="button"
+                                className="ghost-button"
+                                aria-pressed={tasksOpen}
+                                onClick={() => {
+                                    setTasksOpen((value) => !value);
+                                    if (!tasksOpen) {
+                                        refreshTasks();
+                                    }
+                                }}
+                            >
+                                任务 {tasks.length > 0 ? `(${tasks.length})` : ''}
+                            </button>
+                            <button
+                                type="button"
+                                className="ghost-button"
                                 onClick={clearChat}
                                 disabled={isSending || voiceStatus === 'speaking' || messages.length === 0}
                             >
@@ -2260,6 +2440,101 @@ function App() {
                             <span className={`pill agent-${agentStatus}`}>{agentStatus} · {agentProvider}</span>
                         </div>
                     </header>
+
+                    {pluginsOpen && (
+                        <div className="plugin-panel" aria-label="插件面板">
+                            <div className="plugin-panel-header">
+                                <strong>插件</strong>
+                                <div className="plugin-input-row">
+                                    <input
+                                        value={pluginActionInput}
+                                        onChange={(event) => setPluginActionInput(event.target.value)}
+                                        placeholder='动作参数 JSON，如 {"path":"notes.md"}'
+                                    />
+                                    <button type="button" className="ghost-button" onClick={refreshPlugins}>刷新</button>
+                                </div>
+                            </div>
+                            {plugins.length === 0 && (
+                                <div className="empty-state">
+                                    <span>暂无插件。插件系统内核已就绪，可扩展电脑工具 / 游戏 / 任务等能力。</span>
+                                </div>
+                            )}
+                            {plugins.map((plugin) => (
+                                <div className={`plugin-card${plugin.enabled ? '' : ' disabled'}`} key={plugin.name}>
+                                    <div className="plugin-card-main">
+                                        <b>{plugin.displayName || plugin.name}</b>
+                                        <small>v{plugin.version} · {plugin.author || '内置'}</small>
+                                        <p>{plugin.description}</p>
+                                        {plugin.permissions && plugin.permissions.length > 0 && (
+                                            <span className="plugin-perms">{plugin.permissions.join(', ')}</span>
+                                        )}
+                                    </div>
+                                    <div className="plugin-card-actions">
+                                        <button
+                                            type="button"
+                                            onClick={() => void togglePlugin(plugin)}
+                                        >
+                                            {plugin.enabled ? '停用' : '启用'}
+                                        </button>
+                                        {(plugin.actions ?? []).map((action) => (
+                                            <button
+                                                type="button"
+                                                key={String(action.name)}
+                                                onClick={() => void invokePluginAction(plugin.name, String(action.name))}
+                                            >
+                                                {action.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            ))}
+                            {pluginResult && <pre className="plugin-result">{pluginResult}</pre>}
+                        </div>
+                    )}
+
+                    {tasksOpen && (
+                        <div className="plugin-panel" aria-label="任务面板">
+                            <div className="plugin-panel-header">
+                                <strong>后台任务</strong>
+                                <button type="button" className="ghost-button" onClick={refreshTasks}>刷新</button>
+                            </div>
+                            {tasks.length === 0 && (
+                                <div className="empty-state">
+                                    <span>暂无后台任务。在聊天里让我「写代码 / 做 PPT / 创建文件」会在这里显示。</span>
+                                </div>
+                            )}
+                            {tasks.map((task) => (
+                                <div className="plugin-card" key={task.id}>
+                                    <div className="plugin-card-main">
+                                        <b>{task.title || task.goal}</b>
+                                        <small>{taskStatusLabel[task.status] ?? task.status}</small>
+                                        {task.error && <p className="task-error">{task.error}</p>}
+                                    </div>
+                                    <div className="plugin-card-actions">
+                                        {task.status === 'waiting_for_input' && (
+                                            <>
+                                                <input
+                                                    value={taskAnswer[task.id] || ''}
+                                                    onChange={(event) => setTaskAnswer((prev) => ({...prev, [task.id]: event.target.value}))}
+                                                    placeholder="补充信息..."
+                                                />
+                                                <button type="button" onClick={() => void answerTask(task.id)}>回答</button>
+                                            </>
+                                        )}
+                                        {task.status === 'waiting_for_approval' && (
+                                            <>
+                                                <button type="button" onClick={() => void approveTask(task.id, true)}>批准</button>
+                                                <button type="button" onClick={() => void approveTask(task.id, false)}>拒绝</button>
+                                            </>
+                                        )}
+                                        {['queued', 'running', 'waiting_for_input', 'waiting_for_approval'].includes(task.status) && (
+                                            <button type="button" onClick={() => void cancelTask(task.id)}>取消</button>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
 
                     <div className="message-feed" ref={feedRef}>
                         {displayedMessages.length === 0 && (

@@ -9,6 +9,7 @@ import (
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/google/uuid"
+	"github.com/yuyu-mind/backend/internal/agent"
 	"github.com/yuyu-mind/backend/internal/config"
 	"github.com/yuyu-mind/backend/internal/db"
 	"github.com/yuyu-mind/backend/internal/memory"
@@ -22,6 +23,11 @@ type Emitter interface {
 	Emit(event ChatEvent)
 }
 
+// TaskSubmitter 提交异步任务。由宿主实现（通常是 agent.Service 的适配器）。
+type TaskSubmitter interface {
+	SubmitTask(ctx context.Context, spec agent.TaskSpec) (*db.AgentTask, error)
+}
+
 type Service struct {
 	cfg         *config.Config
 	db          *db.DB
@@ -31,6 +37,12 @@ type Service struct {
 	longMemory  *memory.ServiceMemory
 	runtimes    *RuntimeManager
 	sender      *SendService
+	taskSubmit  TaskSubmitter
+}
+
+// SetTaskSubmitter 注入异步任务提交器（可选；未注入时 "task" 动作不可用）。
+func (s *Service) SetTaskSubmitter(submitter TaskSubmitter) {
+	s.taskSubmit = submitter
 }
 
 func NewService(
@@ -123,7 +135,7 @@ func (s *Service) StreamChat(ctx context.Context, req ChatRequest, emitter Emitt
 		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "planner_wait", collector, time.Since(startedAt), "success", nil)
 		emitDone(emitter)
 		return nil
-	case "reply", "query_memory", "tool":
+	case "reply", "query_memory", "tool", "task":
 		// query_memory and tool are planning steps; the visible answer still
 		// comes exclusively from the Replyer.
 	default:
@@ -132,6 +144,30 @@ func (s *Service) StreamChat(ctx context.Context, req ChatRequest, emitter Emitt
 		emitError(emitter, err)
 		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "planner", collector, time.Since(startedAt), "failed", err)
 		return err
+	}
+
+	// "task"：提交后台异步任务，并让 Replyer 生成确认语。
+	if decision.Action == "task" {
+		if decision.Task == nil {
+			err := fmt.Errorf("planner returned task action without task payload")
+			rt.CompleteNoReply()
+			emitError(emitter, err)
+			return err
+		}
+		if s.taskSubmit == nil {
+			err := fmt.Errorf("task submitter is not configured")
+			rt.CompleteNoReply()
+			emitError(emitter, err)
+			return err
+		}
+		submitted, err := s.taskSubmit.SubmitTask(ctx, decision.Task.ToTaskSpec(msg.ConversationID))
+		if err != nil {
+			rt.CompleteNoReply()
+			emitError(emitter, err)
+			s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "submit_task", collector, time.Since(startedAt), "failed", err)
+			return err
+		}
+		decision.ReplyInstructions = fmt.Sprintf("告知用户已收到任务「%s」并在后台开始执行，稍后会汇报结果。", submitted.Title)
 	}
 
 	replyer := NewReplyerAgent(trackedModel, s.cfg.Chat)
@@ -143,11 +179,22 @@ func (s *Service) StreamChat(ctx context.Context, req ChatRequest, emitter Emitt
 		return err
 	}
 
-	if _, err := s.sender.SendGuidedReply(ctx, rt, snapshot, reply, emitter); err != nil {
+	if _, err := s.sender.SendGuidedReply(ctx, rt, snapshot, reply, decision.EmotionInfo(), emitter); err != nil {
 		rt.CompleteNoReply()
 		emitError(emitter, err)
 		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "send", collector, time.Since(startedAt), "failed", err)
 		return err
+	}
+
+	if emitter != nil {
+		emitter.Emit(ChatEvent{
+			Type:    EventTypeEmotion,
+			Emotion: decision.Emotion,
+			Mood:    decision.Mood,
+			Energy:  decision.Energy,
+			Gesture: decision.Gesture,
+			Hand:    decision.Hand,
+		})
 	}
 
 	s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "orchestrated", collector, time.Since(startedAt), "success", nil)

@@ -7,6 +7,11 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_calls      TEXT,
     tool_call_id    TEXT,
     source_kind     TEXT,
+    emotion         TEXT,
+    mood            TEXT,
+    energy          REAL,
+    gesture         TEXT,
+    hand            TEXT,
     created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
