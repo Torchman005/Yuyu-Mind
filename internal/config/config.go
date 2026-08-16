@@ -20,6 +20,12 @@ type Config struct {
 	Chat           ChatConfig          `json:"chat"`
 	Memory         MemoryConfig        `json:"memory"`
 	Speech         SpeechConfig        `json:"speech"`
+	Vision         VisionConfig        `json:"vision"`
+}
+
+// VisionConfig 配置多模态视觉（用于「看屏幕」描述画面）。
+type VisionConfig struct {
+	Model string `json:"model"` // 视觉模型名；为空表示未启用
 }
 
 // ActiveProvider identifies the selected model provider and model.

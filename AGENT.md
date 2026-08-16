@@ -125,7 +125,8 @@
 - [x] 命令执行工具（`internal/ai/tools/command.go`：工作区目录内执行 + 超时 + 输出截断；`execute_command` 加入 Worker 工具集与 `approvalRequiredTools`；`command_test.go` 实测 exec 通过）。
 - [x] 键鼠输入合成（`internal/ai/tools/input.go` + `input_windows.go`（SendInput）+ `input_other.go`（no-op）；`send_input` 加入 Worker 工具集与 `approvalRequiredTools`；`input_test.go` 验证按键名→VK 映射）。
 - [x] 屏幕截图（`internal/ai/tools/screen.go` + `screen_windows.go`（BitBlt/GetDIBits→PNG）+ `screen_other.go`（no-op）；`screen_capture` 加入 Worker 工具集与 `approvalRequiredTools`）。
-- [x] 「看屏幕」接线（`ObserveScreen` 现在真正截屏保存到工作区 screenshots/ 并返回路径；视觉描述待多模态模型接入）。
+- [x] 「看屏幕」接线（`ObserveScreen` 截屏保存到工作区 screenshots/ 并返回路径/描述）。
+- [x] 多模态视觉描述（`internal/ai/vision/vision.go`：直连 OpenAI 兼容多模态 API；`ObserveScreen` 在配置 `Vision.Model` 后描述画面；`vision_test.go` 覆盖请求构造/响应解析）。
 - [ ] 剪贴板工具（Windows 特定，命令工具经 PowerShell 可部分替代）。
 
 ### 任务闭环（M4）
