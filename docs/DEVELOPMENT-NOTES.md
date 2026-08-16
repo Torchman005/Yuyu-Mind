@@ -96,11 +96,14 @@
 - 唇同步不依赖 LLM，而是用 Web Audio `AnalyserNode` 实时算 `mouthLevel`（已实现），与情绪解耦。
 - 打断/换轮用 `playbackId` 世代计数（已实现），旧音频回调直接作废，避免串台。
 
-### 难点 5：桌宠透明窗口 + 鼠标穿透 —— ✅ 已解决
+### 难点 5：桌宠透明窗口（原生透明 + 鼠标穿透）—— ✅ 已解决
 
-**难点**：WebView 整窗是矩形，但桌宠只有形象轮廓可点击，其余区域要「点穿」到桌面。
+**难点**：WebView 整窗是矩形，但桌宠只有形象轮廓可点击，其余区域要「点穿」到桌面；同时桌宠模式要求「只显示 Live2D 形象、其余全透明」，但窗口背景却是黑色。
 
-**解决办法**：Windows 下用 `WS_EX_LAYERED + WS_EX_TRANSPARENT` 切换穿透，`GetCursorPos`/`GetWindowRect` + 轮廓命中函数 `petContourBand` 判断鼠标是否落在形象内（已实现，见 `internal/app/pet_hit_windows.go`）。非 Windows 用 no-op 兜底（`pet_hit_other.go`）。
+**解决办法（两层，缺一不可）**：
+
+1. **原生窗口透明（消除黑底）**：Wails v2 在 Windows 下默认 `Windows.WebviewIsTransparent=false` 且不启用窗口透传。前端 CSS 透明 + `WindowSetBackgroundColour(0,0,0,0)` 虽让 WebView2 的 `DefaultBackgroundColor.A=0`（内容透明），但 `win32.SetBackgroundColour(hwnd, 0,0,0)` 会把原生 HWND 的背景刷子刷成**黑色**，透出透明 WebView。修复：`main.go` 设置 `Windows: &windows.Options{WebviewIsTransparent: true, WindowIsTranslucent: true, BackdropType: windows.None}`——Win11 22621+ 走 `DWMSBT_NONE`（无材质、全透明），Win10 回退 `ACCENT_ENABLE_BLURBEHIND`（毛玻璃，非全透明）。
+2. **鼠标穿透（轮廓命中）**：Windows 下用 `WS_EX_LAYERED + WS_EX_TRANSPARENT` 切换穿透，`GetCursorPos`/`GetWindowRect` + 轮廓命中函数 `petContourBand` 判断鼠标是否落在形象内（已实现，见 `internal/app/pet_hit_windows.go`）。非 Windows 用 no-op 兜底（`pet_hit_other.go`）。
 
 ### 难点 6：Eino `compose` API 适配 —— ✅ 已解决（删除孤儿）
 
@@ -176,3 +179,4 @@
 - **多模态视觉描述**：新增 `internal/ai/vision` 包（`Describe` 直连 OpenAI 兼容多模态 API，`buildVisionRequest`/`parseVisionResponse` 纯函数）；`config` 增加 `Vision.Model`；`ObserveScreen` 在配置视觉模型后截屏 + 描述画面（否则回退「截屏保存 + 诚实提示」）。`vision_test.go` 覆盖请求构造/响应解析；网络路径需用户本地视觉模型验证。`go build`/`go test ./internal/...` 通过（10 包全绿）。
 - **UI 美化与滚动修复**：重写 `frontend/src/App.css`（现代配色/圆角/聊天气泡/细滚动条）；`App.tsx` 头部精简（标题+状态+窗口按钮）、功能按钮下沉为 `.toolbar`；`.chat-panel` 由 grid 改为 flex 布局——header/toolbar/composer 固定、`message-feed` `flex:1 min-height:0 overflow-y:auto` 独立滚动，彻底解决「内容显示不全 + 无法滚轮滑动」；窗口默认尺寸 1024×768 → 1200×800。`tsc --noEmit` 通过。难点 8 的「前端无滚动/内容溢出」部分随之解决。
 - **蓝白配色 + 桌宠透明**：配色从青绿改为**蓝白**（`--accent #2b6cb0`、`--bg #f5f8fb`、浅蓝 stage 渐变）；显式声明 `html.pet-window, body.pet-window` 背景透明，配合 `WindowSetBackgroundColour` 全透明（alpha=0），消除桌宠模式黑底。
+- **桌宠原生窗口透明修复（黑底根因）**：定位「桌宠模式整窗除 Live2D 小人外全黑」的根因——前端 CSS 已透明、`WindowSetBackgroundColour(0,0,0,0)` 也把 WebView2 `DefaultBackgroundColor.A` 置 0（内容透明），但 `main.go` 未配置 `Windows` 选项，`win32.SetBackgroundColour(hwnd, 0,0,0)` 把原生 HWND 背景刷子刷成黑色并透出透明 WebView。修复：`main.go` 增加 `Windows: &windows.Options{WebviewIsTransparent: true, WindowIsTranslucent: true, BackdropType: windows.None}`。已读 Wails v2.12.0 源码确认 `WebviewIsTransparent` 在 `WindowSetBackgroundColour` 中强制 `A=0`、`WindowIsTranslucent` 触发 DWM 透传（Win11 `DWMSBT_NONE` / Win10 毛玻璃回退）。`go build ./...` 通过（exit 0）。
