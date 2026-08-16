@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -142,7 +143,11 @@ func DefaultConfig() *Config {
 }
 
 // configDir returns the Yuyu Mind configuration directory.
+// 可用环境变量 YUYU_CONFIG_DIR 覆盖（便于测试与便携配置）。
 func configDir() (string, error) {
+	if dir := strings.TrimSpace(os.Getenv("YUYU_CONFIG_DIR")); dir != "" {
+		return dir, nil
+	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", fmt.Errorf("get config dir: %w", err)

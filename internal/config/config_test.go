@@ -48,3 +48,30 @@ func TestUpdateProvider(t *testing.T) {
 		t.Fatalf("update provider failed: %+v", cfg.Providers["openai"])
 	}
 }
+
+func TestLoadSaveRoundTrip(t *testing.T) {
+	t.Setenv("YUYU_CONFIG_DIR", t.TempDir())
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.ActiveProvider.ProviderID != "openai" {
+		t.Fatalf("default active provider = %q", cfg.ActiveProvider.ProviderID)
+	}
+
+	if err := cfg.SetActiveProvider("ollama", "llama3"); err != nil {
+		t.Fatalf("SetActiveProvider: %v", err)
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	cfg2, err := Load()
+	if err != nil {
+		t.Fatalf("Load again: %v", err)
+	}
+	if cfg2.ActiveProvider.ProviderID != "ollama" || cfg2.ActiveProvider.Model != "llama3" {
+		t.Fatalf("round-trip failed: %+v", cfg2.ActiveProvider)
+	}
+}
