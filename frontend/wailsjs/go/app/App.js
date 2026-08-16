@@ -58,12 +58,12 @@ export function GetMessages(arg1) {
   return window['go']['app']['App']['GetMessages'](arg1);
 }
 
-export function GetProviders() {
-  return window['go']['app']['App']['GetProviders']();
-}
-
 export function GetPluginConfig(arg1) {
   return window['go']['app']['App']['GetPluginConfig'](arg1);
+}
+
+export function GetProviders() {
+  return window['go']['app']['App']['GetProviders']();
 }
 
 export function GetState() {
@@ -138,12 +138,12 @@ export function SendMessage(arg1) {
   return window['go']['app']['App']['SendMessage'](arg1);
 }
 
-export function SetPluginConfig(arg1, arg2) {
-  return window['go']['app']['App']['SetPluginConfig'](arg1, arg2);
-}
-
 export function SetActiveProvider(arg1, arg2) {
   return window['go']['app']['App']['SetActiveProvider'](arg1, arg2);
+}
+
+export function SetPluginConfig(arg1, arg2) {
+  return window['go']['app']['App']['SetPluginConfig'](arg1, arg2);
 }
 
 export function StartRealtimeSpeech(arg1) {

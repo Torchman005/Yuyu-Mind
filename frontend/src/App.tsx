@@ -763,10 +763,10 @@ function App() {
         }
 
         WindowSetAlwaysOnTop(isPetMode);
-        WindowSetBackgroundColour(isPetMode ? 0 : 27, isPetMode ? 0 : 38, isPetMode ? 0 : 54, isPetMode ? 0 : 255);
+        WindowSetBackgroundColour(isPetMode ? 0 : 244, isPetMode ? 0 : 246, isPetMode ? 0 : 245, isPetMode ? 0 : 255);
         WindowSetSize(
-            isPetMode ? Math.round(PET_BASE_WIDTH * petScale) : 1024,
-            isPetMode ? Math.round(PET_BASE_HEIGHT * petScale) : 768,
+            isPetMode ? Math.round(PET_BASE_WIDTH * petScale) : 1200,
+            isPetMode ? Math.round(PET_BASE_HEIGHT * petScale) : 800,
         );
         if (!isPetMode) {
             WindowCenter();
@@ -2378,13 +2378,14 @@ function App() {
                             <h1>{DESKTOP_PET_NAME}</h1>
                         </div>
                         <div className="header-actions">
+                            <span className={`pill agent-${agentStatus}`}>{agentStatus} · {agentProvider}</span>
                             <button
                                 type="button"
                                 className="window-button"
                                 onClick={WindowMinimise}
                                 aria-label="最小化"
                             >
-                                -
+                                −
                             </button>
                             <button
                                 type="button"
@@ -2394,85 +2395,87 @@ function App() {
                             >
                                 ×
                             </button>
-                            <button
-                                type="button"
-                                className="ghost-button"
-                                onClick={() => setIsPetMode(true)}
-                            >
-                                桌宠模式
-                            </button>
-                            <button
-                                type="button"
-                                className="ghost-button"
-                                aria-pressed={freeConversationMode}
-                                onClick={() => setConversationMode((value) => value === 'free' ? 'manual' : 'free')}
-                            >
-                                自由聊天 {freeConversationMode ? '开' : '关'}
-                            </button>
-                            <button
-                                type="button"
-                                className="ghost-button"
-                                aria-pressed={effectiveContinuousVoiceMode}
-                                onClick={() => setContinuousVoiceMode((value) => !value)}
-                                disabled={freeConversationMode}
-                            >
-                                持续对话 {effectiveContinuousVoiceMode ? '开' : '关'}
-                            </button>
-                            <button
-                                type="button"
-                                className="ghost-button"
-                                aria-pressed={speechLanguage === 'ja'}
-                                onClick={() => setSpeechLanguage((value) => value === 'zh' ? 'ja' : 'zh')}
-                            >
-                                语音 {speechLanguage === 'zh' ? '中文' : '日语'}
-                            </button>
-                            {SHOW_SPEECH_DEBUG && (
-                                <button
-                                    type="button"
-                                    className="ghost-button"
-                                    onClick={probeFishLive}
-                                    disabled={isSending || voiceStatus === 'speaking'}
-                                >
-                                    Fish Live Test
-                                </button>
-                            )}
-                            <button
-                                type="button"
-                                className="ghost-button"
-                                aria-pressed={pluginsOpen}
-                                onClick={() => {
-                                    setPluginsOpen((value) => !value);
-                                    if (!pluginsOpen) {
-                                        refreshPlugins();
-                                    }
-                                }}
-                            >
-                                插件 {plugins.length > 0 ? `(${plugins.length})` : ''}
-                            </button>
-                            <button
-                                type="button"
-                                className="ghost-button"
-                                aria-pressed={tasksOpen}
-                                onClick={() => {
-                                    setTasksOpen((value) => !value);
-                                    if (!tasksOpen) {
-                                        refreshTasks();
-                                    }
-                                }}
-                            >
-                                任务 {tasks.length > 0 ? `(${tasks.length})` : ''}
-                            </button>
-                            <button
-                                type="button"
-                                className="ghost-button"
-                                onClick={clearChat}
-                                disabled={isSending || voiceStatus === 'speaking' || messages.length === 0}
-                            >
-                                清空聊天
-                            </button>
-                            <span className={`pill agent-${agentStatus}`}>{agentStatus} · {agentProvider}</span>
                         </div>
                     </header>
+
+                    <div className="toolbar" role="toolbar" aria-label="功能">
+                        <button
+                            type="button"
+                            className="ghost-button"
+                            onClick={() => setIsPetMode(true)}
+                        >
+                            桌宠模式
+                        </button>
+                        <button
+                            type="button"
+                            className="ghost-button"
+                            aria-pressed={freeConversationMode}
+                            onClick={() => setConversationMode((value) => value === 'free' ? 'manual' : 'free')}
+                        >
+                            自由聊天 {freeConversationMode ? '开' : '关'}
+                        </button>
+                        <button
+                            type="button"
+                            className="ghost-button"
+                            aria-pressed={effectiveContinuousVoiceMode}
+                            onClick={() => setContinuousVoiceMode((value) => !value)}
+                            disabled={freeConversationMode}
+                        >
+                            持续对话 {effectiveContinuousVoiceMode ? '开' : '关'}
+                        </button>
+                        <button
+                            type="button"
+                            className="ghost-button"
+                            aria-pressed={speechLanguage === 'ja'}
+                            onClick={() => setSpeechLanguage((value) => value === 'zh' ? 'ja' : 'zh')}
+                        >
+                            语音 {speechLanguage === 'zh' ? '中文' : '日语'}
+                        </button>
+                        <button
+                            type="button"
+                            className="ghost-button"
+                            aria-pressed={pluginsOpen}
+                            onClick={() => {
+                                setPluginsOpen((value) => !value);
+                                if (!pluginsOpen) {
+                                    refreshPlugins();
+                                }
+                            }}
+                        >
+                            插件 {plugins.length > 0 ? `(${plugins.length})` : ''}
+                        </button>
+                        <button
+                            type="button"
+                            className="ghost-button"
+                            aria-pressed={tasksOpen}
+                            onClick={() => {
+                                setTasksOpen((value) => !value);
+                                if (!tasksOpen) {
+                                    refreshTasks();
+                                }
+                            }}
+                        >
+                            任务 {tasks.length > 0 ? `(${tasks.length})` : ''}
+                        </button>
+                        <button
+                            type="button"
+                            className="ghost-button"
+                            onClick={clearChat}
+                            disabled={isSending || voiceStatus === 'speaking' || messages.length === 0}
+                        >
+                            清空聊天
+                        </button>
+                        {SHOW_SPEECH_DEBUG && (
+                            <button
+                                type="button"
+                                className="ghost-button"
+                                onClick={probeFishLive}
+                                disabled={isSending || voiceStatus === 'speaking'}
+                            >
+                                Fish Test
+                            </button>
+                        )}
+                    </div>
 
                     {pluginsOpen && (
                         <div className="plugin-panel" aria-label="插件面板">

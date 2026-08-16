@@ -35,9 +35,9 @@ export function GetAgentTask(arg1:string):Promise<db.AgentTask>;
 
 export function GetMessages(arg1:string):Promise<Array<db.Message>>;
 
-export function GetProviders():Promise<Record<string, types.ProviderConfig>>;
-
 export function GetPluginConfig(arg1:string):Promise<Record<string, any>>;
+
+export function GetProviders():Promise<Record<string, types.ProviderConfig>>;
 
 export function GetState():Promise<app.AppState>;
 

@@ -323,7 +323,13 @@ export namespace chat {
 	
 	export class ChatRequest {
 	    conversation_id: string;
+	    session_id?: string;
+	    message_id?: string;
+	    sender_id?: string;
+	    sender_name?: string;
 	    content: string;
+	    mentioned?: boolean;
+	    source_kind?: string;
 	    use_tools: boolean;
 	
 	    static createFrom(source: any = {}) {
@@ -333,7 +339,13 @@ export namespace chat {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.conversation_id = source["conversation_id"];
+	        this.session_id = source["session_id"];
+	        this.message_id = source["message_id"];
+	        this.sender_id = source["sender_id"];
+	        this.sender_name = source["sender_name"];
 	        this.content = source["content"];
+	        this.mentioned = source["mentioned"];
+	        this.source_kind = source["source_kind"];
 	        this.use_tools = source["use_tools"];
 	    }
 	}
@@ -627,6 +639,12 @@ export namespace db {
 	    content: string;
 	    tool_calls?: string;
 	    tool_call_id?: string;
+	    source_kind?: string;
+	    emotion?: string;
+	    mood?: string;
+	    energy?: number;
+	    gesture?: string;
+	    hand?: string;
 	    // Go type: time
 	    created_at: any;
 	
@@ -642,6 +660,12 @@ export namespace db {
 	        this.content = source["content"];
 	        this.tool_calls = source["tool_calls"];
 	        this.tool_call_id = source["tool_call_id"];
+	        this.source_kind = source["source_kind"];
+	        this.emotion = source["emotion"];
+	        this.mood = source["mood"];
+	        this.energy = source["energy"];
+	        this.gesture = source["gesture"];
+	        this.hand = source["hand"];
 	        this.created_at = this.convertValues(source["created_at"], null);
 	    }
 	
