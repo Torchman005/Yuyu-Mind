@@ -301,7 +301,25 @@ func (a *App) GenerateProactiveMessage(trigger string) (ChatReply, error) {
 
 func (a *App) ObserveScreen(prompt string) (ChatReply, error) {
 	_ = prompt
-	return a.GenerateProactiveMessage("screen-observe-unavailable")
+	path, err := a.captureScreenshot()
+	if err != nil {
+		return a.GenerateProactiveMessage("screen-observe-unavailable")
+	}
+	reply := CompanionMessage{
+		ID:        uuid.New().String(),
+		Role:      "assistant",
+		Content:   fmt.Sprintf("已截屏保存到工作区 %s。视觉模型尚未接入，暂时无法自动描述画面内容。", path),
+		Emotion:   "focused",
+		CreatedAt: time.Now().Format(time.RFC3339),
+	}
+	return ChatReply{
+		Messages:      []CompanionMessage{reply},
+		Reply:         reply,
+		SpeechText:    reply.Content,
+		Emotion:       "focused",
+		AgentStatus:   "online",
+		AgentProvider: a.activeProviderName(),
+	}, nil
 }
 
 func (a *App) SynthesizeSpeech(text string) (SpeechReply, error) {

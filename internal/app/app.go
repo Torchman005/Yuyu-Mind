@@ -23,17 +23,18 @@ import (
 
 // App 是 Wails 暴露给前端的主应用对象。
 type App struct {
-	ctx         context.Context
-	cfg         *config.Config
-	db          *db.DB
-	providerReg *aiProvider.Registry
-	toolReg     *tools.Registry
+	ctx           context.Context
+	cfg           *config.Config
+	db            *db.DB
+	providerReg   *aiProvider.Registry
+	toolReg       *tools.Registry
 	workerToolReg *tools.Registry
-	chatSvc     *chat.Service
-	agentSvc    *agent.Service
-	memorySvc   *memory.ServiceMemory
-	memStore    memory.Store
-	pluginMgr   *plugin.Manager
+	workspace     *tools.Workspace
+	chatSvc       *chat.Service
+	agentSvc      *agent.Service
+	memorySvc     *memory.ServiceMemory
+	memStore      memory.Store
+	pluginMgr     *plugin.Manager
 }
 
 // New 创建 App 实例。
@@ -93,6 +94,7 @@ func (a *App) Startup(ctx context.Context) {
 		slog.Warn("failed to create file workspace; file tools disabled", "error", wsErr)
 	} else {
 		ws = workspace
+		a.workspace = workspace
 		a.toolReg.Register("list_files", tools.NewListFilesTool(ws))
 		a.toolReg.Register("read_file", tools.NewReadFileTool(ws))
 	}

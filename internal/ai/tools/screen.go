@@ -17,6 +17,14 @@ import (
 
 var errScreenUnsupported = errors.New("screen capture is not supported on this platform")
 
+// CaptureScreen 截取主屏幕并返回 RGBA 图像（平台无关；非 Windows 返回错误）。
+func CaptureScreen() (*image.RGBA, error) {
+	if screenCapture == nil {
+		return nil, errScreenUnsupported
+	}
+	return screenCapture.Capture()
+}
+
 // screenCaptureExecutor 是屏幕截图的平台实现接口。
 // 具体实例由 screen_windows.go / screen_other.go 通过包级变量 screenCapture 提供。
 type screenCaptureExecutor interface {
