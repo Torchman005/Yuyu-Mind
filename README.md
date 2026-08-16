@@ -176,17 +176,44 @@ frontend/                       Wails 前端占位
 - 异步任务系统（Submit/Claim/Run/Cancel/审批/补答）
 - Memory Gateway 与任务上下文投影快照
 - 情绪管线（LLM 结构化情绪 → Live2D 表演参数 → 持久化）
-- 插件系统（进程内接口 + 注册表 + 生命周期 + 权限声明 + 动作派发 + 前端面板）
-- 电脑工具（工作区隔离 + 文件读写/列目录 + 命令执行 + Worker 审批流）
+- 插件系统（进程内接口 + 生命周期 + 权限 + 动作 + 配置持久化 + 前端面板 + system/workspace 内置插件 + 子进程 sidecar）
+- Web Search 真实实现（DuckDuckGo，免 Key）
+- 电脑工具（工作区隔离 + 文件读写/列目录 + 命令执行 + 键鼠输入 + 屏幕截图 + Worker 审批流）
 - Worker 真实执行器（LLM 工具循环）
-- 任务闭环（Planner 识别任务 → 提交 → 执行 → 事件回传前端）
+- 任务闭环（Planner 识别任务 → 提交 → 执行 → 事件回传前端任务面板）
+- 单元测试覆盖 agent/ai-tools/chat/config/db/memory/plugin/usage（9 包全绿）
 
 仍需处理：
 
-- `frontend/dist` 需本地 `npm run build` 生成（沙箱内 esbuild 无法打包）。
-- 剪贴板 / 屏幕截图工具（Windows 特定）。
-- 插件子进程 sidecar 协议（第三方二进制插件，阶段 2）。
-- 游戏操控（键鼠合成，高风险需审批）。
+- `frontend/dist` 需本地 `npm run build` 生成（见下方「快速开始」）。
+- 多模态视觉（让 LLM 描述截图）：需接入支持图片的模型与适配器。
+- JS 脚本插件（可选，阶段 3）。
+
+## 快速开始（本地构建与运行）
+
+> 桌宠前端依赖 Wails 的 `window.go` 运行时，**必须通过 `wails dev` 或打包后的 exe 运行**，单独 `npm run dev` 会因缺少运行时白屏。
+
+前置：Go 1.23+（**必须 64 位**，即 `go env GOARCH` 输出 `amd64`）、Node.js 18+、Wails v2 CLI。
+
+```powershell
+# 0) 确认 Go 是 64 位（sonic 等依赖不支持 32 位，会报 overflows int）
+go env GOARCH    # 必须是 amd64
+
+# 1) 构建前端（生成 frontend/dist，供 Go 嵌入）
+cd frontend
+npm install
+npm run build
+cd ..
+
+# 2) 启动开发模式（自动注入 window.go）
+wails dev
+```
+
+常见问题：
+
+- 若 `go build` 报 `sonic ... overflows int`：构建目标是 32 位，`go env GOARCH` 应为 `amd64`，别用 `-platform windows/386`。
+- 若报 `pattern all:frontend/dist: no matching files`：先执行第 1 步的 `npm run build`。
+- 配置与数据库默认在 `%APPDATA%\Yuyu-Mind\`；可用环境变量 `YUYU_CONFIG_DIR` 覆盖配置目录。
 
 ## 开发命令
 
@@ -197,10 +224,10 @@ make dev
 make build
 ```
 
-当前可独立通过的包：
+测试（全绿）：
 
 ```bash
-go test ./internal/agent ./internal/db ./internal/memory ./internal/config ./pkg/types
+go test ./internal/...
 ```
 
 ## 架构约束
