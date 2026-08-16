@@ -123,6 +123,7 @@
 - [x] Worker 真实执行器（`internal/agent/llm_executor.go`：LLM 工具循环 + `allowed_actions` 白名单过滤 + 事件/操作日志；`internal/app/worker_executor.go` 模型适配；`app.go` 接入 Worker 工具集含 `write_file`；`llm_executor_test.go` 4 个单测通过）。
 - [x] Worker 审批流（`Runtime.RequestApproval` + `waiting_for_approval` 状态机 + approve/reject/cancel 消费；`llm_executor.go` 对 `write_file` 等危险工具先审批；`approval_test.go` 验证提交→挂起→批准→完成全链路）。
 - [x] 命令执行工具（`internal/ai/tools/command.go`：工作区目录内执行 + 超时 + 输出截断；`execute_command` 加入 Worker 工具集与 `approvalRequiredTools`；`command_test.go` 实测 exec 通过）。
+- [x] 键鼠输入合成（`internal/ai/tools/input.go` + `input_windows.go`（SendInput）+ `input_other.go`（no-op）；`send_input` 加入 Worker 工具集与 `approvalRequiredTools`；`input_test.go` 验证按键名→VK 映射）。
 - [ ] 剪贴板 / 屏幕截图工具（Windows 特定，后续 M5 屏幕观察一并做）。
 
 ### 任务闭环（M4）

@@ -143,6 +143,7 @@ func (e *LLMExecutor) Execute(ctx context.Context, task TaskSpec, runtime Runtim
 var approvalRequiredTools = map[string]bool{
 	"write_file":      true,
 	"execute_command": true,
+	"send_input":      true,
 }
 
 // ensureDangerousApproval 在存在危险工具调用时请求审批（每轮一次）。

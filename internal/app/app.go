@@ -106,6 +106,8 @@ func (a *App) Startup(ctx context.Context) {
 		a.workerToolReg.Register("write_file", tools.NewWriteFileTool(ws))
 		a.workerToolReg.Register("execute_command", tools.NewCommandTool(ws))
 	}
+	// 键鼠输入合成（仅 Worker，需审批）。
+	a.workerToolReg.Register("send_input", tools.NewInputTool())
 
 	a.memStore = memory.NewSQLiteStore(database.Messages, cfg.Memory.MaxTurns)
 	a.memorySvc = memory.NewServiceMemory(database.Memories)
