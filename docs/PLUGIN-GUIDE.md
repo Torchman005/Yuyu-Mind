@@ -140,6 +140,6 @@ func (p *MyPlugin) Init(ctx context.Context, host *Host) error {
 
 ## 七、路线图
 
-- **阶段 1（当前）**：进程内插件，`Plugin` 接口 + `Manager` + 内置插件（system / workspace）。
-- **阶段 2**：子进程 sidecar（JSON-RPC over stdio），第三方插件以独立进程运行，崩溃隔离 + 权限强制。
+- **阶段 1（已实现）**：进程内插件，`Plugin` 接口 + `Manager` + 内置插件（system / workspace）。
+- **阶段 2（已实现）**：子进程 sidecar，通过 stdio JSON-RPC 驱动外部插件进程（`internal/plugin/sidecar.go`），第三方插件无需重编译宿主即可挂载。协议为 newline-delimited JSON：`{"id","method","params"}` → `{"id","result","error"}`；方法 `manifest`/`start`/`stop`/`invoke_action`。
 - **阶段 3（可选）**：JS 脚本插件（goja），面向轻量扩展。

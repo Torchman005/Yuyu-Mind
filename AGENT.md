@@ -111,7 +111,7 @@
 - [x] 前端插件面板（`App.tsx` 插件列表/启停/调用动作 + JSON 参数输入 + 配置查看/保存 + `App.css` 样式；`tsc --noEmit` 通过）。
 - [x] 插件配置持久化（`plugin.ConfigStore` 接口 + `Host.Config` + `Manager.GetConfig/SetConfig` + 宿主 settings 键值表 + Wails `GetPluginConfig`/`SetPluginConfig` + 前端配置按钮；`config_test.go`）。
 - [x] wailsjs 绑定补全（`App.js`/`App.d.ts` 新增 `EnablePlugin`/`DisablePlugin`/`InvokePluginAction`/`GetPluginConfig`/`SetPluginConfig`，`models.ts` 新增情绪表演字段）。
-- [ ] 子进程 sidecar 协议（第三方二进制插件，阶段 2）。
+- [x] 子进程 sidecar（阶段 2）：`internal/plugin/sidecar.go` 通过 stdio JSON-RPC 驱动外部插件进程（`SidecarSpec`/`SidecarPlugin`/`sidecarClient`），`Manager.Register` 在 Init 后重新读取协商的 manifest；`sidecar_test.go` 用 re-exec 模式验证全链路。第三方插件无需重编译宿主即可挂载。
 
 ### 电脑工具（M3 地基）
 

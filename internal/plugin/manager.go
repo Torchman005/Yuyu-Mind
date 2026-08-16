@@ -116,6 +116,14 @@ func (m *Manager) Register(ctx context.Context, p Plugin) error {
 	if err := p.Init(ctx, host); err != nil {
 		return fmt.Errorf("init plugin %q: %w", manifest.Name, err)
 	}
+	// Init 可能协商了更完整的 manifest（如 sidecar），重新读取一次。
+	if negotiated := p.Manifest(); negotiated.Name != "" {
+		if negotiated.SchemaVersion == "" {
+			negotiated.SchemaVersion = manifest.SchemaVersion
+		}
+		reg.manifest = negotiated
+		manifest = negotiated
+	}
 	if err := p.Start(ctx); err != nil {
 		return fmt.Errorf("start plugin %q: %w", manifest.Name, err)
 	}
