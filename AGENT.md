@@ -124,7 +124,8 @@
 - [x] Worker 审批流（`Runtime.RequestApproval` + `waiting_for_approval` 状态机 + approve/reject/cancel 消费；`llm_executor.go` 对 `write_file` 等危险工具先审批；`approval_test.go` 验证提交→挂起→批准→完成全链路）。
 - [x] 命令执行工具（`internal/ai/tools/command.go`：工作区目录内执行 + 超时 + 输出截断；`execute_command` 加入 Worker 工具集与 `approvalRequiredTools`；`command_test.go` 实测 exec 通过）。
 - [x] 键鼠输入合成（`internal/ai/tools/input.go` + `input_windows.go`（SendInput）+ `input_other.go`（no-op）；`send_input` 加入 Worker 工具集与 `approvalRequiredTools`；`input_test.go` 验证按键名→VK 映射）。
-- [ ] 剪贴板 / 屏幕截图工具（Windows 特定，后续 M5 屏幕观察一并做）。
+- [x] 屏幕截图（`internal/ai/tools/screen.go` + `screen_windows.go`（BitBlt/GetDIBits→PNG）+ `screen_other.go`（no-op）；`screen_capture` 加入 Worker 工具集与 `approvalRequiredTools`）。
+- [ ] 剪贴板工具（Windows 特定，命令工具经 PowerShell 可部分替代）。
 
 ### 任务闭环（M4）
 

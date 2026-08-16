@@ -105,6 +105,7 @@ func (a *App) Startup(ctx context.Context) {
 		a.workerToolReg.Register("read_file", tools.NewReadFileTool(ws))
 		a.workerToolReg.Register("write_file", tools.NewWriteFileTool(ws))
 		a.workerToolReg.Register("execute_command", tools.NewCommandTool(ws))
+		a.workerToolReg.Register("screen_capture", tools.NewScreenCaptureTool(ws))
 	}
 	// 键鼠输入合成（仅 Worker，需审批）。
 	a.workerToolReg.Register("send_input", tools.NewInputTool())
