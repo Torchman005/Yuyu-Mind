@@ -57,6 +57,17 @@
 > ✅ **已落地（M1 + M1.5 + 持久化）**：`internal/chat/emotion.go` 定义白名单与归一化；`PlannerDecision` 增加 emotion/mood/energy/gesture/hand；`ChatEvent` 增加 `EventTypeEmotion`；`companion.go` 收集并回填到 `ChatReply`/`CompanionMessage`；messages 表新增 emotion/mood/energy/gesture/hand 列并随 `SendGuidedReply` 持久化、`companionMessages` 读取（空则回退 `inferEmotion`）；前端 `App.tsx` 用 LLM mood/energy/hand 覆盖 `inferAvatarPerformance`（兜底保留）。`go build`/`go test ./internal/db` 通过；前端改动需本地 `npm run build` 验证。
 > ⬜ **待办**：gesture 字段当前仅随 DTO 传递、尚未覆盖 `Live2DStage` 内部由 mood 推导的手势（可选优化）。
 
+> 🎯 **参考方向（情绪系统 v2）：[soullink-emotion-sdk](https://github.com/nanlingyin/soullink-emotion-sdk)**（framework-agnostic 实时 Live2D 表情/动作 SDK）。其四大支柱与我们的现状对照：
+>
+> | SDK 支柱 | 含义 | 我们现状 | 差距 → 演进 |
+> | --- | --- | --- | --- |
+> | **Continuous VAD emotion** | 连续效价(valence)/唤醒(arousal)/支配(dominance) 情绪，实时推断 | 离散 `emotion` 字符串 + 单一 `energy`(≈arousal) | 后端 Schema 增加连续 `valence`/`arousal`，来源从「关键词/LLM 离散」走向「文本+语音连续」 |
+> | **FACS/AU synthesis** | 动作单元 AU1(内眉上扬)/AU4(皱眉)/AU6(脸颊提升)/AU12(嘴角上拉)/AU25(双唇分开)… 合成表情 | `performanceTargets` 把离散 mood → `ParamBrowY/ParamEyeSmile/ParamMouthForm` 手调权重 | 改为 **AU 表驱动**：AU 权重 → Live2D 参数，原则化、可复用 |
+> | **Layered animation** | idle + 情绪 + 手势分层、权重混合 | 已有雏形：`applyPresence`(idle/眨眼/呼吸) + `applyPerformancePresence`(情绪) + gesture + `applyLipSync` | 基本对齐，主要缺「连续权重的平滑混合」 |
+> | **Automatic model adaptation** | 参数注册表自动适配任意 Live2D 模型的参数/表情命名 | 参数名硬编码当前模型（`ParamEyeSmile`、`ParamBrowY`…） | 引入 manifest/参数注册表，运行时按模型名自动匹配 |
+>
+> 结论：我们已踩中「layered + 参数映射」的前半程，v2 的实质是**离散 → 连续（VAD）**、**手调 → AU 表**、**硬编码 → 注册表适配**三个方向。
+
 ### 难点 2：插件系统的实现路线 —— 🔶 进行中（内核 + 前端已完成，权限/sidecar 待做）
 
 **难点**：Go 官方 `plugin` 包在 Windows 上几乎不可用（且要求编译期类型一致）；「构建生态」又需要第三方能扩展能力；同时要解决沙箱、权限、生命周期、热更新、崩溃隔离。
@@ -180,3 +191,4 @@
 - **UI 美化与滚动修复**：重写 `frontend/src/App.css`（现代配色/圆角/聊天气泡/细滚动条）；`App.tsx` 头部精简（标题+状态+窗口按钮）、功能按钮下沉为 `.toolbar`；`.chat-panel` 由 grid 改为 flex 布局——header/toolbar/composer 固定、`message-feed` `flex:1 min-height:0 overflow-y:auto` 独立滚动，彻底解决「内容显示不全 + 无法滚轮滑动」；窗口默认尺寸 1024×768 → 1200×800。`tsc --noEmit` 通过。难点 8 的「前端无滚动/内容溢出」部分随之解决。
 - **蓝白配色 + 桌宠透明**：配色从青绿改为**蓝白**（`--accent #2b6cb0`、`--bg #f5f8fb`、浅蓝 stage 渐变）；显式声明 `html.pet-window, body.pet-window` 背景透明，配合 `WindowSetBackgroundColour` 全透明（alpha=0），消除桌宠模式黑底。
 - **桌宠原生窗口透明修复（黑底根因）**：定位「桌宠模式整窗除 Live2D 小人外全黑」的根因——前端 CSS 已透明、`WindowSetBackgroundColour(0,0,0,0)` 也把 WebView2 `DefaultBackgroundColor.A` 置 0（内容透明），但 `main.go` 未配置 `Windows` 选项，`win32.SetBackgroundColour(hwnd, 0,0,0)` 把原生 HWND 背景刷子刷成黑色并透出透明 WebView。修复：`main.go` 增加 `Windows: &windows.Options{WebviewIsTransparent: true, WindowIsTranslucent: true, BackdropType: windows.None}`。已读 Wails v2.12.0 源码确认 `WebviewIsTransparent` 在 `WindowSetBackgroundColour` 中强制 `A=0`、`WindowIsTranslucent` 触发 DWM 透传（Win11 `DWMSBT_NONE` / Win10 毛玻璃回退）。`go build ./...` 通过（exit 0）。
+- **无边框窗口 + 情绪系统参考（soullink-emotion-sdk）**：① `main.go` 加 `Frameless: true` + `DisableFramelessWindowDecorations: true`，去掉系统边框/标题栏（桌宠模式无边框悬浮；完整模式复用前端自定义 header 拖拽区 + 最小化/关闭按钮），`App.css` 补强拖拽区（`.chat-panel .header-title`/`.status-bar` 可拖、去掉 `status-bar *` 的 no-drag）。② 研读 [soullink-emotion-sdk](https://github.com/nanlingyin/soullink-emotion-sdk)，把「连续 VAD 情绪 / FACS·AU 表情合成 / 分层动画 / 模型自动适配」四大支柱对照进难点 1 作为情绪系统 v2 演进方向（离散→连续、手调→AU 表、硬编码→注册表适配）。`go build ./...` 通过（exit 0）。

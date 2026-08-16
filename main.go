@@ -17,9 +17,10 @@ func main() {
 	application := app.New()
 
 	err := wails.Run(&options.App{
-		Title:  "Yuyu Mind",
-		Width:  1200,
-		Height: 800,
+		Title:     "Yuyu Mind",
+		Width:     1200,
+		Height:    800,
+		Frameless: true,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
@@ -28,11 +29,15 @@ func main() {
 		Bind: []interface{}{
 			application,
 		},
-		// 桌宠模式需要透明的原生窗口，避免 WebView2 底层的黑色背景透出。
+		// 无边框 + 桌宠模式透明原生窗口：
+		// - Frameless 去掉系统标题栏/边框，完整模式用前端自定义 header（拖拽区 + 最小化/关闭按钮）。
+		// - WebviewIsTransparent + WindowIsTranslucent + BackdropType None 让桌宠模式背景全透明。
+		// - DisableFramelessWindowDecorations 去掉 Aero 阴影/圆角，避免透明桌宠四周出现矩形阴影。
 		Windows: &windows.Options{
-			WebviewIsTransparent: true,
-			WindowIsTranslucent:  true,
-			BackdropType:         windows.None,
+			WebviewIsTransparent:              true,
+			WindowIsTranslucent:               true,
+			BackdropType:                      windows.None,
+			DisableFramelessWindowDecorations: true,
 		},
 	})
 

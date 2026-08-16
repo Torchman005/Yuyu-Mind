@@ -79,12 +79,12 @@ body.pet-window {
 }
 
 .status-bar,
-.chat-panel header {
+.chat-panel header,
+.chat-panel .header-title {
     -webkit-app-region: drag;
     --wails-draggable: drag;
 }
 
-.status-bar *,
 .chat-panel header button,
 .chat-panel header .pill {
     -webkit-app-region: no-drag;

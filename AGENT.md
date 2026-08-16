@@ -31,6 +31,7 @@
 8. **前后端事件通道已有基础**：聊天用 `chat:event`（Wails EventsEmit），TTS 流用 `mochi:speech:*` 事件；但异步任务的事件/审批尚未推到前端 UI。
 9. **安全边界已有清晰设计**：审批流（`waiting_for_approval` / approve / reject）、任务上下文快照、Worker 不读长期记忆。这是接入「操控电脑」等高风险能力时必须坚守的骨架。
 10. **构建环境限制**：本机 Go 的 `GOPATH/GOMODCACHE/GOCACHE` 默认在工作区之外，沙箱下不可写。构建/测试需把 `GOMODCACHE`/`GOCACHE`/`GOTMPDIR` 重定向到工作区内（见 Rules）。
+11. **情绪/表情系统升级方向参考 [soullink-emotion-sdk](https://github.com/nanlingyin/soullink-emotion-sdk)**：其四大支柱是 `Continuous VAD emotion`（连续效价/唤醒/支配，而非离散关键词）、`FACS/AU synthesis`（动作单元 AU1/AU4/AU6/AU12… 合成表情映射到 Live2D 参数）、`Layered animation`（idle + 情绪 + 手势分层混合）、`Automatic model adaptation`（参数注册表自动适配任意模型）。当前实现已有「layered 雏形」（idle + emotion overlay + gesture + lip sync）与「离散 mood→参数映射雏形」，差距在：情绪是离散字符串 + 单一 `energy`（缺 valence/arousal）、参数名硬编码当前模型（缺自动适配）、来源是关键词/LLM 离散输出（非连续 VAD）。情绪系统 v2 应按此演进，详见 `docs/DEVELOPMENT-NOTES.md` 难点 1。
 
 ## Rules（开发规则与约束）
 
@@ -88,6 +89,7 @@
 - [x] 唇同步：Web Audio Analyser 驱动 `ParamMouthOpenY`。
 - [x] 桌宠模式：透明窗口、鼠标穿透（Windows WS_EX_TRANSPARENT + 轮廓命中）、滚轮缩放、Ctrl+Shift+M 切换。
 - [x] 桌宠原生窗口透明（黑底修复）：`main.go` 配置 `Windows: &windows.Options{WebviewIsTransparent: true, WindowIsTranslucent: true, BackdropType: windows.None}`，消除「桌宠模式整窗除 Live2D 小人外全黑」（根因：原生 HWND 背景刷子被刷成黑色透出透明 WebView）。`go build ./...` 通过，需本地 `wails dev` 验证。
+- [x] 无边框窗口（去系统边框/标题栏）：`main.go` 加 `Frameless: true` + `DisableFramelessWindowDecorations: true`，完整模式用前端自定义 header（拖拽区 + 最小化/关闭按钮），桌宠模式天然无边框无标题栏。`App.css` 补强 `.chat-panel .header-title`/`.status-bar` 拖拽区（去掉 `status-bar *` 的 no-drag）。`go build ./...` 通过，需本地 `wails dev` 验证。
 - [x] 语音：Fish Audio TTS（buffered + 流式事件）、系统 TTS 兜底、浏览器 ASR、语音门控、打断（barge-in）、连续/自由对话、主动发言与追问。
 - [x] UI 美化：重写 `App.css`（现代简洁配色 + 圆角卡片 + 聊天气泡）；头部精简为标题+状态+窗口按钮，功能按钮下沉为独立工具栏；`.chat-panel` 改 flexbox 布局彻底修复消息区滚动（header/toolbar/composer 固定、`message-feed` 独立滚动 + 细滚动条）；窗口默认尺寸提升到 1200×800。
 
@@ -157,4 +159,5 @@
 - [ ] 剪贴板工具（可选，`execute_command` 经 PowerShell 可替代）。
 - [ ] JS 脚本插件（可选阶段 3，goja）。
 - [ ] 拆分 `App.tsx`（前端 2500+ 行，可维护性优化）。
-- [ ] 本地端到端验证（`wails dev`）：Planner 稳定性、Live2D 情绪、任务执行、审批流。
+- [ ] 情绪系统 v2（参考 [soullink-emotion-sdk](https://github.com/nanlingyin/soullink-emotion-sdk)）：连续 VAD（valence/arousal）替代离散 emotion、AU 表驱动表情合成、Live2D 参数注册表自动适配模型。
+- [ ] 本地端到端验证（`wails dev`）：Planner 稳定性、Live2D 情绪、任务执行、审批流、无边框拖拽。
