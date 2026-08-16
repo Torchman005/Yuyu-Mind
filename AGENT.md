@@ -147,11 +147,12 @@
 
 ## Next（待办 / 路线图）
 
-> ✅ **前端类型已验证**：`tsc --noEmit` 通过（exit 0），前端 TSX/绑定/models 改动类型正确。剩余只需本地 `npm install`（完整）+ `npm run build` 生成 `dist`（沙箱内 esbuild `spawn EPERM` 无法打包）+ `wails dev` 启动。Go 后端已全程 `go build`/`go test` 通过。
+> ✅ **前端类型已验证**：`tsc --noEmit` 通过（exit 0），前端 TSX/绑定/models 改动类型正确。剩余只需本地 `npm install`（完整）+ `npm run build` 生成 `dist`（沙箱内 esbuild `spawn EPERM` 无法打包）+ `wails dev` 启动。Go 后端已全程 `go build`/`go test` 通过（10 包全绿）。
 
-- [ ] **M2 插件增强**：插件配置持久化 + sidecar 协议（阶段 2）。
-- [ ] **M3 电脑工具（续）**：剪贴板 / 屏幕截图工具（Windows 特定，与 M5 屏幕观察合并做）。
-- [ ] **M5 屏幕观察与游戏**：屏幕截图 + 视觉模型观察；键鼠合成（高风险，需审批）。
-- [ ] **M6 生态**：插件市场/示例插件/文档。
-- [ ] 生成 `frontend/dist`，打通全量 `go build .` / `make build`。
-- [ ] 拆分 `App.tsx`。
+核心愿景能力（情绪/对话/电脑工具/任务/插件生态/屏幕观察）已全部实现并提交推送。剩余均为环境依赖或可选：
+
+- [ ] 生成 `frontend/dist`，打通全量 `go build .` / `make build`（用户本地）。
+- [ ] 剪贴板工具（可选，`execute_command` 经 PowerShell 可替代）。
+- [ ] JS 脚本插件（可选阶段 3，goja）。
+- [ ] 拆分 `App.tsx`（前端 2500+ 行，可维护性优化）。
+- [ ] 本地端到端验证（`wails dev`）：Planner 稳定性、Live2D 情绪、任务执行、审批流。
