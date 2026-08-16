@@ -763,7 +763,7 @@ function App() {
         }
 
         WindowSetAlwaysOnTop(isPetMode);
-        WindowSetBackgroundColour(isPetMode ? 0 : 244, isPetMode ? 0 : 246, isPetMode ? 0 : 245, isPetMode ? 0 : 255);
+        WindowSetBackgroundColour(isPetMode ? 0 : 245, isPetMode ? 0 : 248, isPetMode ? 0 : 251, isPetMode ? 0 : 255);
         WindowSetSize(
             isPetMode ? Math.round(PET_BASE_WIDTH * petScale) : 1200,
             isPetMode ? Math.round(PET_BASE_HEIGHT * petScale) : 800,
