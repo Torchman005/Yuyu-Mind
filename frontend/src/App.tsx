@@ -7,6 +7,7 @@ import {
     DisablePlugin,
     EnablePlugin,
     GenerateProactiveMessage,
+    GetPluginConfig,
     GetState,
     InvokePluginAction,
     ListAgentTasks,
@@ -15,6 +16,7 @@ import {
     ProbeFishLive,
     SendAgentTaskControl,
     SendMessage,
+    SetPluginConfig,
     SynthesizeSpeech,
     SynthesizeSpeechStream,
     TranscribeAudio,
@@ -1770,6 +1772,37 @@ function App() {
         }
     }
 
+    async function showPluginConfig(pluginName: string) {
+        setPluginResult('');
+        try {
+            const config = await GetPluginConfig(pluginName);
+            setPluginResult(JSON.stringify(config, null, 2));
+        } catch (reason) {
+            setError(String(reason));
+        }
+    }
+
+    async function savePluginConfig(pluginName: string) {
+        let input: Record<string, any> = {};
+        const raw = pluginActionInput.trim();
+        if (raw) {
+            try {
+                const parsed = JSON.parse(raw);
+                input = (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+            } catch {
+                setError('插件配置需为 JSON 对象');
+                return;
+            }
+        }
+        try {
+            await SetPluginConfig(pluginName, input);
+            setPluginResult('配置已保存');
+            refreshPlugins();
+        } catch (reason) {
+            setError(String(reason));
+        }
+    }
+
     function refreshTasks() {
         ListAgentTasks('', 50)
             .then((items) => setTasks(items ?? []))
@@ -2485,6 +2518,18 @@ function App() {
                                                 {action.name}
                                             </button>
                                         ))}
+                                        <button
+                                            type="button"
+                                            onClick={() => void showPluginConfig(plugin.name)}
+                                        >
+                                            配置
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => void savePluginConfig(plugin.name)}
+                                        >
+                                            保存配置
+                                        </button>
                                     </div>
                                 </div>
                             ))}

@@ -37,6 +37,8 @@ export function GetMessages(arg1:string):Promise<Array<db.Message>>;
 
 export function GetProviders():Promise<Record<string, types.ProviderConfig>>;
 
+export function GetPluginConfig(arg1:string):Promise<Record<string, any>>;
+
 export function GetState():Promise<app.AppState>;
 
 export function GetTokenUsageByProviderModel():Promise<Array<db.TokenUsageSummary>>;
@@ -74,6 +76,8 @@ export function SendAgentTaskControl(arg1:string,arg2:string,arg3:Record<string,
 export function SendMessage(arg1:string):Promise<app.ChatReply>;
 
 export function SetActiveProvider(arg1:string,arg2:string):Promise<void>;
+
+export function SetPluginConfig(arg1:string,arg2:Record<string, any>):Promise<void>;
 
 export function StartRealtimeSpeech(arg1:string):Promise<app.SpeechStreamStart>;
 

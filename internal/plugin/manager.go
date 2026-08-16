@@ -31,6 +31,7 @@ type Manager struct {
 	mu            sync.RWMutex
 	plugins       map[string]*registered
 	toolRegistrar func(name string, t tool.BaseTool) error
+	configStore   ConfigStore
 	logger        *slog.Logger
 }
 
@@ -44,6 +45,27 @@ func NewManager(toolRegistrar func(name string, t tool.BaseTool) error, logger *
 		toolRegistrar: toolRegistrar,
 		logger:        logger,
 	}
+}
+
+// SetConfigStore 注入插件配置存储（可选；未注入时配置不持久化）。
+func (m *Manager) SetConfigStore(store ConfigStore) {
+	m.configStore = store
+}
+
+// GetConfig 返回插件配置；无存储或未配置时返回空 map。
+func (m *Manager) GetConfig(ctx context.Context, pluginID string) (map[string]any, error) {
+	if m.configStore == nil {
+		return map[string]any{}, nil
+	}
+	return m.configStore.Get(ctx, pluginID)
+}
+
+// SetConfig 保存插件配置。
+func (m *Manager) SetConfig(ctx context.Context, pluginID string, config map[string]any) error {
+	if m.configStore == nil {
+		return fmt.Errorf("plugin config store is not configured")
+	}
+	return m.configStore.Set(ctx, pluginID, config)
 }
 
 // Register 初始化并启用一个插件。默认即启用；后续可用 Disable 停用。
@@ -78,6 +100,13 @@ func (m *Manager) Register(ctx context.Context, p Plugin) error {
 			reg.actions[name] = h
 			reg.mu.Unlock()
 			return nil
+		},
+		Config: func() map[string]any {
+			cfg, err := m.GetConfig(ctx, manifest.Name)
+			if err != nil {
+				cfg = map[string]any{}
+			}
+			return cfg
 		},
 		Logf: func(format string, args ...any) {
 			m.logger.Info(fmt.Sprintf(format, args...), "plugin", manifest.Name)

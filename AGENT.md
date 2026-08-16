@@ -108,9 +108,9 @@
 - [x] 宿主接线（`app.go`）：插件工具注册进工具注册表、挂载内置插件（system + workspace）、Shutdown 时 StopAll。
 - [x] Wails 方法：`ListPlugins`（真实数据）/`EnablePlugin`/`DisablePlugin`/`InvokePluginAction`（`internal/app/plugin_service.go`）。
 - [x] 单元测试（`internal/plugin/manager_test.go`：生命周期 + 动作派发 + 禁用/启用 + 校验；`workspace_test.go`）。
-- [x] 前端插件面板（`App.tsx` 插件列表/启停/调用动作 + JSON 参数输入 + `App.css` 样式；`tsc --noEmit` 通过）。
-- [x] wailsjs 绑定补全（`App.js`/`App.d.ts` 新增 `EnablePlugin`/`DisablePlugin`/`InvokePluginAction`，`models.ts` 新增情绪表演字段）。
-- [ ] 插件配置持久化（当前 `Context`/`Config` 未接）。
+- [x] 前端插件面板（`App.tsx` 插件列表/启停/调用动作 + JSON 参数输入 + 配置查看/保存 + `App.css` 样式；`tsc --noEmit` 通过）。
+- [x] 插件配置持久化（`plugin.ConfigStore` 接口 + `Host.Config` + `Manager.GetConfig/SetConfig` + 宿主 settings 键值表 + Wails `GetPluginConfig`/`SetPluginConfig` + 前端配置按钮；`config_test.go`）。
+- [x] wailsjs 绑定补全（`App.js`/`App.d.ts` 新增 `EnablePlugin`/`DisablePlugin`/`InvokePluginAction`/`GetPluginConfig`/`SetPluginConfig`，`models.ts` 新增情绪表演字段）。
 - [ ] 子进程 sidecar 协议（第三方二进制插件，阶段 2）。
 
 ### 电脑工具（M3 地基）

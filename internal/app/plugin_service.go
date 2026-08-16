@@ -1,12 +1,63 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 
+	"github.com/yuyu-mind/backend/internal/db"
 	"github.com/yuyu-mind/backend/internal/plugin"
 )
 
 var errPluginsUnavailable = errors.New("plugin system is not initialized")
+
+// settingsConfigStore 用 settings 键值表持久化插件配置（key = plugin.config.<id>）。
+type settingsConfigStore struct {
+	settings *db.SettingsRepo
+}
+
+func (s *settingsConfigStore) Get(ctx context.Context, pluginID string) (map[string]any, error) {
+	raw, err := s.settings.Get(ctx, "plugin.config."+pluginID)
+	if err != nil {
+		return nil, err
+	}
+	if raw == "" {
+		return map[string]any{}, nil
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return nil, fmt.Errorf("decode plugin config: %w", err)
+	}
+	if cfg == nil {
+		cfg = map[string]any{}
+	}
+	return cfg, nil
+}
+
+func (s *settingsConfigStore) Set(ctx context.Context, pluginID string, config map[string]any) error {
+	raw, err := json.Marshal(config)
+	if err != nil {
+		return fmt.Errorf("encode plugin config: %w", err)
+	}
+	return s.settings.Set(ctx, "plugin.config."+pluginID, string(raw))
+}
+
+// GetPluginConfig 返回插件配置（无配置返回空对象）。
+func (a *App) GetPluginConfig(pluginID string) (map[string]any, error) {
+	if a.pluginMgr == nil {
+		return nil, errPluginsUnavailable
+	}
+	return a.pluginMgr.GetConfig(a.ctx, pluginID)
+}
+
+// SetPluginConfig 保存插件配置。
+func (a *App) SetPluginConfig(pluginID string, config map[string]any) error {
+	if a.pluginMgr == nil {
+		return errPluginsUnavailable
+	}
+	return a.pluginMgr.SetConfig(a.ctx, pluginID, config)
+}
 
 // ListPlugins 返回所有已注册插件的状态。
 func (a *App) ListPlugins() (PluginListReply, error) {

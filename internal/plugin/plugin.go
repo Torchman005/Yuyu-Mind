@@ -36,6 +36,12 @@ type Manifest struct {
 	Actions       []Action       `json:"actions,omitempty"`
 }
 
+// ConfigStore 持久化插件配置。由宿主实现（如 settings 键值表）。
+type ConfigStore interface {
+	Get(ctx context.Context, pluginID string) (map[string]any, error)
+	Set(ctx context.Context, pluginID string, config map[string]any) error
+}
+
 // Host 是宿主在插件 Init 期间提供的服务集合。
 // 采用函数字段而非接口，便于宿主按需注入闭包，避免插件包反向依赖 app 包。
 type Host struct {
@@ -43,6 +49,8 @@ type Host struct {
 	RegisterTool func(name string, t tool.BaseTool) error
 	// RegisterAction 注册一个可被前端调用的动作。
 	RegisterAction func(name string, h ActionHandler) error
+	// Config 返回插件当前配置（可能为空 map）。
+	Config func() map[string]any
 	// Logf 通过宿主统一日志输出。
 	Logf func(format string, args ...any)
 }

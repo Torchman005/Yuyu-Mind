@@ -135,6 +135,7 @@ func (a *App) Startup(ctx context.Context) {
 		}
 		return nil
 	}, slog.Default())
+	a.pluginMgr.SetConfigStore(&settingsConfigStore{settings: database.Settings})
 	if err := a.pluginMgr.Register(ctx, plugin.NewSystemPlugin()); err != nil {
 		slog.Error("failed to register built-in plugin", "error", err)
 	}

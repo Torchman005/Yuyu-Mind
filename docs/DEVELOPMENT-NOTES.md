@@ -168,3 +168,4 @@
 - **插件开发指南**：新增 `docs/PLUGIN-GUIDE.md`（接口/Manifest/Host/示例/挂载/约定/路线图），完成 M6 生态的文档部分。
 - **配置/用量测试加固**：新增 `internal/config/config_test.go`（默认值/激活切换/更新 provider，不触盘）与 `internal/usage/collector_test.go`（累计/TotalTokens 回退/nil 安全）。至此 9 个包全绿。`go test ./internal/...` 通过。
 - **Git 提交流程**：全量成果提交 `1a54913` 并推送 `dev`；此后每阶段完成即 commit + push。
+- **插件配置持久化**：`plugin.ConfigStore` 接口 + `Host.Config` 注入 + `Manager.GetConfig/SetConfig`；宿主用 settings 键值表（`plugin.config.<id>`）存储；Wails `GetPluginConfig`/`SetPluginConfig`；前端插件卡片加「配置/保存配置」按钮；`internal/plugin/config_test.go` 验证往返 + 无 store 行为。`go test ./internal/plugin` 通过、`tsc --noEmit` 通过。
