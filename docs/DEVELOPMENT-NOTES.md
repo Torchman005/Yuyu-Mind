@@ -34,7 +34,7 @@
 
 > 状态标记：✅ 已解决 · 🔶 进行中 · ⬜ 待解决
 
-### 难点 1：LLM 情绪如何可靠地驱动 Live2D —— 🔶 进行中（M1 后端已完成，M1.5 前端待做）
+### 难点 1：LLM 情绪如何可靠地驱动 Live2D —— ✅ 已解决（M1 离散 + v2 连续 VAD/FACS-AU）
 
 **难点**：现有实现是「关键词启发式」——后端 `inferEmotion` 猜 happy/focused/sad，前端 `inferAvatarPerformance` 再用正则猜 mood/energy/手势。问题：① 覆盖不全、误判多；② 情绪在完整回复后才确定，无法在 TTS 播放开始前就驱动形象；③ 前后端各有一套字段，无统一契约。
 
@@ -67,6 +67,13 @@
 > | **Automatic model adaptation** | 参数注册表自动适配任意 Live2D 模型的参数/表情命名 | 参数名硬编码当前模型（`ParamEyeSmile`、`ParamBrowY`…） | 引入 manifest/参数注册表，运行时按模型名自动匹配 |
 >
 > 结论：我们已踩中「layered + 参数映射」的前半程，v2 的实质是**离散 → 连续（VAD）**、**手调 → AU 表**、**硬编码 → 注册表适配**三个方向。
+
+> ✅ **v2 已落地（连续 VAD + FACS/AU + 参数注册表）**：
+> - **后端 VAD**：`emotion.go` 新增 `ClampValence`/`ClampDominance`（`energy`≡arousal 0..1）；`PlannerDecision`/`EmotionInfo`/`ChatEvent` 增加 `valence`(-1..1)/`dominance`(-1..1)；Planner 提示词要求连续输出；`parsePlannerDecision` 钳制归一化；端到端流转（`service.go` → `collectingEmitter` → `ChatReply`/`CompanionMessage` → `SendMessage` 回填，`inferValence`/`inferDominance` 兜底）；messages 表新增 `valence`/`dominance` 列并持久化。
+> - **前端 AU 合成**：新增 `frontend/src/components/emotionEngine.ts`——`computeAUWeights`（离散 emotion/mood 基线 + 连续 VAD 调制 → AU1/AU4/AU6/AU12/AU15… 权重）+ `computeExpressionTargets`（AU → 逻辑参数净目标：eyeSmile/browRaise/browForm/mouthCorner）+ `applyExpressionTargets`；`Live2DStage.tsx` 用 AU 驱动微笑/眉/嘴型，替换原 `moodBoost` 手调权重，且不触碰眨眼/唇同步/expression 层（避免参数竞争）。
+> - **参数注册表（自动适配）**：`PARAM_REGISTRY` 逻辑参数 → 候选 Live2D 参数 ID（当前模型在前、常见替代名在后），运行时按 `coreModel.getParameterIndex` 匹配第一个存在的 ID。
+> - **验证**：`go build ./...` + `go test ./internal/...`（10 包全绿）+ `tsc --noEmit`（exit 0）。前端渲染效果需本地 `npm run build` 验证。
+> ⬜ **待办（v2.1）**：语音 VAD 实时推断（音频连续情绪）；直接接入 `@soullink-emotion/live2d-pixi` 替换自研 `computeExpressionTargets`。
 
 ### 难点 2：插件系统的实现路线 —— 🔶 进行中（内核 + 前端已完成，权限/sidecar 待做）
 
@@ -192,3 +199,4 @@
 - **蓝白配色 + 桌宠透明**：配色从青绿改为**蓝白**（`--accent #2b6cb0`、`--bg #f5f8fb`、浅蓝 stage 渐变）；显式声明 `html.pet-window, body.pet-window` 背景透明，配合 `WindowSetBackgroundColour` 全透明（alpha=0），消除桌宠模式黑底。
 - **桌宠原生窗口透明修复（黑底根因）**：定位「桌宠模式整窗除 Live2D 小人外全黑」的根因——前端 CSS 已透明、`WindowSetBackgroundColour(0,0,0,0)` 也把 WebView2 `DefaultBackgroundColor.A` 置 0（内容透明），但 `main.go` 未配置 `Windows` 选项，`win32.SetBackgroundColour(hwnd, 0,0,0)` 把原生 HWND 背景刷子刷成黑色并透出透明 WebView。修复：`main.go` 增加 `Windows: &windows.Options{WebviewIsTransparent: true, WindowIsTranslucent: true, BackdropType: windows.None}`。已读 Wails v2.12.0 源码确认 `WebviewIsTransparent` 在 `WindowSetBackgroundColour` 中强制 `A=0`、`WindowIsTranslucent` 触发 DWM 透传（Win11 `DWMSBT_NONE` / Win10 毛玻璃回退）。`go build ./...` 通过（exit 0）。
 - **无边框窗口 + 情绪系统参考（soullink-emotion-sdk）**：① `main.go` 加 `Frameless: true` + `DisableFramelessWindowDecorations: true`，去掉系统边框/标题栏（桌宠模式无边框悬浮；完整模式复用前端自定义 header 拖拽区 + 最小化/关闭按钮），`App.css` 补强拖拽区（`.chat-panel .header-title`/`.status-bar` 可拖、去掉 `status-bar *` 的 no-drag）。② 研读 [soullink-emotion-sdk](https://github.com/nanlingyin/soullink-emotion-sdk)，把「连续 VAD 情绪 / FACS·AU 表情合成 / 分层动画 / 模型自动适配」四大支柱对照进难点 1 作为情绪系统 v2 演进方向（离散→连续、手调→AU 表、硬编码→注册表适配）。`go build ./...` 通过（exit 0）。
+- **情绪系统 v2 落地（连续 VAD + FACS/AU + 参数注册表）**：后端 `emotion.go` 新增 `ClampValence`/`ClampDominance`，`PlannerDecision`/`EmotionInfo`/`ChatEvent`/`CompanionMessage`/`ChatReply`/`db.Message` 全链路增加 `valence`(-1..1)/`dominance`(-1..1)（`energy`≡arousal），Planner 提示词要求连续输出、`parsePlannerDecision` 钳制、messages 表加列持久化、`inferValence`/`inferDominance` 兜底。前端新增 `frontend/src/components/emotionEngine.ts`（`computeAUWeights`：离散 emotion/mood 基线 + VAD 调制 → AU 权重；`computeExpressionTargets`：AU→逻辑参数净目标；`PARAM_REGISTRY` 参数注册表 + `applyExpressionTargets` 运行时按 `getParameterIndex` 自动适配模型命名），`Live2DStage.tsx` 用 AU 驱动微笑/眉/嘴型替换 `moodBoost` 手调权重（不触碰眨眼/唇同步/expression 层），`App.tsx`/`models.ts` 贯通 valence/dominance。`go build ./...` + `go test ./internal/...`（10 包全绿）+ `tsc --noEmit`（exit 0）通过。难点 1 收尾为已解决。

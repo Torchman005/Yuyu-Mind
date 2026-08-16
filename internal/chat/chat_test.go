@@ -72,31 +72,37 @@ func TestEmotionNormalization(t *testing.T) {
 	if ClampEnergy(1.5) != 1 || ClampEnergy(-0.5) != 0 || ClampEnergy(0.4) != 0.4 {
 		t.Fatalf("energy clamping incorrect")
 	}
+	if ClampValence(1.5) != 1 || ClampValence(-1.5) != -1 || ClampValence(0.4) != 0.4 {
+		t.Fatalf("valence clamping incorrect")
+	}
+	if ClampDominance(2) != 1 || ClampDominance(-2) != -1 || ClampDominance(-0.3) != -0.3 {
+		t.Fatalf("dominance clamping incorrect")
+	}
 }
 
 func TestPlannerDecisionEmotionInfo(t *testing.T) {
-	d := PlannerDecision{Emotion: "happy", Mood: "cheer", Energy: 0.8, Gesture: "bounce", Hand: "left"}
+	d := PlannerDecision{Emotion: "happy", Mood: "cheer", Energy: 0.8, Valence: 0.6, Dominance: 0.2, Gesture: "bounce", Hand: "left"}
 	info := d.EmotionInfo()
-	if info.Emotion != "happy" || info.Mood != "cheer" || info.Energy != 0.8 || info.Gesture != "bounce" || info.Hand != "left" {
+	if info.Emotion != "happy" || info.Mood != "cheer" || info.Energy != 0.8 || info.Valence != 0.6 || info.Dominance != 0.2 || info.Gesture != "bounce" || info.Hand != "left" {
 		t.Fatalf("EmotionInfo mismatch: %+v", info)
 	}
 }
 
 func TestParsePlannerDecision(t *testing.T) {
-	d, err := parsePlannerDecision(`{"action":"reply","emotion":"happy","mood":"cheer","energy":0.9}`)
+	d, err := parsePlannerDecision(`{"action":"reply","emotion":"happy","mood":"cheer","energy":0.9,"valence":0.8,"dominance":0.3}`)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if d.Action != "reply" || d.Emotion != "happy" || d.Mood != "cheer" || d.Energy != 0.9 {
+	if d.Action != "reply" || d.Emotion != "happy" || d.Mood != "cheer" || d.Energy != 0.9 || d.Valence != 0.8 || d.Dominance != 0.3 {
 		t.Fatalf("unexpected decision: %+v", d)
 	}
 
 	// 围栏包裹 + 非法情绪归一化。
-	d, err = parsePlannerDecision("```json\n{\"action\":\"task\",\"emotion\":\"bogus\",\"energy\":2}\n```")
+	d, err = parsePlannerDecision("```json\n{\"action\":\"task\",\"emotion\":\"bogus\",\"energy\":2,\"valence\":3,\"dominance\":-2}\n```")
 	if err != nil {
 		t.Fatalf("parse fenced: %v", err)
 	}
-	if d.Emotion != EmotionNeutral || d.Energy != 1 {
+	if d.Emotion != EmotionNeutral || d.Energy != 1 || d.Valence != 1 || d.Dominance != -1 {
 		t.Fatalf("normalization failed: %+v", d)
 	}
 

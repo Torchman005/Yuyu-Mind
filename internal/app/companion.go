@@ -21,6 +21,8 @@ type CompanionMessage struct {
 	Emotion   string  `json:"emotion"`
 	Mood      string  `json:"mood"`
 	Energy    float64 `json:"energy"`
+	Valence   float64 `json:"valence"`
+	Dominance float64 `json:"dominance"`
 	Gesture   string  `json:"gesture"`
 	Hand      string  `json:"hand"`
 	CreatedAt string  `json:"createdAt"`
@@ -33,6 +35,8 @@ type ChatReply struct {
 	Emotion       string             `json:"emotion"`
 	Mood          string             `json:"mood"`
 	Energy        float64            `json:"energy"`
+	Valence       float64            `json:"valence"`
+	Dominance     float64            `json:"dominance"`
 	Gesture       string             `json:"gesture"`
 	Hand          string             `json:"hand"`
 	AgentStatus   string             `json:"agentStatus"`
@@ -108,14 +112,16 @@ type PluginListReply struct {
 }
 
 type collectingEmitter struct {
-	mu      sync.Mutex
-	tokens  strings.Builder
-	err     string
-	emotion string
-	mood    string
-	energy  float64
-	gesture string
-	hand    string
+	mu        sync.Mutex
+	tokens    strings.Builder
+	err       string
+	emotion   string
+	mood      string
+	energy    float64
+	valence   float64
+	dominance float64
+	gesture   string
+	hand      string
 }
 
 func (e *collectingEmitter) Emit(event chat.ChatEvent) {
@@ -128,6 +134,8 @@ func (e *collectingEmitter) Emit(event chat.ChatEvent) {
 		e.emotion = event.Emotion
 		e.mood = event.Mood
 		e.energy = event.Energy
+		e.valence = event.Valence
+		e.dominance = event.Dominance
 		e.gesture = event.Gesture
 		e.hand = event.Hand
 	case chat.EventTypeError:
@@ -148,11 +156,11 @@ func (e *collectingEmitter) collectedEmotion() string {
 	return e.emotion
 }
 
-// collectedPerformance 返回 Planner 产出的完整表演参数（mood/energy/gesture/hand）。
-func (e *collectingEmitter) collectedPerformance() (string, float64, string, string) {
+// collectedPerformance 返回 Planner 产出的完整表演参数（mood/energy/valence/dominance/gesture/hand）。
+func (e *collectingEmitter) collectedPerformance() (string, float64, float64, float64, string, string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.mood, e.energy, e.gesture, e.hand
+	return e.mood, e.energy, e.valence, e.dominance, e.gesture, e.hand
 }
 
 func (a *App) GetState() (AppState, error) {
@@ -218,10 +226,12 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 	}
 	reply := latestAssistant(messages)
 	emotion := emitter.collectedEmotion()
+	mood, energy, valence, dominance, gesture, hand := emitter.collectedPerformance()
 	if emotion == "" {
 		emotion = inferEmotion(replyText)
+		valence = inferValence(emotion)
+		dominance = inferDominance(emotion)
 	}
-	mood, energy, gesture, hand := emitter.collectedPerformance()
 	if mood == "" {
 		mood = chat.MoodCalm
 	}
@@ -233,6 +243,8 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 			Emotion:   emotion,
 			Mood:      mood,
 			Energy:    energy,
+			Valence:   valence,
+			Dominance: dominance,
 			Gesture:   gesture,
 			Hand:      hand,
 			CreatedAt: time.Now().Format(time.RFC3339),
@@ -241,6 +253,8 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 		reply.Emotion = emotion
 		reply.Mood = mood
 		reply.Energy = energy
+		reply.Valence = valence
+		reply.Dominance = dominance
 		reply.Gesture = gesture
 		reply.Hand = hand
 	}
@@ -252,6 +266,8 @@ func (a *App) SendMessage(content string) (ChatReply, error) {
 		Emotion:       reply.Emotion,
 		Mood:          mood,
 		Energy:        energy,
+		Valence:       valence,
+		Dominance:     dominance,
 		Gesture:       gesture,
 		Hand:          hand,
 		AgentStatus:   statusFromError(providerErr),
@@ -386,8 +402,12 @@ func (a *App) companionMessages() ([]CompanionMessage, error) {
 	messages := make([]CompanionMessage, 0, len(rows))
 	for _, row := range rows {
 		emotion := row.Emotion
+		valence := row.Valence
+		dominance := row.Dominance
 		if emotion == "" {
 			emotion = inferEmotion(row.Content)
+			valence = inferValence(emotion)
+			dominance = inferDominance(emotion)
 		}
 		messages = append(messages, CompanionMessage{
 			ID:        row.ID,
@@ -396,6 +416,8 @@ func (a *App) companionMessages() ([]CompanionMessage, error) {
 			Emotion:   emotion,
 			Mood:      row.Mood,
 			Energy:    row.Energy,
+			Valence:   valence,
+			Dominance: dominance,
 			Gesture:   row.Gesture,
 			Hand:      row.Hand,
 			CreatedAt: row.CreatedAt.Format(time.RFC3339),
@@ -456,6 +478,40 @@ func inferEmotion(text string) string {
 		return "sad"
 	default:
 		return "neutral"
+	}
+}
+
+// inferValence 由离散表情推断效价（-1..1），作为 LLM 未产出连续情绪时的回退。
+func inferValence(emotion string) float64 {
+	switch emotion {
+	case chat.EmotionHappy:
+		return 0.7
+	case chat.EmotionSurprised:
+		return 0.3
+	case chat.EmotionFocused:
+		return 0.2
+	case chat.EmotionSad:
+		return -0.6
+	case chat.EmotionThinking:
+		return 0
+	default:
+		return 0
+	}
+}
+
+// inferDominance 由离散表情推断支配度（-1..1），作为 LLM 未产出连续情绪时的回退。
+func inferDominance(emotion string) float64 {
+	switch emotion {
+	case chat.EmotionFocused:
+		return 0.4
+	case chat.EmotionHappy:
+		return 0.2
+	case chat.EmotionSurprised:
+		return -0.1
+	case chat.EmotionSad:
+		return -0.4
+	default:
+		return 0
 	}
 }
 

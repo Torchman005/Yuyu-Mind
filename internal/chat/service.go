@@ -188,12 +188,14 @@ func (s *Service) StreamChat(ctx context.Context, req ChatRequest, emitter Emitt
 
 	if emitter != nil {
 		emitter.Emit(ChatEvent{
-			Type:    EventTypeEmotion,
-			Emotion: decision.Emotion,
-			Mood:    decision.Mood,
-			Energy:  decision.Energy,
-			Gesture: decision.Gesture,
-			Hand:    decision.Hand,
+			Type:      EventTypeEmotion,
+			Emotion:   decision.Emotion,
+			Mood:      decision.Mood,
+			Energy:    decision.Energy,
+			Valence:   decision.Valence,
+			Dominance: decision.Dominance,
+			Gesture:   decision.Gesture,
+			Hand:      decision.Hand,
 		})
 	}
 

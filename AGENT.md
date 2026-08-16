@@ -102,6 +102,16 @@
 - [x] 前端 `App.tsx` 用 LLM 表演参数（mood/energy/hand）覆盖启发式 `inferAvatarPerformance`，并回退兜底（代码已写，需本地 `npm run build` 验证）。
 - [x] 情绪持久化到 messages 表（`emotion/mood/energy/gesture/hand` 列 + 迁移 + `MessageRepo` 读写 + `SendGuidedReply` 回填 + `companionMessages` 读取回退启发式 + 单测）。
 
+### 情绪系统 v2（连续 VAD + FACS/AU，参考 soullink-emotion-sdk）
+
+- [x] 后端连续 VAD：`emotion.go` 新增 `ClampValence`/`ClampDominance`（valence -1..1、dominance -1..1，`energy`≡arousal 0..1）；`PlannerDecision`/`EmotionInfo`/`ChatEvent` 增加 `valence`/`dominance`；Planner 提示词要求输出连续情绪；`parsePlannerDecision` 归一化钳制。
+- [x] VAD 端到端流转：`service.go` 事件 → `collectingEmitter` → `ChatReply`/`CompanionMessage`（新增 valence/dominance）→ `SendMessage` 回填（`inferValence`/`inferDominance` 启发式兜底）。
+- [x] VAD 持久化：messages 表新增 `valence`/`dominance` 列（`ensureSchemaExtensions` 幂等）+ `MessageRepo` 读写 + 单测。
+- [x] 前端 FACS/AU 合成引擎：新增 `frontend/src/components/emotionEngine.ts`——`computeAUWeights`（离散 emotion/mood + 连续 VAD → AU1/AU4/AU6/AU12/AU15… 权重）+ `computeExpressionTargets`（AU→逻辑参数净目标）+ `PARAM_REGISTRY` 参数注册表（逻辑参数→候选 Live2D 参数 ID，运行时 `getParameterIndex` 自动适配模型命名）。
+- [x] `Live2DStage.tsx` 用 `computeExpressionTargets`/`applyExpressionTargets` 替换手调 `moodBoost`（微笑/眉/嘴型改由 AU 驱动，眨眼/唇同步/expression 层不受影响）；`AvatarPerformance` 增加 valence/dominance。
+- [x] 前端 `App.tsx` 贯通 valence/dominance（`PerformanceHint`/`applyResponsePerformance`/`avatarPerformance` 合并 + `inferAvatarPerformance` 文本启发式兜底）；`models.ts` 同步补字段。
+- [x] 验证：`go build ./...` + `go test ./internal/...`（10 包全绿）+ `tsc --noEmit`（exit 0）。前端渲染效果需本地 `npm run build` 验证。
+
 ### 插件系统（M2 内核）
 
 - [x] 插件接口与契约（`internal/plugin/plugin.go`：`Plugin`/`Manifest`/`Action`/`Host`）。
@@ -159,5 +169,6 @@
 - [ ] 剪贴板工具（可选，`execute_command` 经 PowerShell 可替代）。
 - [ ] JS 脚本插件（可选阶段 3，goja）。
 - [ ] 拆分 `App.tsx`（前端 2500+ 行，可维护性优化）。
-- [ ] 情绪系统 v2（参考 [soullink-emotion-sdk](https://github.com/nanlingyin/soullink-emotion-sdk)）：连续 VAD（valence/arousal）替代离散 emotion、AU 表驱动表情合成、Live2D 参数注册表自动适配模型。
+- [x] 情绪系统 v2（参考 [soullink-emotion-sdk](https://github.com/nanlingyin/soullink-emotion-sdk)）：连续 VAD（valence/dominance，energy≡arousal）+ FACS/AU 表驱动表情合成 + Live2D 参数注册表自动适配（已落地，见 Done）。
+- [ ] 情绪系统 v2.1（可选）：语音 VAD 实时推断（音频连续情绪，而非仅文本/LLM）；直接接入 `@soullink-emotion/live2d-pixi` SDK 替换自研合成层。
 - [ ] 本地端到端验证（`wails dev`）：Planner 稳定性、Live2D 情绪、任务执行、审批流、无边框拖拽。

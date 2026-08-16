@@ -168,6 +168,8 @@ func ensureSchemaExtensions(db *sql.DB) error {
 		{"messages", "emotion", "ALTER TABLE messages ADD COLUMN emotion TEXT"},
 		{"messages", "mood", "ALTER TABLE messages ADD COLUMN mood TEXT"},
 		{"messages", "energy", "ALTER TABLE messages ADD COLUMN energy REAL"},
+		{"messages", "valence", "ALTER TABLE messages ADD COLUMN valence REAL"},
+		{"messages", "dominance", "ALTER TABLE messages ADD COLUMN dominance REAL"},
 		{"messages", "gesture", "ALTER TABLE messages ADD COLUMN gesture TEXT"},
 		{"messages", "hand", "ALTER TABLE messages ADD COLUMN hand TEXT"},
 	}

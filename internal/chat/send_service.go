@@ -62,6 +62,8 @@ func (s *SendService) SendGuidedReply(
 			Emotion:        emotion.Emotion,
 			Mood:           emotion.Mood,
 			Energy:         emotion.Energy,
+			Valence:        emotion.Valence,
+			Dominance:      emotion.Dominance,
 			Gesture:        emotion.Gesture,
 			Hand:           emotion.Hand,
 			CreatedAt:      now,

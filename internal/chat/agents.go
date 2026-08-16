@@ -25,11 +25,13 @@ type PlannerDecision struct {
 
 	// 情绪 Schema（见 emotion.go）。由 Planner 在决策阶段一次性产出，
 	// 早于流式 TTS 播放，前端据此驱动 Live2D 表情与表演。
-	Emotion string  `json:"emotion,omitempty"`
-	Mood    string  `json:"mood,omitempty"`
-	Energy  float64 `json:"energy,omitempty"`
-	Gesture string  `json:"gesture,omitempty"`
-	Hand    string  `json:"hand,omitempty"`
+	Emotion   string  `json:"emotion,omitempty"`
+	Mood      string  `json:"mood,omitempty"`
+	Energy    float64 `json:"energy,omitempty"`    // ≈ arousal（唤醒），0..1
+	Valence   float64 `json:"valence,omitempty"`   // 效价，-1..1（消极↔积极）
+	Dominance float64 `json:"dominance,omitempty"` // 支配度，-1..1（顺从↔自信）
+	Gesture   string  `json:"gesture,omitempty"`
+	Hand      string  `json:"hand,omitempty"`
 }
 
 type PlannerToolCall struct {
@@ -49,21 +51,25 @@ type TaskPlan struct {
 
 // EmotionInfo 是情绪表演参数的结构化载体（取值见 emotion.go）。
 type EmotionInfo struct {
-	Emotion string
-	Mood    string
-	Energy  float64
-	Gesture string
-	Hand    string
+	Emotion   string
+	Mood      string
+	Energy    float64
+	Valence   float64
+	Dominance float64
+	Gesture   string
+	Hand      string
 }
 
 // EmotionInfo 从 Planner 决策中提取情绪表演参数。
 func (d PlannerDecision) EmotionInfo() EmotionInfo {
 	return EmotionInfo{
-		Emotion: d.Emotion,
-		Mood:    d.Mood,
-		Energy:  d.Energy,
-		Gesture: d.Gesture,
-		Hand:    d.Hand,
+		Emotion:   d.Emotion,
+		Mood:      d.Mood,
+		Energy:    d.Energy,
+		Valence:   d.Valence,
+		Dominance: d.Dominance,
+		Gesture:   d.Gesture,
+		Hand:      d.Hand,
 	}
 }
 
@@ -107,7 +113,9 @@ Rules:
 Emotion output (always include these fields):
 - "emotion": one of neutral|happy|focused|thinking|sad|surprised. This drives the avatar facial expression.
 - "mood": one of calm|cheer|curious|confident|comfort|surprised|playful. Broader emotional tone.
-- "energy": a number from 0.0 to 1.0. How lively the delivery should be.
+- "energy": a number from 0.0 to 1.0. Arousal — how lively/activated the delivery should be.
+- "valence": a number from -1.0 (very negative) to 1.0 (very positive). The continuous positivity of the feeling.
+- "dominance": a number from -1.0 (submissive/shy) to 1.0 (dominant/confident). How much control the speaker feels.
 - "gesture": one of none|bounce|tilt|lean|playfulSway|surprisePop|comfortNod.
 - "hand": one of none|left|right|both.
 Choose values that match the reply you are about to ask the Replyer to write, not just the raw user text.`),
@@ -169,6 +177,8 @@ func parsePlannerDecision(content string) (PlannerDecision, error) {
 	decision.Gesture = NormalizeGesture(decision.Gesture)
 	decision.Hand = NormalizeHand(decision.Hand)
 	decision.Energy = ClampEnergy(decision.Energy)
+	decision.Valence = ClampValence(decision.Valence)
+	decision.Dominance = ClampDominance(decision.Dominance)
 	return decision, nil
 }
 

@@ -1,4 +1,5 @@
 import {useEffect, useRef, useState} from 'react';
+import {applyExpressionTargets, computeExpressionTargets} from './emotionEngine';
 
 type Live2DStageProps = {
     emotion: string;
@@ -12,6 +13,8 @@ export type AvatarPerformance = {
     key: string;
     mood: 'calm' | 'cheer' | 'curious' | 'confident' | 'comfort' | 'surprised' | 'playful';
     energy: number;
+    valence: number;
+    dominance: number;
     lean: number;
     headTilt: number;
     eyeSmile: number;
@@ -261,6 +264,8 @@ const defaultPerformance: AvatarPerformance = {
     key: 'idle',
     mood: 'calm',
     energy: 0.25,
+    valence: 0,
+    dominance: 0,
     lean: 0,
     headTilt: 0,
     eyeSmile: 0,
@@ -272,22 +277,10 @@ const defaultPerformance: AvatarPerformance = {
 };
 
 function performanceTargets(performance: AvatarPerformance, emotion: string) {
-    const energy = Math.min(1, Math.max(0, performance.energy));
-    const moodBoost = {
-        calm: {smile: 0.08, brow: 0, mouth: 0.02},
-        cheer: {smile: 0.48, brow: 0.14, mouth: 0.18},
-        curious: {smile: 0.16, brow: 0.28, mouth: 0.05},
-        confident: {smile: 0.28, brow: 0.05, mouth: 0.1},
-        comfort: {smile: 0.24, brow: -0.08, mouth: 0.04},
-        surprised: {smile: 0.02, brow: 0.42, mouth: 0.16},
-        playful: {smile: 0.4, brow: 0.18, mouth: 0.2},
-    }[performance.mood] ?? {smile: 0, brow: 0, mouth: 0};
-
+    // 眼睛/眉毛/嘴型的连续目标已交给 emotionEngine 的 FACS/AU 合成（computeExpressionTargets），
+    // 这里只保留非 AU 的表演参数（能量/倾斜/头倾/特效/手势）。
     return {
-        energy,
-        eyeSmile: Math.max(performance.eyeSmile, moodBoost.smile),
-        browY: moodBoost.brow + (emotion === 'sad' ? -0.2 : 0),
-        mouthForm: moodBoost.mouth,
+        energy: Math.min(1, Math.max(0, performance.energy)),
         lean: performance.lean,
         headTilt: performance.headTilt,
         sparkle: performance.sparkle,
@@ -483,12 +476,18 @@ function applyPerformancePresence(
     const speechPulse = isSpeaking ? Math.max(0, Math.sin(elapsedMs / 240)) * target.energy : 0;
     const idlePulse = Math.sin(elapsedMs / 1550) * 0.5 + 0.5;
 
-    setPairedParameter(model, 'ParamEyeSmileL', 'ParamEyeSmileR', target.eyeSmile + speechPulse * 0.18, 0.22);
-    setPairedParameter(model, 'ParamBrowYL', 'ParamBrowYR', target.browY + gesture.brow + speechPulse * 0.12, 0.2);
-    setPairedParameter(model, 'ParamBrowAngleL', 'ParamBrowAngleR', target.headTilt * 0.18, 0.18);
-    setPairedParameter(model, 'ParamBrowFormL', 'ParamBrowFormR', target.browY * 0.45, 0.18);
+    // FACS/AU 合成（情绪系统 v2）：连续 VAD + 离散 emotion/mood → 逻辑参数目标，
+    // 经参数注册表写入模型（自动适配参数命名）。
+    const expression = computeExpressionTargets(
+        {valence: performance.valence, arousal: target.energy, dominance: performance.dominance},
+        emotion,
+        performance.mood,
+    );
+    expression.eyeSmile = Math.max(expression.eyeSmile, performance.eyeSmile) + speechPulse * 0.18;
+    expression.browRaise += gesture.brow + speechPulse * 0.12;
+    applyExpressionTargets(model, expression);
 
-    setModelParameter(model, 'ParamMouthForm', target.mouthForm + target.eyeSmile * 0.18, 0.16);
+    setPairedParameter(model, 'ParamBrowAngleL', 'ParamBrowAngleR', target.headTilt * 0.18, 0.18);
     setModelParameter(model, 'ParamMouthShrug', performance.mood === 'playful' ? 0.3 + idlePulse * 0.18 : 0, 0.12);
     setModelParameter(model, 'ParamMouthpucker', performance.mood === 'curious' ? 0.16 + speechPulse * 0.1 : 0, 0.12);
 

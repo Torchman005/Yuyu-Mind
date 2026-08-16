@@ -73,6 +73,8 @@ type ASRReply = {
 type PerformanceHint = {
     mood?: AvatarPerformance['mood'];
     energy?: number;
+    valence?: number;
+    dominance?: number;
     gesture?: string;
     hand?: AvatarPerformance['hand'];
 };
@@ -356,10 +358,26 @@ function inferAvatarPerformance(text: string, emotion: string, isSpeaking: boole
     );
     const tiltSeed = ((line.length % 7) - 3) / 3;
 
+    // 连续 VAD 回退（LLM 未产出时用文本/表情启发式推断）。
+    const valence = emotion === 'sad' || hasSad ? -0.5
+        : emotion === 'happy' || hasExcitement ? 0.7
+        : mood === 'cheer' ? 0.6
+        : mood === 'playful' ? 0.5
+        : mood === 'comfort' ? 0.25
+        : mood === 'confident' ? 0.3
+        : mood === 'surprised' ? 0.2
+        : 0.05;
+    const dominance = mood === 'confident' || hasTechnical ? 0.4
+        : emotion === 'sad' || hasSad ? -0.3
+        : emotion === 'surprised' || hasSurprise ? -0.1
+        : 0;
+
     return {
         key: `${line.slice(0, 18)}:${line.length}:${emotion}`,
         mood,
         energy,
+        valence,
+        dominance,
         lean: hasTechnical ? 0.32 : hasComfort ? -0.12 : hasPlayful ? 0.22 : 0,
         headTilt: mood === 'curious' ? 0.42 : mood === 'playful' ? tiltSeed * 0.34 : mood === 'surprised' ? -0.18 : tiltSeed * 0.12,
         eyeSmile: mood === 'cheer' || mood === 'playful' ? 0.55 : mood === 'comfort' ? 0.25 : 0.08,
@@ -444,6 +462,8 @@ function App() {
             key: `${base.key}:llm`,
             mood: performanceHint.mood ?? base.mood,
             energy: typeof performanceHint.energy === 'number' ? clamp(performanceHint.energy, 0, 1) : base.energy,
+            valence: typeof performanceHint.valence === 'number' ? clamp(performanceHint.valence, -1, 1) : base.valence,
+            dominance: typeof performanceHint.dominance === 'number' ? clamp(performanceHint.dominance, -1, 1) : base.dominance,
             hand: performanceHint.hand ?? base.hand,
         };
     }, [assistantLine, emotion, voiceStatus, performanceHint]);
@@ -1727,6 +1747,8 @@ function App() {
         setPerformanceHint({
             mood: mood as AvatarPerformance['mood'],
             energy: Number(response.energy ?? response.reply?.energy ?? 0),
+            valence: Number(response.valence ?? response.reply?.valence ?? 0),
+            dominance: Number(response.dominance ?? response.reply?.dominance ?? 0),
             gesture: String(response.gesture || response.reply?.gesture || ''),
             hand: (response.hand || response.reply?.hand || 'none') as AvatarPerformance['hand'],
         });

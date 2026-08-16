@@ -62,6 +62,8 @@ export namespace app {
 	    emotion: string;
 	    mood: string;
 	    energy: number;
+	    valence: number;
+	    dominance: number;
 	    gesture: string;
 	    hand: string;
 	    createdAt: string;
@@ -78,6 +80,8 @@ export namespace app {
 	        this.emotion = source["emotion"];
 	        this.mood = source["mood"];
 	        this.energy = source["energy"];
+	        this.valence = source["valence"];
+	        this.dominance = source["dominance"];
 	        this.gesture = source["gesture"];
 	        this.hand = source["hand"];
 	        this.createdAt = source["createdAt"];
@@ -128,6 +132,8 @@ export namespace app {
 	    emotion: string;
 	    mood: string;
 	    energy: number;
+	    valence: number;
+	    dominance: number;
 	    gesture: string;
 	    hand: string;
 	    agentStatus: string;
@@ -146,6 +152,8 @@ export namespace app {
 	        this.emotion = source["emotion"];
 	        this.mood = source["mood"];
 	        this.energy = source["energy"];
+	        this.valence = source["valence"];
+	        this.dominance = source["dominance"];
 	        this.gesture = source["gesture"];
 	        this.hand = source["hand"];
 	        this.agentStatus = source["agentStatus"];
@@ -643,6 +651,8 @@ export namespace db {
 	    emotion?: string;
 	    mood?: string;
 	    energy?: number;
+	    valence?: number;
+	    dominance?: number;
 	    gesture?: string;
 	    hand?: string;
 	    // Go type: time
@@ -664,6 +674,8 @@ export namespace db {
 	        this.emotion = source["emotion"];
 	        this.mood = source["mood"];
 	        this.energy = source["energy"];
+	        this.valence = source["valence"];
+	        this.dominance = source["dominance"];
 	        this.gesture = source["gesture"];
 	        this.hand = source["hand"];
 	        this.created_at = this.convertValues(source["created_at"], null);

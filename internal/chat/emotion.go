@@ -94,7 +94,7 @@ func NormalizeHand(raw string) string {
 	return HandNone
 }
 
-// ClampEnergy 将能量值限制到 [0,1]，非法值回退 0。
+// ClampEnergy 将能量值（≈唤醒 arousal）限制到 [0,1]，非法值回退 0。
 func ClampEnergy(energy float64) float64 {
 	if energy < 0 {
 		return 0
@@ -103,4 +103,27 @@ func ClampEnergy(energy float64) float64 {
 		return 1
 	}
 	return energy
+}
+
+// ClampValence 将效价（valence，消极↔积极）限制到 [-1,1]，非法值回退 0（中性）。
+// 与 arousal/dominance 共同构成连续的 VAD 情绪空间（参考 soullink-emotion-sdk）。
+func ClampValence(valence float64) float64 {
+	if valence < -1 {
+		return -1
+	}
+	if valence > 1 {
+		return 1
+	}
+	return valence
+}
+
+// ClampDominance 将支配度（dominance，顺从↔自信）限制到 [-1,1]，非法值回退 0（中性）。
+func ClampDominance(dominance float64) float64 {
+	if dominance < -1 {
+		return -1
+	}
+	if dominance > 1 {
+		return 1
+	}
+	return dominance
 }

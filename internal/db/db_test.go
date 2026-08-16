@@ -58,6 +58,8 @@ func TestMessageEmotionRoundTrip(t *testing.T) {
 		Emotion:        "happy",
 		Mood:           "cheer",
 		Energy:         0.8,
+		Valence:        0.7,
+		Dominance:      0.2,
 		Gesture:        "bounce",
 		Hand:           "left",
 		CreatedAt:      now,
@@ -74,7 +76,7 @@ func TestMessageEmotionRoundTrip(t *testing.T) {
 		t.Fatalf("expected 1 message, got %d", len(rows))
 	}
 	got := rows[0]
-	if got.Emotion != "happy" || got.Mood != "cheer" || got.Energy != 0.8 || got.Gesture != "bounce" || got.Hand != "left" {
+	if got.Emotion != "happy" || got.Mood != "cheer" || got.Energy != 0.8 || got.Valence != 0.7 || got.Dominance != 0.2 || got.Gesture != "bounce" || got.Hand != "left" {
 		t.Fatalf("emotion round-trip mismatch: %+v", got)
 	}
 }
