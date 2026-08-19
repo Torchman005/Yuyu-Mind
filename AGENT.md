@@ -31,7 +31,8 @@
 8. **前后端事件通道已有基础**：聊天用 `chat:event`（Wails EventsEmit），TTS 流用 `mochi:speech:*` 事件；但异步任务的事件/审批尚未推到前端 UI。
 9. **安全边界已有清晰设计**：审批流（`waiting_for_approval` / approve / reject）、任务上下文快照、Worker 不读长期记忆。这是接入「操控电脑」等高风险能力时必须坚守的骨架。
 10. **构建环境限制**：本机 Go 的 `GOPATH/GOMODCACHE/GOCACHE` 默认在工作区之外，沙箱下不可写。构建/测试需把 `GOMODCACHE`/`GOCACHE`/`GOTMPDIR` 重定向到工作区内（见 Rules）。
-11. **情绪/表情系统升级方向参考 [soullink-emotion-sdk](https://github.com/nanlingyin/soullink-emotion-sdk)**：其四大支柱是 `Continuous VAD emotion`（连续效价/唤醒/支配，而非离散关键词）、`FACS/AU synthesis`（动作单元 AU1/AU4/AU6/AU12… 合成表情映射到 Live2D 参数）、`Layered animation`（idle + 情绪 + 手势分层混合）、`Automatic model adaptation`（参数注册表自动适配任意模型）。当前实现已有「layered 雏形」（idle + emotion overlay + gesture + lip sync）与「离散 mood→参数映射雏形」，差距在：情绪是离散字符串 + 单一 `energy`（缺 valence/arousal）、参数名硬编码当前模型（缺自动适配）、来源是关键词/LLM 离散输出（非连续 VAD）。情绪系统 v2 应按此演进，详见 `docs/DEVELOPMENT-NOTES.md` 难点 1。
+11. **情绪/表情系统升级方向参考 [soullink-emotion-sdk](https://github.com/nanlingyin/soullink-emotion-sdk)**：其四大支柱是 `Continuous VAD emotion`（连续效价/唤醒/支配，而非离散关键词）、`FACS/AU synthesis`（动作单元 AU1/AU4/AU6/AU12… 合成表情映射到 Live2D 参数）、`Layered animation`（idle + 情绪 + 手势分层混合）、`Automatic model adaptation`（参数注册表自动适配任意模型）。当前实现已有「layered 雏形」（idle + emotion overlay + gesture + lip sync）与「离散 mood→参数映射雏形」，差距在：情绪是离散字符串 + 单一 `energy`（缺 valence/arousal）、参数名硬编码当前模型（缺自动适配）、来源是关键词/LLM 离散输出（非连续 VAD）。情绪系统 v2 已落地（见 Done）。
+12. **回复「快+自然」参考 [Shinsekai](https://github.com/RachelForster/Shinsekai)**：其核心是 `LLM 流式 + 逐句分片 TTS 并行 + 本地 GPT-SoVITS + 情绪即时驱动立绘`。我们两大差距——① 两段式 Planner→Replyer 多一整轮 LLM（可见文本迟迟才产出）；② TTS 全文缓冲 + 云 TTS。后端已改流式 Replyer（逐句 emit），但**前端仍在用 `SendMessage` 收集式调用**，需切到 `StreamChat` + `chat:event` 订阅 + 逐句合成播放才能真正见效。详见 `docs/DEVELOPMENT-NOTES.md` 难点 11。
 
 ## Rules（开发规则与约束）
 
@@ -118,6 +119,12 @@
 - [x] 模型 ASR（Whisper 兼容）后端落地：新增 `internal/ai/asr` 包（`Transcribe` 调 OpenAI 兼容 `/audio/transcriptions` multipart 上传 + `parseTranscriptionResponse`/`extFromContentType` 纯函数 + `asr_test.go`）；`config` 新增 `ASR.Model`；`companion.go` `TranscribeAudio` 从占位改为真实转录（复用激活 Provider 的 BaseURL/APIKey + `asr.model`）。
 - [x] 前端模型 ASR 已接线（`startModelASRVoiceInput` 录音 → base64 → `TranscribeAudio`），无需改动；`VITE_ASR_PROVIDER` 默认 `browser`，设 `model` 走模型识别。
 - [x] 验证：`go build ./...` + `go test ./internal/...`（12 包全绿）。网络路径需用户本地验证。
+
+### 回复延迟优化（流式 Replyer，参考 Shinsekai）
+
+- [x] 后端流式回复：`ReplyerAgent` 抽出 `buildMessages` + 新增 `Stream`（Eino `model.Stream`）；新增 `stream_reply.go`（`streamingSentencer` 增量按标点/超长切句 + `Service.streamReply` 边生成边 `EventTypeToken` emit + 持久化）；`service.go` 回复段改用 `streamReply`。
+- [x] 验证：`go build ./...` + `go test ./internal/...`（12 包全绿，含 `stream_reply_test.go` 逐句切分/超长切分/空输入）。
+- [ ] 前端逐句 TTS（待做）：`sendContent` 从 `SendMessage`（收集全文）切到 `StreamChat` + `EventsOn("chat:event")`，收到一句 `EventTypeToken` 就合成+播放一句，与 LLM 生成重叠；`EventTypeEmotion` 即时驱动表情。
 
 ### 插件系统（M2 内核）
 

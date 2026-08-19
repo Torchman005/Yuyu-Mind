@@ -161,6 +161,33 @@
 
 **解决办法**：`BuildTaskContext` 只投影「稳定偏好/项目约定/长期指令 + 按 query 检索的事实/事件」，并保存 `task_context_snapshots` 快照审计（已实现，见 `internal/memory/long_term.go`）。
 
+### 难点 11：回复「快 + 自然」的延迟优化（参考 [Shinsekai](https://github.com/RachelForster/Shinsekai)）—— 🔶 进行中（后端已流式，前端逐句 TTS 待接）
+
+**难点**：桌宠回复「慢、机械」。用户对比 Shinsekai（AI RPG maker，支持 GPT-SoVITS、自动切立绘/背景/BGM）后，希望回复又快又自然。
+
+**根因分析（Shinsekai 为何快+自然）**：
+
+| 机制 | 作用 |
+| --- | --- |
+| **LLM 流式输出** | 不等全文，首 token（~0.3~1s）即出字，感知延迟从「全文几秒」降到「首字几百毫秒」 |
+| **逐句分片 TTS** | 流式文本按标点切句，**第一句一结束立刻合成+播放，同时 LLM 继续吐后面的字**——LLM/TTS 形成流水线，总延迟 ≈ max(首句生成, 首句合成) 而非串行相加 |
+| **本地 TTS（GPT-SoVITS/VITS）** | 本地 GPU 推理，无云 TTS 的 HTTP 往返+排队；音色克隆自然稳定 |
+| **情绪即时驱动立绘/表情** | 情绪从首句/轻量分类即时得出，立刻切表情，不滞后 |
+| **可打断（barge-in）** | 能抢话，更像真人 |
+
+**我们（Yuyu-Mind）的两大差距**：
+
+1. **两段式 Planner→Replyer 多一整轮 LLM**：为结构化决策+情绪，先 Planner 完整走一轮（等 JSON 全文），再 Replyer 走一轮（等可见全文），**可见文本才开始产出**。比单阶段流式多一个完整 LLM 往返，且丢掉「首 token 即出字」。
+2. **TTS 全文缓冲 + 云 TTS**：Fish Audio 云 TTS 有网络往返；`SynthesizeSpeechStream`/`StartRealtimeSpeech` 目前是 stub，逐句并行播放没跑通。
+
+**解决办法（分两步）**：
+
+1. **后端流式 Replyer**（已落地）：`ReplyerAgent.Stream` 走 Eino `model.Stream`，`streamingSentencer` 增量按标点/超长切句，`Service.streamReply` 边生成边 `EventTypeToken` emit + 持久化。这样 `App.StreamChat`（Wails `chat:event` 实时推送）能真正逐句流式返回。
+2. **前端逐句 TTS + 切到流式通道**（待做）：前端从 `SendMessage`（收集全文）切到 `StreamChat` + `EventsOn("chat:event")`，收到一句 `EventTypeToken` 就合成+播放一句（与 LLM 生成重叠）；`EventTypeEmotion` 即时驱动表情。可选接本地 GPT-SoVITS / 流式 TTS 去掉云往返。
+
+> ✅ **已落地（后端流式）**：`agents.go` 抽出 `ReplyerAgent.buildMessages` + 新增 `Stream`；新增 `stream_reply.go`（`streamingSentencer` 增量切句 + `Service.streamReply` 边流边 emit/持久化）；`service.go` 回复段改用 `streamReply`；`stream_reply_test.go` 验证逐句切分/超长强制切分/空输入。`go build ./...` + `go test ./internal/...`（12 包全绿）。注意：前端仍在用 `SendMessage`（收集式），需切到 `StreamChat` 才能获得可见加速。
+> ⬜ **待办**：前端逐句 TTS（切 `StreamChat` + `chat:event` 订阅 + 逐句合成播放）；接通流式 TTS（`SynthesizeSpeechStream` 从 stub 落地）；可选接 GPT-SoVITS 本地 TTS。
+
 ---
 
 ## 三、迭代记录
@@ -201,3 +228,4 @@
 - **无边框窗口 + 情绪系统参考（soullink-emotion-sdk）**：① `main.go` 加 `Frameless: true` + `DisableFramelessWindowDecorations: true`，去掉系统边框/标题栏（桌宠模式无边框悬浮；完整模式复用前端自定义 header 拖拽区 + 最小化/关闭按钮），`App.css` 补强拖拽区（`.chat-panel .header-title`/`.status-bar` 可拖、去掉 `status-bar *` 的 no-drag）。② 研读 [soullink-emotion-sdk](https://github.com/nanlingyin/soullink-emotion-sdk)，把「连续 VAD 情绪 / FACS·AU 表情合成 / 分层动画 / 模型自动适配」四大支柱对照进难点 1 作为情绪系统 v2 演进方向（离散→连续、手调→AU 表、硬编码→注册表适配）。`go build ./...` 通过（exit 0）。
 - **情绪系统 v2 落地（连续 VAD + FACS/AU + 参数注册表）**：后端 `emotion.go` 新增 `ClampValence`/`ClampDominance`，`PlannerDecision`/`EmotionInfo`/`ChatEvent`/`CompanionMessage`/`ChatReply`/`db.Message` 全链路增加 `valence`(-1..1)/`dominance`(-1..1)（`energy`≡arousal），Planner 提示词要求连续输出、`parsePlannerDecision` 钳制、messages 表加列持久化、`inferValence`/`inferDominance` 兜底。前端新增 `frontend/src/components/emotionEngine.ts`（`computeAUWeights`：离散 emotion/mood 基线 + VAD 调制 → AU 权重；`computeExpressionTargets`：AU→逻辑参数净目标；`PARAM_REGISTRY` 参数注册表 + `applyExpressionTargets` 运行时按 `getParameterIndex` 自动适配模型命名），`Live2DStage.tsx` 用 AU 驱动微笑/眉/嘴型替换 `moodBoost` 手调权重（不触碰眨眼/唇同步/expression 层），`App.tsx`/`models.ts` 贯通 valence/dominance。`go build ./...` + `go test ./internal/...`（10 包全绿）+ `tsc --noEmit`（exit 0）通过。难点 1 收尾为已解决。
 - **模型 ASR 接入（Whisper 兼容）**：排查确认「浏览器 ASR（Web Speech）已接通，但后端 `TranscribeAudio` 是占位（返回 not configured）」。新增 `internal/ai/asr` 包——`Transcribe`（multipart/form-data 调 OpenAI 兼容 `/audio/transcriptions`，file+model+language+response_format=json）、`buildTranscriptionRequest`、`parseTranscriptionResponse`（`text` 字段）、`extFromContentType`（webm/m4a/mp3/wav/ogg 推导扩展名）；`config` 新增 `ASR.Model`（为空=未启用）；`companion.go` `TranscribeAudio` 从占位改为真实转录（解码 base64 → 复用激活 Provider BaseURL/APIKey + `asr.model`）。前端 `startModelASRVoiceInput` 已接线无需改动（`VITE_ASR_PROVIDER` 默认 `browser`，设 `model` 走模型识别）。`asr_test.go` 覆盖解析/扩展名/请求构造；`go build ./...` + `go test ./internal/...`（12 包全绿）。网络路径需用户本地验证。
+- **回复延迟优化（后端流式 Replyer，参考 Shinsekai）**：分析 [Shinsekai](https://github.com/RachelForster/Shinsekai) 快+自然的根因（LLM 流式 + 逐句 TTS 并行 + 本地 GPT-SoVITS + 情绪即时驱动），定位我们两大差距——① 两段式 Planner→Replyer 多一整轮 LLM；② TTS 全文缓冲 + 云 TTS。落地后端流式：`ReplyerAgent.buildMessages` 抽出 + 新增 `Stream`（Eino `model.Stream`）；新增 `stream_reply.go`（`streamingSentencer` 增量按标点/超长切句 + `Service.streamReply` 边生成边 `EventTypeToken` emit + 持久化）；`service.go` 回复段改用 `streamReply`。`stream_reply_test.go` 验证逐句切分/超长强制切分/空输入。`go build ./...` + `go test ./internal/...`（12 包全绿）。剩余：前端从 `SendMessage` 切到 `StreamChat` + 逐句 TTS（难点 11 待办）。

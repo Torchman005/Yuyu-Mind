@@ -198,7 +198,31 @@ func (a *ReplyerAgent) Reply(
 	memories []string,
 	toolResults []ToolResult,
 ) (string, error) {
-	messages := []*schema.Message{
+	result, err := a.model.Generate(ctx, a.buildMessages(snapshot, decision, memories, toolResults))
+	if err != nil {
+		return "", fmt.Errorf("replyer generate: %w", err)
+	}
+	return strings.TrimSpace(result.Content), nil
+}
+
+// Stream 流式生成回复，返回消息流 reader（调用方负责 Close 并逐 chunk 读取）。
+func (a *ReplyerAgent) Stream(
+	ctx context.Context,
+	snapshot TurnSnapshot,
+	decision PlannerDecision,
+	memories []string,
+	toolResults []ToolResult,
+) (*schema.StreamReader[*schema.Message], error) {
+	return a.model.Stream(ctx, a.buildMessages(snapshot, decision, memories, toolResults))
+}
+
+func (a *ReplyerAgent) buildMessages(
+	snapshot TurnSnapshot,
+	decision PlannerDecision,
+	memories []string,
+	toolResults []ToolResult,
+) []*schema.Message {
+	return []*schema.Message{
 		{
 			Role: schema.System,
 			Content: fmt.Sprintf(`You are %s, a private voice chat companion.
@@ -229,12 +253,6 @@ Style notes:
 			),
 		},
 	}
-
-	result, err := a.model.Generate(ctx, messages)
-	if err != nil {
-		return "", fmt.Errorf("replyer generate: %w", err)
-	}
-	return strings.TrimSpace(result.Content), nil
 }
 
 func QueryPlannerMemory(ctx context.Context, memorySvc *memory.ServiceMemory, snapshot TurnSnapshot, decision PlannerDecision) ([]string, error) {

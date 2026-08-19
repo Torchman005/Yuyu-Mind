@@ -171,18 +171,12 @@ func (s *Service) StreamChat(ctx context.Context, req ChatRequest, emitter Emitt
 	}
 
 	replyer := NewReplyerAgent(trackedModel, s.cfg.Chat)
-	reply, err := replyer.Reply(ctx, snapshot, decision, memories, toolResults)
-	if err != nil {
+	// 流式回复：边生成边按完整句子 emit（EventTypeToken）+ 持久化，
+	// 使前端能「逐句」驱动 TTS 并行播放，而非等全文生成完毕（对齐 Shinsekai 的低延迟体验）。
+	if _, err := s.streamReply(ctx, replyer, snapshot, decision, memories, toolResults, emitter, rt); err != nil {
 		rt.CompleteNoReply()
 		emitError(emitter, err)
 		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "replyer", collector, time.Since(startedAt), "failed", err)
-		return err
-	}
-
-	if _, err := s.sender.SendGuidedReply(ctx, rt, snapshot, reply, decision.EmotionInfo(), emitter); err != nil {
-		rt.CompleteNoReply()
-		emitError(emitter, err)
-		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "send", collector, time.Since(startedAt), "failed", err)
 		return err
 	}
 
