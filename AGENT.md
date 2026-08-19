@@ -120,11 +120,11 @@
 - [x] 前端模型 ASR 已接线（`startModelASRVoiceInput` 录音 → base64 → `TranscribeAudio`），无需改动；`VITE_ASR_PROVIDER` 默认 `browser`，设 `model` 走模型识别。
 - [x] 验证：`go build ./...` + `go test ./internal/...`（12 包全绿）。网络路径需用户本地验证。
 
-### 回复延迟优化（流式 Replyer，参考 Shinsekai）
+### 回复延迟优化（流式 Replyer + 逐句 TTS，参考 Shinsekai）
 
 - [x] 后端流式回复：`ReplyerAgent` 抽出 `buildMessages` + 新增 `Stream`（Eino `model.Stream`）；新增 `stream_reply.go`（`streamingSentencer` 增量按标点/超长切句 + `Service.streamReply` 边生成边 `EventTypeToken` emit + 持久化）；`service.go` 回复段改用 `streamReply`。
-- [x] 验证：`go build ./...` + `go test ./internal/...`（12 包全绿，含 `stream_reply_test.go` 逐句切分/超长切分/空输入）。
-- [ ] 前端逐句 TTS（待做）：`sendContent` 从 `SendMessage`（收集全文）切到 `StreamChat` + `EventsOn("chat:event")`，收到一句 `EventTypeToken` 就合成+播放一句，与 LLM 生成重叠；`EventTypeEmotion` 即时驱动表情。
+- [x] 前端流式通道 + 逐句 TTS：`App.tsx` `sendContent` 从 `SendMessage`（收集全文）切到 `StreamChat` + `EventsOn("chat:event")`；收到一句 `EventTypeToken` 就 `speakText` 合成+播放一句（`streamSentenceQueueRef`/`sentencePlayingRef`/`streamReplyActiveRef`/`streamDoneRef` 状态机，与 LLM 生成重叠）；`EventTypeEmotion` 即时驱动情绪；`done` 收尾（刷新消息 + scheduleFollowUp）；`error` 中止。`App.StreamChat`（app.go）补 `ensureCompanionReady`。
+- [x] 验证：`go build ./...` + `go test ./internal/...`（12 包全绿）+ `tsc --noEmit`（exit 0）。渲染/延迟效果需本地 `wails dev` 验证。
 
 ### 插件系统（M2 内核）
 

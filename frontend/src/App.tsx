@@ -15,8 +15,8 @@ import {
     ObserveScreen,
     ProbeFishLive,
     SendAgentTaskControl,
-    SendMessage,
     SetPluginConfig,
+    StreamChat,
     SynthesizeSpeech,
     SynthesizeSpeechStream,
     TranscribeAudio,
@@ -31,7 +31,7 @@ import {
     WindowSetBackgroundColour,
     WindowSetSize,
 } from '../wailsjs/runtime/runtime';
-import {app, db} from '../wailsjs/go/models';
+import {app, chat, db} from '../wailsjs/go/models';
 import {AvatarPerformance, Live2DStage} from './components/Live2DStage';
 
 type Message = app.CompanionMessage;
@@ -68,6 +68,21 @@ type ASRReply = {
     language?: string;
     duration?: number;
     error?: string;
+};
+
+// 后端 chat:event 事件（对应 internal/chat/types.go 的 ChatEvent）。
+type ChatStreamEvent = {
+    type?: string;
+    content?: string;
+    tool_id?: string;
+    tool_name?: string;
+    emotion?: string;
+    mood?: string;
+    energy?: number;
+    valence?: number;
+    dominance?: number;
+    gesture?: string;
+    hand?: string;
 };
 
 type PerformanceHint = {
@@ -120,6 +135,8 @@ const DESKTOP_PET_NAME = (
     || (import.meta.env.VITE_DESKTOP_PET_NAME as string | undefined)
     || ''
 ).trim() || 'Yuyu';
+// 与后端 internal/app/companion.go 的 defaultCompanionConversationID 保持一致。
+const DESKTOP_COMPANION_CONVERSATION_ID = 'desktop-companion';
 const SPEECH_OUTPUT_MODE = ((import.meta.env.VITE_SPEECH_OUTPUT_MODE as string | undefined) || 'cloud').trim().toLowerCase();
 const ALLOW_SYSTEM_TTS_FALLBACK = ((import.meta.env.VITE_ALLOW_SYSTEM_TTS_FALLBACK as string | undefined) || 'false').trim().toLowerCase() === 'true';
 const ENABLE_STREAMING_TTS = ((import.meta.env.VITE_ENABLE_STREAMING_TTS as string | undefined) || 'false').trim().toLowerCase() === 'true';
@@ -443,6 +460,13 @@ function App() {
     const followUpTimerRef = useRef<number | null>(null);
     const proactiveSpeechTimestampsRef = useRef<number[]>([]);
     const proactiveInFlightRef = useRef(false);
+    // 流式回复状态：逐句 TTS 队列 + 是否仍在流式回复 + LLM 是否已 done + 是否正在播某句。
+    const streamSentenceQueueRef = useRef<string[]>([]);
+    const streamReplyActiveRef = useRef(false);
+    const streamDoneRef = useRef(false);
+    const sentencePlayingRef = useRef(false);
+    // 持有最新 handleChatEvent（避免 EventsOn 一次性注册导致的闭包过期）。
+    const chatEventHandlerRef = useRef<(event: ChatStreamEvent) => void>(() => undefined);
 
     const assistantLine = useMemo(() => {
         if (isSending || voiceStatus === 'thinking') {
@@ -486,6 +510,20 @@ function App() {
 
     useEffect(() => {
         refreshPlugins();
+    }, []);
+
+    // 每次渲染后把最新的 handleChatEvent 写入 ref，供一次性注册的 chat:event 订阅调用（避免闭包过期）。
+    useEffect(() => {
+        chatEventHandlerRef.current = handleChatEvent;
+    });
+
+    useEffect(() => {
+        if (!canUseWailsRuntime()) {
+            return;
+        }
+        return EventsOn('chat:event', (event: ChatStreamEvent) => {
+            chatEventHandlerRef.current(event);
+        });
     }, []);
 
     useEffect(() => {
@@ -990,6 +1028,26 @@ function App() {
         lipSyncCleanupRef.current = null;
         setMouthLevel(0);
         setVoiceStatus('idle');
+
+        // 流式逐句：若还有排队句子，继续播下一句；若 LLM 已 done，则清理流式状态。
+        if (streamReplyActiveRef.current) {
+            sentencePlayingRef.current = false;
+            const nextSentence = streamSentenceQueueRef.current.shift();
+            if (nextSentence) {
+                sentencePlayingRef.current = true;
+                void speakText(nextSentence);
+                return;
+            }
+            if (streamDoneRef.current) {
+                streamReplyActiveRef.current = false;
+                streamDoneRef.current = false;
+                streamSentenceQueueRef.current = [];
+                // 继续走下面的 relisten 逻辑。
+            } else {
+                return;
+            }
+        }
+
         if (!voiceLoopRef.current) {
             return;
         }
@@ -1682,23 +1740,24 @@ function App() {
             detail: `mode=${SPEECH_OUTPUT_MODE}, streaming=${ENABLE_STREAMING_TTS}, realtime=${ENABLE_REALTIME_SPEECH}; speechLanguage=${speechLanguage}`,
         }]);
 
+        // 流式回复：走 StreamChat + chat:event 事件，逐句合成 TTS（与 LLM 生成重叠，降低首句延迟）。
+        stopCurrentAudio();
+        streamSentenceQueueRef.current = [];
+        streamReplyActiveRef.current = true;
+        streamDoneRef.current = false;
+        sentencePlayingRef.current = false;
+
         try {
-            const response = await SendMessage(content) as ChatResponse;
-            setMessages(response.messages ?? []);
-            setEmotion(response.emotion || response.reply?.emotion || 'neutral');
-            setAgentStatus(response.agentStatus || 'offline');
-            setAgentProvider(response.agentProvider || 'unknown');
-            setProviderError(response.providerError || '');
-            applyResponsePerformance(response);
-            speakResponse(response);
-            scheduleFollowUp('reply-follow-up');
+            await StreamChat(new chat.ChatRequest({
+                conversation_id: DESKTOP_COMPANION_CONVERSATION_ID,
+                content,
+                use_tools: false,
+            }));
         } catch (reason) {
             setError(String(reason));
-            finishSpeaking();
-        } finally {
-            isSendingRef.current = false;
-            setIsSending(false);
+            abortStreamReply();
         }
+        // 成功路径不在此收尾——由 chat:event 的 'done' + TTS 队列 drain 触发 completeStreamReply。
     }
 
     function sendMessage(event: FormEvent) {
@@ -1752,6 +1811,90 @@ function App() {
             gesture: String(response.gesture || response.reply?.gesture || ''),
             hand: (response.hand || response.reply?.hand || 'none') as AvatarPerformance['hand'],
         });
+    }
+
+    function completeStreamReply() {
+        // LLM 已 done：结束「发送中」状态，刷新消息，安排追问（TTS 队列继续后台播放）。
+        streamDoneRef.current = true;
+        isSendingRef.current = false;
+        setIsSending(false);
+        void GetState()
+            .then((state: app.AppState) => {
+                setMessages(state.messages ?? []);
+                setAgentStatus(state.agentStatus || 'offline');
+                setAgentProvider(state.agentProvider || 'unknown');
+                setProviderError(state.providerError || '');
+            })
+            .catch(() => undefined);
+        scheduleFollowUp('reply-follow-up');
+        if (streamSentenceQueueRef.current.length === 0 && !sentencePlayingRef.current) {
+            // 没有正在播/排队的句子（例如空回复）→ 直接走 finishSpeaking 清理流式状态。
+            finishSpeaking();
+        }
+    }
+
+    function abortStreamReply() {
+        streamReplyActiveRef.current = false;
+        streamDoneRef.current = false;
+        streamSentenceQueueRef.current = [];
+        sentencePlayingRef.current = false;
+        isSendingRef.current = false;
+        setIsSending(false);
+        stopCurrentAudio();
+        setVoiceStatus('idle');
+    }
+
+    function handleStreamToken(content: string) {
+        const text = content.trim();
+        if (!text) {
+            return;
+        }
+        if (sentencePlayingRef.current) {
+            streamSentenceQueueRef.current.push(text);
+        } else {
+            sentencePlayingRef.current = true;
+            void speakText(text);
+        }
+    }
+
+    function handleStreamDone() {
+        if (!streamReplyActiveRef.current) {
+            return;
+        }
+        completeStreamReply();
+    }
+
+    function handleChatEvent(event: ChatStreamEvent) {
+        switch (event.type) {
+            case 'token':
+                handleStreamToken(event.content || '');
+                break;
+            case 'emotion':
+                if (event.emotion) {
+                    setEmotion(event.emotion);
+                }
+                if (event.mood) {
+                    setPerformanceHint({
+                        mood: event.mood as AvatarPerformance['mood'],
+                        energy: Number(event.energy ?? 0),
+                        valence: Number(event.valence ?? 0),
+                        dominance: Number(event.dominance ?? 0),
+                        gesture: event.gesture || '',
+                        hand: (event.hand || 'none') as AvatarPerformance['hand'],
+                    });
+                }
+                break;
+            case 'error':
+                setError(event.content || '回复失败');
+                setProviderError(event.content || '');
+                abortStreamReply();
+                break;
+            case 'done':
+                handleStreamDone();
+                break;
+            default:
+                break;
+        }
     }
 
     function refreshPlugins() {

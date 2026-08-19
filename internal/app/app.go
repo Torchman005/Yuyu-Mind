@@ -174,6 +174,9 @@ func (a *App) Shutdown(ctx context.Context) {
 
 // StreamChat 发送聊天消息，并通过 Wails 事件流式返回响应。
 func (a *App) StreamChat(req chat.ChatRequest) error {
+	if err := a.ensureCompanionReady(); err != nil {
+		return err
+	}
 	emitter := &wailsEmitter{ctx: a.ctx}
 	return a.chatSvc.StreamChat(a.ctx, req, emitter)
 }
