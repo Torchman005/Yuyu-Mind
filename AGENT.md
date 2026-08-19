@@ -112,6 +112,13 @@
 - [x] 前端 `App.tsx` 贯通 valence/dominance（`PerformanceHint`/`applyResponsePerformance`/`avatarPerformance` 合并 + `inferAvatarPerformance` 文本启发式兜底）；`models.ts` 同步补字段。
 - [x] 验证：`go build ./...` + `go test ./internal/...`（10 包全绿）+ `tsc --noEmit`（exit 0）。前端渲染效果需本地 `npm run build` 验证。
 
+### 语音识别（ASR）
+
+- [x] 浏览器 ASR（Web Speech API）前端已接通：`App.tsx` `startBrowserVoiceInput`/`startBargeInListening` 用 `SpeechRecognition` 识别，配合语音门控/连续对话/打断。
+- [x] 模型 ASR（Whisper 兼容）后端落地：新增 `internal/ai/asr` 包（`Transcribe` 调 OpenAI 兼容 `/audio/transcriptions` multipart 上传 + `parseTranscriptionResponse`/`extFromContentType` 纯函数 + `asr_test.go`）；`config` 新增 `ASR.Model`；`companion.go` `TranscribeAudio` 从占位改为真实转录（复用激活 Provider 的 BaseURL/APIKey + `asr.model`）。
+- [x] 前端模型 ASR 已接线（`startModelASRVoiceInput` 录音 → base64 → `TranscribeAudio`），无需改动；`VITE_ASR_PROVIDER` 默认 `browser`，设 `model` 走模型识别。
+- [x] 验证：`go build ./...` + `go test ./internal/...`（12 包全绿）。网络路径需用户本地验证。
+
 ### 插件系统（M2 内核）
 
 - [x] 插件接口与契约（`internal/plugin/plugin.go`：`Plugin`/`Manifest`/`Action`/`Host`）。

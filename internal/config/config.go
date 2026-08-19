@@ -21,11 +21,17 @@ type Config struct {
 	Memory         MemoryConfig        `json:"memory"`
 	Speech         SpeechConfig        `json:"speech"`
 	Vision         VisionConfig        `json:"vision"`
+	ASR            ASRConfig           `json:"asr"`
 }
 
 // VisionConfig 配置多模态视觉（用于「看屏幕」描述画面）。
 type VisionConfig struct {
 	Model string `json:"model"` // 视觉模型名；为空表示未启用
+}
+
+// ASRConfig 配置语音识别（Whisper 兼容，用于模型 ASR；为空回退浏览器识别）。
+type ASRConfig struct {
+	Model string `json:"model"` // ASR 模型名（如 whisper-1）；为空表示未启用
 }
 
 // ActiveProvider identifies the selected model provider and model.
@@ -144,6 +150,9 @@ func DefaultConfig() *Config {
 				BaseURL: "https://api.fish.audio",
 				Format:  "mp3",
 			},
+		},
+		ASR: ASRConfig{
+			Model: "", // 默认未启用模型 ASR，前端回退浏览器语音识别
 		},
 	}
 }

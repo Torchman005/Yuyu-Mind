@@ -181,7 +181,9 @@ frontend/                       Wails 前端占位
 - 电脑工具（工作区隔离 + 文件读写/列目录 + 命令执行 + 键鼠输入 + 屏幕截图 + Worker 审批流）
 - Worker 真实执行器（LLM 工具循环）
 - 任务闭环（Planner 识别任务 → 提交 → 执行 → 事件回传前端任务面板）
-- 单元测试覆盖 agent/ai-tools/chat/config/db/memory/plugin/usage（9 包全绿）
+- 情绪系统 v2（连续 VAD + FACS/AU 表情合成 + Live2D 参数注册表）
+- 语音识别（浏览器 Web Speech ASR 默认可用 + 模型 Whisper 兼容 ASR：`asr.model` 配置后经 `/audio/transcriptions` 转录）
+- 单元测试覆盖 agent/ai-asr/ai-tools/chat/config/db/memory/plugin/usage/vision（12 包全绿）
 
 仍需处理：
 
@@ -214,6 +216,7 @@ wails dev
 - 若 `go build` 报 `sonic ... overflows int`：构建目标是 32 位，`go env GOARCH` 应为 `amd64`，别用 `-platform windows/386`。
 - 若报 `pattern all:frontend/dist: no matching files`：先执行第 1 步的 `npm run build`。
 - 配置与数据库默认在 `%APPDATA%\Yuyu-Mind\`；可用环境变量 `YUYU_CONFIG_DIR` 覆盖配置目录。
+- **语音识别（ASR）**：默认用浏览器 Web Speech 识别（开箱即用）。若要改用模型识别，在 `config.json` 设置 `"asr": {"model": "whisper-1"}`（用当前激活 Provider 的 BaseURL/APIKey 调 `/audio/transcriptions`），并把前端构建环境变量 `VITE_ASR_PROVIDER` 设为 `model`（默认 `browser`）。
 
 ## 开发命令
 

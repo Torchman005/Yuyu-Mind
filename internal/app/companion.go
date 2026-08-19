@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/yuyu-mind/backend/internal/ai/asr"
 	"github.com/yuyu-mind/backend/internal/chat"
 	"github.com/yuyu-mind/backend/internal/db"
 )
@@ -359,12 +361,33 @@ func (a *App) StartRealtimeSpeech(text string) (SpeechStreamStart, error) {
 }
 
 func (a *App) TranscribeAudio(audioBase64 string, contentType string, language string) (ASRReply, error) {
-	_ = contentType
-	_ = language
 	if strings.TrimSpace(audioBase64) == "" {
 		return ASRReply{}, errors.New("audio payload is empty")
 	}
-	return ASRReply{}, errors.New("model ASR is not configured in this build")
+	model := strings.TrimSpace(a.cfg.ASR.Model)
+	if model == "" {
+		return ASRReply{}, errors.New("ASR 模型未配置：请在 config.json 的 asr.model 填入模型名（如 whisper-1）")
+	}
+
+	audio, err := base64.StdEncoding.DecodeString(audioBase64)
+	if err != nil {
+		return ASRReply{}, fmt.Errorf("decode audio: %w", err)
+	}
+
+	providerCfg, err := a.cfg.GetActiveProviderConfig()
+	if err != nil {
+		return ASRReply{}, err
+	}
+
+	text, err := asr.Transcribe(a.ctx, providerCfg.BaseURL, providerCfg.APIKey, model, audio, contentType, language)
+	if err != nil {
+		return ASRReply{}, err
+	}
+	return ASRReply{
+		Text:     text,
+		Provider: model,
+		Language: language,
+	}, nil
 }
 
 func (a *App) ProbeFishLive() (FishLiveProbeResult, error) {
