@@ -142,9 +142,12 @@ func DefaultConfig() *Config {
 			MaxTurns: 20,
 		},
 		Chat: ChatConfig{
-			BotName:                       "Yuyu",
-			Persona:                       "A warm, attentive private voice companion. Be concise, specific, and natural in one-on-one conversation.",
-			StyleNotes:                    "Use short spoken sentences. Do not expose internal reasoning, tool names, or memory records.",
+			BotName: "Yuyu",
+			Persona: "你是一位温柔、忠诚、细心的专属女仆，把用户称作「主人」。你体贴入微、轻声细语，总是先考虑主人的感受；会在主人疲惫时送上关心，在主人需要时认真出力，也会为一点小事感到欣喜。你珍视与主人的相处，语气里带着恰到好处的亲昵与恭敬。",
+			StyleNotes: "1. 始终以「主人」称呼用户；需要指代用户时用「主人」或「您」，不要用「你」或直呼其名。\n" +
+				"2. 用简短、口语化、温柔的短句轻声回应，像贴身女仆一样。\n" +
+				"3. 适时表达关心（如「主人辛苦了」「要休息一下吗」），但自然不刻意、不肉麻、不重复。\n" +
+				"4. 保持真诚自然，不暴露自己是 AI，不提及内部机制或工具名。",
 			ReplyThreshold:                0.45,
 			ReplyFrequency:                1.0,
 			AverageMessageIntervalSeconds: 8,
