@@ -1,105 +1,119 @@
-# GPT-SoVITS 音色复刻 + 接入指南
+# GPT-SoVITS 音色复刻 + 接入指南（针对本机 v2Pro 整合包）
 
-> 目标：用你的语音复刻一个音色，让 Yuyu 桌宠用**本地 GPT-SoVITS** 逐句合成自然语音。
-> 你的显卡 RTX 4060 Ti（8G/16G）对「推理」绰绰有余，对「训练」也够用（半精度）。
+> 你的安装：`D:\itJinYu_toolkit\GPT-SoVITS-v2pro-20250604\GPT-SoVITS-v2pro-20250604`（内置 `runtime\python.exe` 便携环境 + ffmpeg，无需 conda）。
+> 你的显卡：RTX 4060 Ti。目标音色：智乃（Chino）。
+> 训练素材：`E:\Yuyu-Mind训练素材\智乃素材\语音\FIkxSkHc.mp3`（约 3MB ≈ 3 分钟）。
 
-分两阶段：**A. 音色复刻（训练）** 和 **B. 接入 Yuyu（合成）**。合成（B）只需加载训练好的权重，吃显存很少。
+已确认的版本要点（与通用 GPT-SoVITS 略有差异，务必按此）：
 
----
-
-## A. 音色复刻（训练）
-
-### 1. 安装 GPT-SoVITS
-
-任选其一：
-
-- **Windows 整合包**（推荐，免配环境）：到 [RVC-Boss/GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS) 的 Release 下载「整合包」，解压即用。
-- **源码安装**：`git clone` 后按 README 用 conda 建环境（PyTorch + CUDA，装对应 4060 Ti 的 CUDA 版本）。
-
-### 2. 准备你的语音数据
-
-你已备好语音，只需满足：
-
-| 要求 | 说明 |
-| --- | --- |
-| 单说话人 | 只保留「目标音色」一个人的声音 |
-| 干净 | 无背景音乐/多人声/明显噪声；有杂音先过一遍 UVR5 降噪 |
-| 时长 | 建议 **1~5 分钟**（几十秒也能出效果，越长越像、越稳） |
-| 格式 | WAV，16k/32k 均可，单声道 |
-| 内容 | 尽量自然口语，语速稳定，少极端情绪 |
-
-### 3. 训练流程（WebUI）
-
-启动 `GPT-SoVITS-Train` 的 WebUI，按序号走：
-
-1. **数据集格式化 / 切分**：把你的长音频切成 3~10 秒的短句。
-2. **UVR5 语音降噪**（可选，但推荐）：分离人声与伴奏/噪声。
-3. **ASR 打标**：自动转写每段音频，生成 `.list` 训练清单（记得人工抽查纠正错字）。
-4. **训练 GPT 模型**：`SoVITS 训练` 前的 `GPT 训练`，batch size 按显存调（4060 Ti 8G 用 2~4 起步，16G 可用更大）。
-5. **训练 SoVITS 模型**：同样的数据接着训 SoVITS。
-
-> 训练完成后你会得到两组权重：`GPT_weights/xxx.ckpt` 和 `SoVITS_weights/xxx.pth`。
-
-### 4. 准备「参考音频」（推理用）
-
-训练完还需要一段 **3~10 秒的干净参考音频**（音色锚点）：
-
-- 从你数据里挑一句最干净、最能代表目标音色的短句。
-- 记下它对应的**文本**（`prompt_text`），后面配置要用。
+- API 用 `api_v2.py`，**端点 `/tts`**，**非流式直接返回 WAV 字节**（`audio/wav`），出错返回 JSON 400。
+- `api_v2.py` 的 CLI 只有 `-a`（地址）/`-p`（端口）/`-c`（配置文件）；**权重在 `tts_infer.yaml` 里配，不是命令行传 `-g/-s`**。
+- 语言字段支持 `auto`（以及 `zh`/`ja`/`en`/`yue`/`ko` 等）。
+- **默认 `device: cpu`**！必须改 `cuda` 才能用上你的 4060 Ti。
 
 ---
 
-## B. 接入 Yuyu（合成）
+## 路线选择
 
-### 5. 启动 GPT-SoVITS 的 API 服务
+| 路线 | 要不要训练 | 效果 | 建议 |
+| --- | --- | --- | --- |
+| **A. 零样本克隆**（先跑通） | 不用 | 3~10 秒参考音频即可，像但细节略糙 | **先做这个**，10 分钟跑通 |
+| **B. 微调训练**（最终目标） | 要 | 用你 3 分钟素材训练，更像更稳 | 跑通 A 后再做 |
 
-用 WebUI 的「语音合成」页，或直接跑 API 脚本（参数以你安装版本的 README 为准，大致如下）：
+---
 
-```bash
-python api_v2.py -a 127.0.0.1 -p 9880 \
-  -g GPT_weights/你的模型.ckpt \
-  -s SoVITS_weights/你的模型.pth \
-  -dr 参考音频.wav -dt "参考音频说的文本" -dl zh
+## 第 0 步：把 GPU 打开（必做，否则合成慢）
+
+编辑 `GPT_SoVITS\configs\tts_infer.yaml`，把用到的版本段里的：
+
+```yaml
+device: cpu
+is_half: false
 ```
 
-默认端口 `9880`，端点 `/tts`。
+改成：
 
-### 6. 配置 Yuyu
+```yaml
+device: cuda
+is_half: true
+```
 
-编辑 `config.json`（默认在 `%APPDATA%\Yuyu-Mind\config.json`，或 `YUYU_CONFIG_DIR` 指向的目录）：
+> 建议先只用 `v2` 段（或 `custom`，它默认 version: v2，指向 `gsv-v2final-pretrained` 预训练权重）。零样本用 v2 就够。
+
+---
+
+## 路线 A：零样本克隆（快速跑通）
+
+### 1. 从你的 MP3 里截一段「参考音频」
+
+用整合包自带的 ffmpeg（`runtime\ffmpeg.exe`），选一句最干净、最能代表智乃音色的 5~10 秒：
+
+```powershell
+cd D:\itJinYu_toolkit\GPT-SoVITS-v2pro-20250604\GPT-SoVITS-v2pro-20250604
+
+# 转成单声道 32k WAV（参考音频 + 后续训练都用它）
+runtime\ffmpeg.exe -y -i "E:\Yuyu-Mind训练素材\智乃素材\语音\FIkxSkHc.mp3" -ar 32000 -ac 1 -c:a pcm_s16le "E:\Yuyu-Mind训练素材\智乃素材\语音\chino_full.wav"
+
+# 截 10 秒参考音频（时间点按你素材里干净的那句改）
+runtime\ffmpeg.exe -y -ss 00:00:05 -t 10 -i "E:\Yuyu-Mind训练素材\智乃素材\语音\chino_full.wav" -ar 32000 -ac 1 -c:a pcm_s16le "E:\Yuyu-Mind训练素材\智乃素材\语音\chino_ref.wav"
+```
+
+记下这段参考音频说的**原文**（`prompt_text`）。
+
+### 2. 启动 API
+
+```powershell
+cd D:\itJinYu_toolkit\GPT-SoVITS-v2pro-20250604\GPT-SoVITS-v2pro-20250604
+runtime\python.exe api_v2.py -a 127.0.0.1 -p 9880 -c GPT_SoVITS/configs/tts_infer.yaml
+```
+
+看到 `Uvicorn running on http://127.0.0.1:9880` 即成功（注意日志里是否加载到 cuda）。
+
+### 3. 配置 Yuyu
+
+`config.json`（`%APPDATA%\Yuyu-Mind\config.json`）用正斜杠写路径：
 
 ```jsonc
-{
-  "speech": {
-    "provider": "gpt_sovits",          // 关键：从 fish_audio 切到 gpt_sovits
-    "gpt_sovits": {
-      "base_url": "http://127.0.0.1:9880",
-      "endpoint": "/tts",              // api_v2 用 /tts；老版 api.py 可设 "/"
-      "refer_audio_path": "D:/voices/yuyu_ref.wav",  // 参考音频绝对路径
-      "prompt_text": "参考音频说的那句话",
-      "prompt_lang": "zh",             // 参考文本语言：auto/zh/ja/en
-      "text_lang": "zh"                // 合成文本语言
-    }
+"speech": {
+  "provider": "gpt_sovits",
+  "gpt_sovits": {
+    "base_url": "http://127.0.0.1:9880",
+    "endpoint": "/tts",
+    "refer_audio_path": "E:/Yuyu-Mind训练素材/智乃素材/语音/chino_ref.wav",
+    "prompt_text": "（参考音频说的那句话）",
+    "prompt_lang": "zh",
+    "text_lang": "zh"
   }
 }
 ```
 
-### 7. 重启并验证
+### 4. 验证
 
-```powershell
-cd frontend; npm run build; cd ..
-wails dev
-```
+`npm run build` + `wails dev`，聊天应逐句走 GPT-SoVITS（provider 显示 `GPT-SoVITS`）。若不满意音色相似度 → 走路线 B。
 
-聊天时看前端 `Speech timing`（若开启 `VITE_SHOW_SPEECH_DEBUG=true`）应显示 provider 为 `GPT-SoVITS`，且逐句快速出声。
+---
+
+## 路线 B：微调训练（高保真音色复刻）
+
+用 WebUI 训练（入口 `go-webui.bat`，内置 Python）：
+
+1. **切分**：把 `chino_full.wav` 切成长短句（WebUI「1-GPT-SoVITS-TTS」页 → 语音切分工具，或直接拖进去）。
+2. **降噪**（推荐）：UVR5 人声分离，去掉背景音乐/噪声。
+3. **ASR 打标**：自动转写每段，生成 `.list`（**人工抽查纠正错字**，智乃是日语就选 ja）。
+4. **训练 GPT 模型**：选 v2 架构，batch 按 4060 Ti 调（8G 版 2~4，16G 版更大）。
+5. **训练 SoVITS 模型**。
+6. 训练完得到 `GPT_weights/你的模型.ckpt` + `SoVITS_weights/你的模型.pth`。
+
+### 用训练好的权重推理
+
+把 `tts_infer.yaml` 里对应版本段的 `t2s_weights_path` / `vits_weights_path` 改成你的权重路径，重启 `api_v2.py` 即可；其余步骤同路线 A。
 
 ---
 
 ## 常见问题
 
-- **`GPT-SoVITS base url 未配置` / `参考音频路径未配置`**：`config.json` 里 `speech.provider` 没切到 `gpt_sovits`，或 `gpt_sovits` 字段没填全。
-- **返回 4xx/5xx**：端点或字段名和你的 API 版本不匹配——`api.py`（老版）端点一般是 `/` 且用表单，`api_v2.py` 用 `/tts` 且 JSON。先确认 `endpoint`，必要时看 `api_v2.py`/`api.py` 源码里的入参字段。
-- **音色不像**：训练数据时长/质量不够，或参考音频不干净；加数据、加长时长、用 UVR5 降噪后重训。
-- **合成慢**：确认跑在 GPU 上（api 启动日志看是否加载到 cuda），并检查是否用了半精度。
-
-> 说明：本项目的 `internal/app/gpt_sovits.go` 已实现 POST JSON → `/tts`（可配 `endpoint`），并兼容两种响应格式——`api_v2.py` 的 `{"data":[{"audio":"base64"}]}` 与 `api.py` 直接返回 WAV 字节。若你的版本入参字段名不同，改 `gpt_sovits.go` 里的 `gptSovitsRequest` 字段即可。
+- **合成很慢**：`tts_infer.yaml` 的 `device` 没改成 `cuda`，跑在 CPU 上了。
+- **返回 400 / `text_lang is not supported`**：语言字段写错（用 `zh`/`ja`/`auto`）。
+- **`ref_audio_path is required`**：参考音频路径写错或为空；用绝对路径 + 正斜杠。
+- **音色不像**：参考音频不干净 / 训练素材太少。换更干净的参考句，或走微调训练加时长。
+- **api_v2 字段名**：本机已核对（`text`/`text_lang`/`ref_audio_path`/`prompt_text`/`prompt_lang`/`top_k`/`top_p`/`temperature`/`speed_factor`/`text_split_method`/`media_type`/`streaming_mode`），与 `internal/app/gpt_sovits.go` 的 `gptSovitsRequest` 一致。

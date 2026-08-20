@@ -95,8 +95,8 @@ func (a *App) synthesizeGptSovitsSpeech(text string) (SpeechReply, error) {
 }
 
 // parseGptSovitsResponse 解析 GPT-SoVITS 响应，返回原始音频字节（纯函数，便于测试）。
-// - api_v2.py 返回 JSON：{"type":"audio","data":[{"audio":"<base64>","sr":...}]} 或 {"audio":"<base64>"}。
-// - api.py 直接返回原始 WAV 字节。
+// 不同版本响应格式不同：主流 api_v2.py 直接返回 WAV 字节流（audio/wav）；部分 fork 返回
+// JSON base64（{"data":[{"audio":"<base64>"}]} 或 {"audio":"<base64>"}）。这里兼容两者。
 func parseGptSovitsResponse(body []byte, contentType string) ([]byte, error) {
 	trimmed := bytes.TrimSpace(body)
 	if len(trimmed) == 0 {
