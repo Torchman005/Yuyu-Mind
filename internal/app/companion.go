@@ -339,12 +339,14 @@ func (a *App) ObserveScreen(prompt string) (ChatReply, error) {
 	}, nil
 }
 
-func (a *App) SynthesizeSpeech(text string) (SpeechReply, error) {
+// SynthesizeSpeech 合成语音。language 为合成文本语言（"zh"/"ja"/"auto"，空则用配置默认），
+// 用于中日语音切换（GPT-SoVITS 的 text_lang）；Fish Audio 自动检测语言，忽略该参数。
+func (a *App) SynthesizeSpeech(text string, language string) (SpeechReply, error) {
 	if strings.TrimSpace(text) == "" {
 		return SpeechReply{}, errors.New("speech text cannot be empty")
 	}
 	if strings.EqualFold(strings.TrimSpace(a.cfg.Speech.Provider), "gpt_sovits") {
-		return a.synthesizeGptSovitsSpeech(text)
+		return a.synthesizeGptSovitsSpeech(text, language)
 	}
 	return a.synthesizeFishSpeech(text)
 }

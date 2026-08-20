@@ -85,7 +85,7 @@ export function StreamChat(arg1:chat.ChatRequest):Promise<void>;
 
 export function SubmitAgentTask(arg1:agent.TaskSpec):Promise<db.AgentTask>;
 
-export function SynthesizeSpeech(arg1:string):Promise<app.SpeechReply>;
+export function SynthesizeSpeech(arg1:string,arg2:string):Promise<app.SpeechReply>;
 
 export function SynthesizeSpeechStream(arg1:string):Promise<app.SpeechStreamStart>;
 

@@ -158,8 +158,8 @@ export function SubmitAgentTask(arg1) {
   return window['go']['app']['App']['SubmitAgentTask'](arg1);
 }
 
-export function SynthesizeSpeech(arg1) {
-  return window['go']['app']['App']['SynthesizeSpeech'](arg1);
+export function SynthesizeSpeech(arg1, arg2) {
+  return window['go']['app']['App']['SynthesizeSpeech'](arg1, arg2);
 }
 
 export function SynthesizeSpeechStream(arg1) {

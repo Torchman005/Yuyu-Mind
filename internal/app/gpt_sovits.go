@@ -27,7 +27,8 @@ type gptSovitsRequest struct {
 }
 
 // synthesizeGptSovitsSpeech 调用本地 GPT-SoVITS 合成语音（音色由参考音频决定）。
-func (a *App) synthesizeGptSovitsSpeech(text string) (SpeechReply, error) {
+// language 覆盖 text_lang（用于中日语音切换）；为空则回退配置默认。
+func (a *App) synthesizeGptSovitsSpeech(text string, language string) (SpeechReply, error) {
 	cfg := a.cfg.Speech.GPTSoVITS
 	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
 	if baseURL == "" {
@@ -46,9 +47,14 @@ func (a *App) synthesizeGptSovitsSpeech(text string) (SpeechReply, error) {
 		endpoint = "/" + endpoint
 	}
 
+	textLang := strings.TrimSpace(language)
+	if textLang == "" {
+		textLang = defaultString(cfg.TextLang, "auto")
+	}
+
 	body, err := json.Marshal(gptSovitsRequest{
 		Text:         text,
-		TextLang:     defaultString(cfg.TextLang, "auto"),
+		TextLang:     textLang,
 		RefAudioPath: referPath,
 		PromptText:   cfg.PromptText,
 		PromptLang:   defaultString(cfg.PromptLang, "auto"),

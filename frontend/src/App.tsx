@@ -1397,7 +1397,7 @@ function App() {
         });
 
         try {
-            const speech = await SynthesizeSpeech(content);
+            const speech = await SynthesizeSpeech(content, speechLanguage);
             addSpeechMetric({
                 phase: 'buffered-audio-ready',
                 elapsedMs: Math.round(performance.now() - startedAt),
@@ -1899,7 +1899,7 @@ function App() {
         }
         prefetchedTextRef.current = next;
         prefetchInFlightRef.current = true;
-        void SynthesizeSpeech(next)
+        void SynthesizeSpeech(next, speechLanguage)
             .then((speech) => {
                 if (prefetchedTextRef.current === next) {
                     prefetchedSpeechRef.current = speech;
