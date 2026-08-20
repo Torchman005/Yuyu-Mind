@@ -172,6 +172,13 @@
 - [x] `AGENT.md`（本文档，Comments/Rules/Done）。
 - [x] `docs/DEVELOPMENT-NOTES.md`（思路与难点解决办法）。
 - [x] `docs/PLUGIN-GUIDE.md`（插件开发指南：接口/示例/挂载/约定/路线图）。
+- [x] `docs/GPT-SOVITS-GUIDE.md`（GPT-SoVITS 音色复刻训练 + 接入指南）。
+
+### 语音合成（GPT-SoVITS 本地音色复刻）
+
+- [x] 后端 GPT-SoVITS provider：新增 `internal/app/gpt_sovits.go`（`synthesizeGptSovitsSpeech` POST JSON → `/tts` 可配 `endpoint`；`parseGptSovitsResponse` 兼容 api_v2 的 `data[0].audio` base64 与 api.py 原始 WAV 字节；`gpt_sovits_test.go` 覆盖两种响应 + 空响应）。
+- [x] 配置：`config.go` `Speech.Provider`（`fish_audio`/`gpt_sovits`）+ `Speech.GPTSoVITS`（base_url/endpoint/refer_audio_path/prompt_text/prompt_lang/text_lang）；`SynthesizeSpeech` 按 provider 路由。
+- [x] 验证：`go build ./...` + `go test ./internal/app ./internal/config` 通过。音色复刻训练需用户本机跑 GPT-SoVITS（见 `docs/GPT-SOVITS-GUIDE.md`）。
 
 ## Next（待办 / 路线图）
 
@@ -184,5 +191,7 @@
 - [ ] JS 脚本插件（可选阶段 3，goja）。
 - [ ] 拆分 `App.tsx`（前端 2500+ 行，可维护性优化）。
 - [x] 情绪系统 v2（参考 [soullink-emotion-sdk](https://github.com/nanlingyin/soullink-emotion-sdk)）：连续 VAD（valence/dominance，energy≡arousal）+ FACS/AU 表驱动表情合成 + Live2D 参数注册表自动适配（已落地，见 Done）。
+- [x] 模型 ASR（Whisper 兼容）+ 回复流式（后端逐句 emit + 前端逐句 TTS）+ GPT-SoVITS 本地 TTS provider（已落地，见 Done）。
+- [ ] 音色复刻训练（用户本机，GPT-SoVITS）：按 `docs/GPT-SOVITS-GUIDE.md` 训练并启动 API 后，在 `config.json` 设 `speech.provider=gpt_sovits` + 参考音频路径。
 - [ ] 情绪系统 v2.1（可选）：语音 VAD 实时推断（音频连续情绪，而非仅文本/LLM）；直接接入 `@soullink-emotion/live2d-pixi` SDK 替换自研合成层。
-- [ ] 本地端到端验证（`wails dev`）：Planner 稳定性、Live2D 情绪、任务执行、审批流、无边框拖拽。
+- [ ] 本地端到端验证（`wails dev`）：Planner 稳定性、Live2D 情绪、任务执行、审批流、无边框拖拽、逐句 TTS、GPT-SoVITS 音色。

@@ -343,6 +343,9 @@ func (a *App) SynthesizeSpeech(text string) (SpeechReply, error) {
 	if strings.TrimSpace(text) == "" {
 		return SpeechReply{}, errors.New("speech text cannot be empty")
 	}
+	if strings.EqualFold(strings.TrimSpace(a.cfg.Speech.Provider), "gpt_sovits") {
+		return a.synthesizeGptSovitsSpeech(text)
+	}
 	return a.synthesizeFishSpeech(text)
 }
 

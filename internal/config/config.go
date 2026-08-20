@@ -80,7 +80,19 @@ type MemoryConfig struct {
 
 // SpeechConfig stores speech service settings.
 type SpeechConfig struct {
+	Provider  string          `json:"provider"` // 语音合成引擎："fish_audio"(默认) | "gpt_sovits"
 	FishAudio FishAudioConfig `json:"fish_audio"`
+	GPTSoVITS GPTSoVITSConfig `json:"gpt_sovits"`
+}
+
+// GPTSoVITSConfig stores GPT-SoVITS 本地语音合成（音色复刻）设置。
+type GPTSoVITSConfig struct {
+	BaseURL        string `json:"base_url"`         // GPT-SoVITS API 地址，如 http://127.0.0.1:9880
+	Endpoint       string `json:"endpoint"`         // TTS 端点，api_v2 默认 /tts，api.py 可设 /
+	ReferAudioPath string `json:"refer_audio_path"` // 参考音频绝对路径（决定音色）
+	PromptText     string `json:"prompt_text"`      // 参考音频对应的文本内容
+	PromptLang     string `json:"prompt_lang"`      // 参考文本语言（auto/zh/ja/en）
+	TextLang       string `json:"text_lang"`        // 合成文本语言（auto/zh/ja/en）
 }
 
 // FishAudioConfig stores Fish Audio TTS settings.
@@ -146,9 +158,15 @@ func DefaultConfig() *Config {
 			MaxTokensEst: 0,
 		},
 		Speech: SpeechConfig{
+			Provider: "fish_audio",
 			FishAudio: FishAudioConfig{
 				BaseURL: "https://api.fish.audio",
 				Format:  "mp3",
+			},
+			GPTSoVITS: GPTSoVITSConfig{
+				Endpoint:   "/tts",
+				PromptLang: "auto",
+				TextLang:   "auto",
 			},
 		},
 		ASR: ASRConfig{
