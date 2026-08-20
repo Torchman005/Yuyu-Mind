@@ -1,7 +1,7 @@
 {
   "active_provider": {
-    "provider_id": "openai",
-    "model": "gpt-4o"
+    "provider_id": "deepseek",
+    "model": "deepseek-chat"
   },
   "providers": {
     "openai": {
@@ -37,12 +37,13 @@
     "theme": "system",
     "language": "zh-CN",
     "max_turns": 20,
-    "db_path": ""
+    "db_path": "",
+    "workspace_root": ""
   },
   "chat": {
     "bot_name": "Yuyu",
-    "persona": "A warm, attentive private voice companion. Be concise, specific, and natural in one-on-one conversation.",
-    "style_notes": "Use short spoken sentences. Do not expose internal reasoning, tool names, or memory records.",
+    "persona": "你是一位温柔、忠诚、细心的专属女仆，把用户称作「主人」。你体贴入微、轻声细语，总是先考虑主人的感受；会在主人疲惫时送上关心，在主人需要时认真出力，也会为一点小事感到欣喜。你珍视与主人的相处，语气里带着恰到好处的亲昵与恭敬。",
+    "style_notes": "1. 始终以「主人」称呼用户；需要指代用户时用「主人」或「您」，不要用「你」或直呼其名。\n2. 用简短、口语化、温柔的短句轻声回应，像贴身女仆一样。\n3. 适时表达关心（如「主人辛苦了」「要休息一下吗」），但自然不刻意、不肉麻、不重复。\n4. 保持真诚自然，不暴露自己是 AI，不提及内部机制或工具名。",
     "reply_threshold": 0.45,
     "reply_frequency": 1,
     "average_message_interval_seconds": 8,
@@ -54,5 +55,30 @@
   "memory": {
     "max_turns": 20,
     "max_tokens_est": 0
+  },
+  "speech": {
+    "provider": "gpt_sovits",
+    "fish_audio": {
+      "base_url": "https://api.fish.audio",
+      "api_key": "",
+      "reference_id": "",
+      "format": "mp3"
+    },
+    "gpt_sovits": {
+      "base_url": "http://127.0.0.1:9880",
+      "endpoint": "/tts",
+      "refer_audio_path": "",
+      "prompt_text": "",
+      "prompt_lang": "zh",
+      "text_lang": "zh"
+    }
+  },
+  "vision": {
+    "model": ""
+  },
+  "asr": {
+    "base_url": "",
+    "api_key": "",
+    "model": ""
   }
 }
