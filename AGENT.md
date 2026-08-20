@@ -125,6 +125,8 @@
 - [x] 后端流式回复：`ReplyerAgent` 抽出 `buildMessages` + 新增 `Stream`（Eino `model.Stream`）；新增 `stream_reply.go`（`streamingSentencer` 增量按标点/超长切句 + `Service.streamReply` 边生成边 `EventTypeToken` emit + 持久化）；`service.go` 回复段改用 `streamReply`。
 - [x] 前端流式通道 + 逐句 TTS：`App.tsx` `sendContent` 从 `SendMessage`（收集全文）切到 `StreamChat` + `EventsOn("chat:event")`；收到一句 `EventTypeToken` 就 `speakText` 合成+播放一句（`streamSentenceQueueRef`/`sentencePlayingRef`/`streamReplyActiveRef`/`streamDoneRef` 状态机，与 LLM 生成重叠）；`EventTypeEmotion` 即时驱动情绪；`done` 收尾（刷新消息 + scheduleFollowUp）；`error` 中止。`App.StreamChat`（app.go）补 `ensureCompanionReady`。
 - [x] Planner 快速通道（降 LLM 首字延迟）：`shouldSkipPlanner` 保守判断「简单闲聊」直接流式回复、跳过 Planner 一整轮（`fast_path.go` + 单测）；`InferEmotionFromText` 快速通道兜底情绪；情绪事件改到流式文本之前发出（早于逐句朗读驱动表情）；Planner/Replyer 加 `model.WithMaxTokens` 约束输出长度。`App.tsx` 无 LLM mood 时清空 `performanceHint` 回退文本启发式。
+- [x] 逐句预合成（消除句间空档）：`playSpeechReply` 从 `speakWithBufferedCloudVoice` 抽出「播放已合成音频」；`startPrefetch` 后台 peek 队首并预 `SynthesizeSpeech`（`prefetchedSpeechRef`/`prefetchedTextRef`/`prefetchInFlightRef`）；`finishSpeaking` drain 优先播预合成句、否则现场合成，并清理过期预取。
+- [x] 修复「发消息不回复」：TurnGate 基础分 0.38→0.60（直接消息必回复）、删除 bot_streak_penalty、新增 looksLikeWeakBackchannel 只过滤极短应答词。
 - [x] 验证：`go build ./...` + `go test ./internal/...`（12 包全绿）+ `tsc --noEmit`（exit 0）。渲染/延迟效果需本地 `wails dev` 验证。
 
 ### 插件系统（M2 内核）

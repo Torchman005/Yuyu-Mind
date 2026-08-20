@@ -465,6 +465,10 @@ function App() {
     const streamReplyActiveRef = useRef(false);
     const streamDoneRef = useRef(false);
     const sentencePlayingRef = useRef(false);
+    // 逐句预合成：当前句播放时后台提前合成下一句，消除句间空档。
+    const prefetchedSpeechRef = useRef<app.SpeechReply | null>(null);
+    const prefetchedTextRef = useRef('');
+    const prefetchInFlightRef = useRef(false);
     // 持有最新 handleChatEvent（避免 EventsOn 一次性注册导致的闭包过期）。
     const chatEventHandlerRef = useRef<(event: ChatStreamEvent) => void>(() => undefined);
 
@@ -1029,19 +1033,51 @@ function App() {
         setMouthLevel(0);
         setVoiceStatus('idle');
 
-        // 流式逐句：若还有排队句子，继续播下一句；若 LLM 已 done，则清理流式状态。
+        // 流式逐句：优先播已预合成的队首句；否则现场合成；LLM done 后清理流式状态。
         if (streamReplyActiveRef.current) {
             sentencePlayingRef.current = false;
+
+            const prefetched = prefetchedSpeechRef.current;
+            const queueHead = streamSentenceQueueRef.current[0];
+            if (prefetched && queueHead && prefetchedTextRef.current === queueHead) {
+                // 预合成已就绪且对应队首 → 直接播放，无合成等待。
+                streamSentenceQueueRef.current.shift();
+                const prefetchedText = prefetchedTextRef.current;
+                prefetchedSpeechRef.current = null;
+                prefetchedTextRef.current = '';
+                sentencePlayingRef.current = true;
+                stopCurrentAudio();
+                const playbackId = playbackIdRef.current;
+                setVoiceStatus('speaking');
+                void playSpeechReply(prefetched, prefetchedText, playbackId).catch(() => {
+                    if (playbackId === playbackIdRef.current) {
+                        finishSpeaking(playbackId);
+                    }
+                });
+                startPrefetch();
+                return;
+            }
+
+            // 过期/未就绪的预合成：清掉，避免阻塞后续预取。
+            if (prefetchedSpeechRef.current) {
+                prefetchedSpeechRef.current = null;
+                prefetchedTextRef.current = '';
+            }
+
             const nextSentence = streamSentenceQueueRef.current.shift();
             if (nextSentence) {
                 sentencePlayingRef.current = true;
                 void speakText(nextSentence);
+                startPrefetch();
                 return;
             }
             if (streamDoneRef.current) {
                 streamReplyActiveRef.current = false;
                 streamDoneRef.current = false;
                 streamSentenceQueueRef.current = [];
+                prefetchedSpeechRef.current = null;
+                prefetchedTextRef.current = '';
+                prefetchInFlightRef.current = false;
                 // 继续走下面的 relisten 逻辑。
             } else {
                 return;
@@ -1326,6 +1362,30 @@ function App() {
         void speakWithBufferedCloudVoice(content, message);
     }
 
+    // playSpeechReply 播放一段已合成的音频（base64），不重新合成。
+    async function playSpeechReply(speech: app.SpeechReply, content: string, playbackId: number) {
+        const audio = new Audio(`data:${speech.contentType || 'audio/mpeg'};base64,${speech.audioBase64}`);
+        audioRef.current = audio;
+        attachLipSync(audio, playbackId);
+        audio.onended = () => finishSpeaking(playbackId);
+        audio.onerror = () => {
+            if (playbackId !== playbackIdRef.current) {
+                return;
+            }
+            if (!ALLOW_SYSTEM_TTS_FALLBACK) {
+                setVoiceError('云端 TTS 音频播放失败，已停止播放。');
+                finishSpeaking(playbackId);
+                return;
+            }
+            setVoiceError('云端 TTS 音频播放失败，已切换到系统朗读。');
+            speakWithSystemVoice(content, playbackId);
+        };
+        await audio.play();
+        addSpeechMetric({phase: 'buffered-play-started', elapsedMs: 0});
+        startBargeInListening(playbackId);
+        return true;
+    }
+
     async function speakWithBufferedCloudVoice(content: string, fallbackMessage?: string) {
         const playbackId = playbackIdRef.current;
         audioRef.current?.pause();
@@ -1346,29 +1406,7 @@ function App() {
             if (playbackId !== playbackIdRef.current) {
                 return true;
             }
-            const audio = new Audio(`data:${speech.contentType || 'audio/mpeg'};base64,${speech.audioBase64}`);
-            audioRef.current = audio;
-            attachLipSync(audio, playbackId);
-            audio.onended = () => finishSpeaking(playbackId);
-            audio.onerror = () => {
-                if (playbackId !== playbackIdRef.current) {
-                    return;
-                }
-                if (!ALLOW_SYSTEM_TTS_FALLBACK) {
-                    setVoiceError('云端 TTS 音频播放失败，已停止播放。');
-                    finishSpeaking(playbackId);
-                    return;
-                }
-                setVoiceError('云端 TTS 音频播放失败，已切换到系统朗读。');
-                speakWithSystemVoice(content, playbackId);
-            };
-            await audio.play();
-            addSpeechMetric({
-                phase: 'buffered-play-started',
-                elapsedMs: Math.round(performance.now() - startedAt),
-            });
-            startBargeInListening(playbackId);
-            return true;
+            return await playSpeechReply(speech, content, playbackId);
         } catch (reason) {
             if (playbackId !== playbackIdRef.current) {
                 return true;
@@ -1746,6 +1784,9 @@ function App() {
         streamReplyActiveRef.current = true;
         streamDoneRef.current = false;
         sentencePlayingRef.current = false;
+        prefetchedSpeechRef.current = null;
+        prefetchedTextRef.current = '';
+        prefetchInFlightRef.current = false;
 
         try {
             await StreamChat(new chat.ChatRequest({
@@ -1838,10 +1879,36 @@ function App() {
         streamDoneRef.current = false;
         streamSentenceQueueRef.current = [];
         sentencePlayingRef.current = false;
+        prefetchedSpeechRef.current = null;
+        prefetchedTextRef.current = '';
+        prefetchInFlightRef.current = false;
         isSendingRef.current = false;
         setIsSending(false);
         stopCurrentAudio();
         setVoiceStatus('idle');
+    }
+
+    // startPrefetch 后台预合成下一句（peek 队首，不弹出），避免句间「合成空档」。
+    function startPrefetch() {
+        if (prefetchInFlightRef.current || prefetchedSpeechRef.current) {
+            return;
+        }
+        const next = streamSentenceQueueRef.current[0];
+        if (!next) {
+            return;
+        }
+        prefetchedTextRef.current = next;
+        prefetchInFlightRef.current = true;
+        void SynthesizeSpeech(next)
+            .then((speech) => {
+                if (prefetchedTextRef.current === next) {
+                    prefetchedSpeechRef.current = speech;
+                }
+            })
+            .catch(() => undefined)
+            .finally(() => {
+                prefetchInFlightRef.current = false;
+            });
     }
 
     function handleStreamToken(content: string) {
@@ -1855,6 +1922,7 @@ function App() {
             sentencePlayingRef.current = true;
             void speakText(text);
         }
+        startPrefetch();
     }
 
     function handleStreamDone() {
