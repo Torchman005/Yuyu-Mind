@@ -1,5 +1,7 @@
 package chat
 
+import "strings"
+
 // 本文件定义前后端共享的「情绪 Schema」。
 // 这是 LLM 结构化情绪输出的唯一契约：允许值即白名单，非法值统一回退。
 // 前端 Live2DStage 应消费同一套取值（见 frontend/src/components/Live2DStage.tsx）。
@@ -126,4 +128,26 @@ func ClampDominance(dominance float64) float64 {
 		return 1
 	}
 	return dominance
+}
+
+// InferEmotionFromText 用简单关键词从文本推断离散表情（快速通道的兜底，非精确）。
+// 只做保守的词组级判断，避免单字误命中；否则回退 neutral。
+func InferEmotionFromText(text string) string {
+	lower := strings.ToLower(text)
+	switch {
+	case strings.Contains(text, "开心") || strings.Contains(text, "太好") || strings.Contains(text, "喜欢") ||
+		strings.Contains(text, "哈哈") || strings.Contains(text, "谢谢") || strings.Contains(lower, "great"):
+		return EmotionHappy
+	case strings.Contains(text, "难过") || strings.Contains(text, "低落") || strings.Contains(text, "伤心") ||
+		strings.Contains(text, "抱歉") || strings.Contains(lower, "sorry"):
+		return EmotionSad
+	case strings.Contains(text, "惊讶") || strings.Contains(text, "居然") || strings.Contains(text, "竟然") ||
+		strings.Contains(text, "真的吗") || strings.Contains(lower, "surprise"):
+		return EmotionSurprised
+	case strings.Contains(text, "报错") || strings.Contains(text, "错误") || strings.Contains(text, "失败") ||
+		strings.Contains(text, "代码") || strings.Contains(lower, "error"):
+		return EmotionThinking
+	default:
+		return EmotionNeutral
+	}
 }

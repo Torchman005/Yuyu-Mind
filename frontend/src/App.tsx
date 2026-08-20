@@ -1882,6 +1882,9 @@ function App() {
                         gesture: event.gesture || '',
                         hand: (event.hand || 'none') as AvatarPerformance['hand'],
                     });
+                } else {
+                    // 快速通道（跳过 Planner）无 LLM mood：清空表演提示，回退前端文本启发式。
+                    setPerformanceHint(null);
                 }
                 break;
             case 'error':

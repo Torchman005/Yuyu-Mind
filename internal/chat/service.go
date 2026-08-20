@@ -112,13 +112,42 @@ func (s *Service) StreamChat(ctx context.Context, req ChatRequest, emitter Emitt
 	}
 
 	rt.MarkRunning()
-	planner := NewPlannerAgent(trackedModel, s.cfg.Chat)
-	decision, err := planner.Plan(ctx, snapshot, gate)
-	if err != nil {
-		rt.CompleteNoReply()
-		emitError(emitter, err)
-		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "planner", collector, time.Since(startedAt), "failed", err)
-		return err
+
+	// 简单闲聊走「快速通道」：跳过 Planner 这一整轮 LLM 决策，直接流式回复，
+	// 把「首字延迟」从 Planner(全文 JSON) + Replyer(首字) 压缩到只剩 Replyer(首字)。
+	// 复杂意图（记忆/工具/任务/追问）仍走 Planner 完整决策。
+	var decision PlannerDecision
+	if shouldSkipPlanner(snapshot.Target.Content) {
+		decision = PlannerDecision{
+			Action:  "reply",
+			Emotion: InferEmotionFromText(snapshot.Target.Content),
+			Mood:    MoodCalm,
+		}
+		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "planner_skipped", collector, time.Since(startedAt), "success", nil)
+	} else {
+		planner := NewPlannerAgent(trackedModel, s.cfg.Chat)
+		var err error
+		decision, err = planner.Plan(ctx, snapshot, gate)
+		if err != nil {
+			rt.CompleteNoReply()
+			emitError(emitter, err)
+			s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "planner", collector, time.Since(startedAt), "failed", err)
+			return err
+		}
+	}
+
+	// 情绪在流式文本之前发出，前端据此在「逐句朗读」开始前就驱动表情。
+	if emitter != nil {
+		emitter.Emit(ChatEvent{
+			Type:      EventTypeEmotion,
+			Emotion:   decision.Emotion,
+			Mood:      decision.Mood,
+			Energy:    decision.Energy,
+			Valence:   decision.Valence,
+			Dominance: decision.Dominance,
+			Gesture:   decision.Gesture,
+			Hand:      decision.Hand,
+		})
 	}
 
 	memories, toolResults, err := s.preparePlannerContext(ctx, snapshot, decision, emitter)
@@ -178,19 +207,6 @@ func (s *Service) StreamChat(ctx context.Context, req ChatRequest, emitter Emitt
 		emitError(emitter, err)
 		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "replyer", collector, time.Since(startedAt), "failed", err)
 		return err
-	}
-
-	if emitter != nil {
-		emitter.Emit(ChatEvent{
-			Type:      EventTypeEmotion,
-			Emotion:   decision.Emotion,
-			Mood:      decision.Mood,
-			Energy:    decision.Energy,
-			Valence:   decision.Valence,
-			Dominance: decision.Dominance,
-			Gesture:   decision.Gesture,
-			Hand:      decision.Hand,
-		})
 	}
 
 	s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "orchestrated", collector, time.Since(startedAt), "success", nil)

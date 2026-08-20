@@ -134,7 +134,7 @@ Choose values that match the reply you are about to ask the Replyer to write, no
 		},
 	}
 
-	result, err := a.model.Generate(ctx, messages)
+	result, err := a.model.Generate(ctx, messages, model.WithMaxTokens(256))
 	if err != nil {
 		return PlannerDecision{}, fmt.Errorf("planner generate: %w", err)
 	}
@@ -146,7 +146,7 @@ Choose values that match the reply you are about to ask the Replyer to write, no
 			Role:    schema.User,
 			Content: "Your previous response was not valid JSON. Return ONLY one valid JSON object now, with no markdown fences or extra text.",
 		})
-		retryResult, retryErr := a.model.Generate(ctx, retryMessages)
+		retryResult, retryErr := a.model.Generate(ctx, retryMessages, model.WithMaxTokens(256))
 		if retryErr != nil {
 			return PlannerDecision{}, fmt.Errorf("planner generate retry: %w", retryErr)
 		}
@@ -198,7 +198,7 @@ func (a *ReplyerAgent) Reply(
 	memories []string,
 	toolResults []ToolResult,
 ) (string, error) {
-	result, err := a.model.Generate(ctx, a.buildMessages(snapshot, decision, memories, toolResults))
+	result, err := a.model.Generate(ctx, a.buildMessages(snapshot, decision, memories, toolResults), model.WithMaxTokens(600))
 	if err != nil {
 		return "", fmt.Errorf("replyer generate: %w", err)
 	}
@@ -213,7 +213,7 @@ func (a *ReplyerAgent) Stream(
 	memories []string,
 	toolResults []ToolResult,
 ) (*schema.StreamReader[*schema.Message], error) {
-	return a.model.Stream(ctx, a.buildMessages(snapshot, decision, memories, toolResults))
+	return a.model.Stream(ctx, a.buildMessages(snapshot, decision, memories, toolResults), model.WithMaxTokens(600))
 }
 
 func (a *ReplyerAgent) buildMessages(
