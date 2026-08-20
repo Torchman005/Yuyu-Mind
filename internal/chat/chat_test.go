@@ -142,4 +142,15 @@ func TestTurnGateEvaluate(t *testing.T) {
 	if weak.ShouldPlan {
 		t.Fatalf("expected weak backchannel to be gated, got score=%f", weak.Score)
 	}
+
+	// 普通陈述句（非弱回撤）即使紧接着上一条 bot 回复、且已有连续回复 streak，也应得到回复。
+	statement := gate.Evaluate(TurnSnapshot{
+		Target:    NormalizedMessage{ID: "m3", Content: "今天好累啊", CreatedAt: now},
+		LastBotAt: now,
+		BotStreak: 3,
+		Now:       now,
+	})
+	if !statement.ShouldPlan {
+		t.Fatalf("expected statement to get reply, got score=%f", statement.Score)
+	}
 }
