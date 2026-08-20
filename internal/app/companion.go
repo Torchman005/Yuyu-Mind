@@ -371,7 +371,7 @@ func (a *App) TranscribeAudio(audioBase64 string, contentType string, language s
 	}
 	model := strings.TrimSpace(a.cfg.ASR.Model)
 	if model == "" {
-		return ASRReply{}, errors.New("ASR 模型未配置：请在 config.json 的 asr.model 填入模型名（如 whisper-1）")
+		return ASRReply{}, errors.New("ASR 模型未配置：请在 config.json 的 asr.model 填入模型名（如 whisper-large-v3 或 whisper-1）")
 	}
 
 	audio, err := base64.StdEncoding.DecodeString(audioBase64)
@@ -379,12 +379,19 @@ func (a *App) TranscribeAudio(audioBase64 string, contentType string, language s
 		return ASRReply{}, fmt.Errorf("decode audio: %w", err)
 	}
 
-	providerCfg, err := a.cfg.GetActiveProviderConfig()
-	if err != nil {
-		return ASRReply{}, err
+	// 优先用 ASR 专用配置；未填 base_url/api_key 则回退激活的 LLM Provider。
+	baseURL := strings.TrimSpace(a.cfg.ASR.BaseURL)
+	apiKey := strings.TrimSpace(a.cfg.ASR.APIKey)
+	if baseURL == "" {
+		providerCfg, err := a.cfg.GetActiveProviderConfig()
+		if err != nil {
+			return ASRReply{}, err
+		}
+		baseURL = providerCfg.BaseURL
+		apiKey = providerCfg.APIKey
 	}
 
-	text, err := asr.Transcribe(a.ctx, providerCfg.BaseURL, providerCfg.APIKey, model, audio, contentType, language)
+	text, err := asr.Transcribe(a.ctx, baseURL, apiKey, model, audio, contentType, language)
 	if err != nil {
 		return ASRReply{}, err
 	}

@@ -30,8 +30,12 @@ type VisionConfig struct {
 }
 
 // ASRConfig 配置语音识别（Whisper 兼容，用于模型 ASR；为空回退浏览器识别）。
+// BaseURL/APIKey 可独立于 LLM Provider 配置，例如接 Groq（whisper-large-v3）
+// 或本地 faster-whisper/SenseVoice 的 OpenAI 兼容接口；留空则回退激活 Provider。
 type ASRConfig struct {
-	Model string `json:"model"` // ASR 模型名（如 whisper-1）；为空表示未启用
+	BaseURL string `json:"base_url"` // ASR API 地址（OpenAI 兼容 /audio/transcriptions）
+	APIKey  string `json:"api_key"`  // ASR API Key
+	Model   string `json:"model"`    // ASR 模型名（如 whisper-large-v3）；为空表示未启用
 }
 
 // ActiveProvider identifies the selected model provider and model.
