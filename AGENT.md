@@ -176,6 +176,8 @@
 - [x] `docs/DEVELOPMENT-NOTES.md`（思路与难点解决办法）。
 - [x] `docs/PLUGIN-GUIDE.md`（插件开发指南：接口/示例/挂载/约定/路线图）。
 - [x] `docs/GPT-SOVITS-GUIDE.md`（GPT-SoVITS 音色复刻训练 + 接入指南）。
+- [x] `docs/SENSEVOICE-ASR-GUIDE.md`（SenseVoice/FunASR 本地语音识别接入指南）。
+- [x] 配置管理：`config.json` 位于**项目 `configs/` 目录**（`configDir()` 优先读 `<cwd>/configs/config.json`，回退 `%APPDATA%\Yuyu-Mind\config.json`）；`configs/config.example.json` 为模板；新增 `services` 段（gpt_sovits_root/conda_exe/sensevoice_env/model）供启停脚本读取；`start-all.ps1`（一键启动，`-SkipBuild` 可跳构建）+ `stop-all.ps1`（一键停止）；脚本需 UTF-8 BOM 编码。
 
 ### 语音合成（GPT-SoVITS 本地音色复刻）
 
