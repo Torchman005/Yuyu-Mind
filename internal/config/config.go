@@ -143,6 +143,12 @@ func DefaultConfig() *Config {
 				APIKey:  "",
 				Model:   "moonshot-v1-8k",
 			},
+			"bailian": {
+				Name:    "阿里云百炼",
+				BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+				APIKey:  "",
+				Model:   "qwen-plus",
+			},
 			"ollama": {
 				Name:    "Ollama",
 				BaseURL: "http://localhost:11434/v1",

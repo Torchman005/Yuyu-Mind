@@ -25,6 +25,13 @@
       "model": "moonshot-v1-8k",
       "disabled": false
     },
+    "bailian": {
+      "name": "阿里云百炼",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "api_key": "sk-xxx",
+      "model": "qwen-plus",
+      "disabled": false
+    },
     "ollama": {
       "name": "Ollama",
       "base_url": "http://localhost:11434/v1",
