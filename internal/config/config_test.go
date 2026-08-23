@@ -4,17 +4,14 @@ import "testing"
 
 func TestDefaultConfig(t *testing.T) {
 	cfg := DefaultConfig()
-	if cfg.ActiveProvider.ProviderID != "openai" {
+	if cfg.ActiveProvider.ProviderID != "deepseek" {
 		t.Fatalf("default active provider = %q", cfg.ActiveProvider.ProviderID)
 	}
-	if cfg.Providers["openai"].BaseURL == "" || cfg.Providers["openai"].Model == "" {
-		t.Fatalf("openai provider incomplete: %+v", cfg.Providers["openai"])
+	if cfg.Providers["deepseek"].BaseURL == "" || cfg.Providers["deepseek"].Model == "" {
+		t.Fatalf("deepseek provider incomplete: %+v", cfg.Providers["deepseek"])
 	}
-	if _, ok := cfg.Providers["deepseek"]; !ok {
-		t.Fatalf("deepseek provider missing")
-	}
-	if _, ok := cfg.Providers["ollama"]; !ok {
-		t.Fatalf("ollama provider missing")
+	if _, ok := cfg.Providers["bailian"]; !ok {
+		t.Fatalf("bailian provider missing")
 	}
 	if cfg.Chat.MaxReplyChars <= 0 || cfg.Chat.SplitMaxChars <= 0 {
 		t.Fatalf("chat split config invalid")
@@ -56,11 +53,11 @@ func TestLoadSaveRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.ActiveProvider.ProviderID != "openai" {
+	if cfg.ActiveProvider.ProviderID != "deepseek" {
 		t.Fatalf("default active provider = %q", cfg.ActiveProvider.ProviderID)
 	}
 
-	if err := cfg.SetActiveProvider("ollama", "llama3"); err != nil {
+	if err := cfg.SetActiveProvider("bailian", "qwen-plus"); err != nil {
 		t.Fatalf("SetActiveProvider: %v", err)
 	}
 	if err := cfg.Save(); err != nil {
@@ -71,7 +68,7 @@ func TestLoadSaveRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load again: %v", err)
 	}
-	if cfg2.ActiveProvider.ProviderID != "ollama" || cfg2.ActiveProvider.Model != "llama3" {
+	if cfg2.ActiveProvider.ProviderID != "bailian" || cfg2.ActiveProvider.Model != "qwen-plus" {
 		t.Fatalf("round-trip failed: %+v", cfg2.ActiveProvider)
 	}
 }

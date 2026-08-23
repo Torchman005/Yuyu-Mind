@@ -121,39 +121,21 @@ type FishAudioConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		ActiveProvider: ActiveProvider{
-			ProviderID: "openai",
-			Model:      "gpt-4o",
+			ProviderID: "deepseek",
+			Model:      "deepseek-chat",
 		},
 		Providers: map[string]Provider{
-			"openai": {
-				Name:    "OpenAI",
-				BaseURL: "https://api.openai.com/v1",
-				APIKey:  "",
-				Model:   "gpt-4o",
-			},
 			"deepseek": {
 				Name:    "DeepSeek",
 				BaseURL: "https://api.deepseek.com",
 				APIKey:  "",
 				Model:   "deepseek-chat",
 			},
-			"moonshot": {
-				Name:    "Moonshot",
-				BaseURL: "https://api.moonshot.cn/v1",
-				APIKey:  "",
-				Model:   "moonshot-v1-8k",
-			},
 			"bailian": {
 				Name:    "阿里云百炼",
 				BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
 				APIKey:  "",
 				Model:   "qwen-plus",
-			},
-			"ollama": {
-				Name:    "Ollama",
-				BaseURL: "http://localhost:11434/v1",
-				APIKey:  "",
-				Model:   "llama3",
 			},
 		},
 		App: AppConfig{
@@ -172,7 +154,7 @@ func DefaultConfig() *Config {
 			ReplyFrequency:                1.0,
 			AverageMessageIntervalSeconds: 8,
 			MinReplyIntervalSeconds:       0,
-			MaxReplyChars:                 500,
+			MaxReplyChars:                 1000,
 			SplitMaxChars:                 90,
 			AllowTypoSimulation:           false,
 		},

@@ -2,6 +2,7 @@ package chat
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -103,10 +104,11 @@ func (s *Service) streamReply(
 	totalRunes := 0
 
 	flushPart := func(part string) error {
-		totalRunes += len([]rune(part))
-		if replyer.cfg.MaxReplyChars > 0 && totalRunes > replyer.cfg.MaxReplyChars {
-			return fmt.Errorf("reply length exceeds max %d", replyer.cfg.MaxReplyChars)
+		if replyer.cfg.MaxReplyChars > 0 && totalRunes+len([]rune(part)) > replyer.cfg.MaxReplyChars {
+			// 超过回复长度上限：优雅截断（不抛错、不中断整轮），保留已产出的句子。
+			return errReplyTooLong
 		}
+		totalRunes += len([]rune(part))
 		parts = append(parts, part)
 		if emitter != nil {
 			emitter.Emit(ChatEvent{Type: EventTypeToken, Content: part})
@@ -141,6 +143,7 @@ func (s *Service) streamReply(
 		return nil
 	}
 
+	stopped := false
 	for {
 		chunk, recvErr := reader.Recv()
 		if recvErr != nil && recvErr != io.EOF {
@@ -153,11 +156,17 @@ func (s *Service) streamReply(
 			continue
 		}
 		if err := emitSentences(sentencer.feed(chunk.Content)); err != nil {
+			if errors.Is(err, errReplyTooLong) {
+				stopped = true
+				break
+			}
 			return nil, err
 		}
 	}
-	if err := emitSentences(sentencer.flush()); err != nil {
-		return nil, err
+	if !stopped {
+		if err := emitSentences(sentencer.flush()); err != nil && !errors.Is(err, errReplyTooLong) {
+			return nil, err
+		}
 	}
 
 	if len(parts) == 0 {
@@ -166,3 +175,6 @@ func (s *Service) streamReply(
 	rt.CompleteReply(parts, now)
 	return parts, nil
 }
+
+// errReplyTooLong 表示回复达到长度上限需优雅截断（非致命错误）。
+var errReplyTooLong = errors.New("reply length limit reached")
