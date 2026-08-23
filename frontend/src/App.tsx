@@ -236,6 +236,66 @@ function blobToBase64(blob: Blob) {
     });
 }
 
+// encodeWavPCM 把 Float32 PCM 编码成 16-bit 单声道 WAV（供 SenseVoice/funasr 等只认 WAV 的 ASR 使用）。
+function encodeWavPCM(float32: Float32Array, sampleRate: number): ArrayBuffer {
+    const buffer = new ArrayBuffer(44 + float32.length * 2);
+    const view = new DataView(buffer);
+    const writeString = (offset: number, str: string) => {
+        for (let i = 0; i < str.length; i++) {
+            view.setUint8(offset + i, str.charCodeAt(i));
+        }
+    };
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + float32.length * 2, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, 1, true); // mono
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, 'data');
+    view.setUint32(40, float32.length * 2, true);
+    let offset = 44;
+    for (let i = 0; i < float32.length; i++) {
+        const s = Math.max(-1, Math.min(1, float32[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+        offset += 2;
+    }
+    return buffer;
+}
+
+// webmToWav16kMono 把录音（webm/opus）解码成 16kHz 单声道 WAV。
+// 浏览器 MediaRecorder 只能录 webm/opus，而 funasr-server（soundfile）解不了 webm，
+// 所以这里先用 Web Audio 解码 + 重采样到 16k，再编码为 WAV 递给后端。
+async function webmToWav16kMono(blob: Blob): Promise<{base64: string; contentType: string}> {
+    const arrayBuffer = await blob.arrayBuffer();
+    const OfflineCtx = (window as any).OfflineAudioContext;
+    const AudioCtxClass = (window as any).AudioContext || (window as any).webkitAudioContext;
+    const decodeCtx = (OfflineCtx ? new OfflineCtx(1, 1, 16000) : new AudioCtxClass());
+    try {
+        const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
+        const targetRate = 16000;
+        const length = Math.max(1, Math.ceil(audioBuffer.duration * targetRate));
+        const resampleCtx = new OfflineCtx(1, length, targetRate);
+        const source = resampleCtx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.connect(resampleCtx.destination);
+        source.start();
+        const rendered = await resampleCtx.startRendering();
+        const pcm = rendered.getChannelData(0);
+        const wav = encodeWavPCM(pcm, targetRate);
+        return {
+            base64: await blobToBase64(new Blob([wav], {type: 'audio/wav'})),
+            contentType: 'audio/wav',
+        };
+    } finally {
+        void decodeCtx.close?.();
+    }
+}
+
 function normalizeSpeechLanguage(value: string | null | undefined) {
     return String(value || '').trim().toLowerCase().startsWith('zh') ? 'zh' : 'ja';
 }
@@ -2238,8 +2298,9 @@ function App() {
             setVoiceStatus('thinking');
             try {
                 const blob = new Blob(chunks, {type: contentType});
-                const audioBase64 = await blobToBase64(blob);
-                const reply = await TranscribeAudio(audioBase64, contentType, asrProviderLanguage(speechLanguage)) as ASRReply;
+                // funasr-server（soundfile）解不了 webm/opus，转成 16k 单声道 WAV 再发。
+                const wav = await webmToWav16kMono(blob);
+                const reply = await TranscribeAudio(wav.base64, wav.contentType, asrProviderLanguage(speechLanguage)) as ASRReply;
                 const content = String(reply.text || '').trim();
                 addSpeechMetric({
                     phase: 'asr-transcribed',
