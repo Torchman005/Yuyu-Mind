@@ -529,6 +529,7 @@ function App() {
     const prefetchedSpeechRef = useRef<app.SpeechReply | null>(null);
     const prefetchedTextRef = useRef('');
     const prefetchInFlightRef = useRef(false);
+    const prefetchPromiseRef = useRef<Promise<unknown> | null>(null);
     // 持有最新 handleChatEvent（避免 EventsOn 一次性注册导致的闭包过期）。
     const chatEventHandlerRef = useRef<(event: ChatStreamEvent) => void>(() => undefined);
 
@@ -1124,8 +1125,51 @@ function App() {
                 prefetchedTextRef.current = '';
             }
 
-            const nextSentence = streamSentenceQueueRef.current.shift();
+            const nextSentence = streamSentenceQueueRef.current[0];
             if (nextSentence) {
+                // 若该句的预合成仍在进行：等待它完成再播（它已提前启动，通常比现场重新合成更快），
+                // 避免短句播完时重复合成造成的二次停顿。等待设上限，超时则回退现场合成。
+                if (prefetchInFlightRef.current && prefetchPromiseRef.current) {
+                    sentencePlayingRef.current = true;
+                    void (async () => {
+                        try {
+                            await Promise.race([
+                                prefetchPromiseRef.current,
+                                new Promise((resolve) => setTimeout(resolve, 3000)),
+                            ]);
+                        } catch {
+                            // 合成失败：走下方现场合成兜底。
+                        }
+                        if (playbackId !== undefined && playbackId !== playbackIdRef.current) {
+                            return;
+                        }
+                        const pref = prefetchedSpeechRef.current;
+                        const head = streamSentenceQueueRef.current[0];
+                        if (pref && prefetchedTextRef.current === head) {
+                            streamSentenceQueueRef.current.shift();
+                            const prefText = prefetchedTextRef.current;
+                            prefetchedSpeechRef.current = null;
+                            prefetchedTextRef.current = '';
+                            const pbId = playbackIdRef.current;
+                            setVoiceStatus('speaking');
+                            void playSpeechReply(pref, prefText, pbId).catch(() => {
+                                if (pbId === playbackIdRef.current) {
+                                    finishSpeaking(pbId);
+                                }
+                            });
+                        } else {
+                            const text = streamSentenceQueueRef.current.shift();
+                            if (text) {
+                                void speakText(text);
+                            } else {
+                                finishSpeaking(playbackId);
+                            }
+                        }
+                        startPrefetch();
+                    })();
+                    return;
+                }
+                streamSentenceQueueRef.current.shift();
                 sentencePlayingRef.current = true;
                 void speakText(nextSentence);
                 startPrefetch();
@@ -1138,6 +1182,7 @@ function App() {
                 prefetchedSpeechRef.current = null;
                 prefetchedTextRef.current = '';
                 prefetchInFlightRef.current = false;
+                prefetchPromiseRef.current = null;
                 // 继续走下面的 relisten 逻辑。
             } else {
                 return;
@@ -1847,6 +1892,7 @@ function App() {
         prefetchedSpeechRef.current = null;
         prefetchedTextRef.current = '';
         prefetchInFlightRef.current = false;
+        prefetchPromiseRef.current = null;
 
         try {
             await StreamChat(new chat.ChatRequest({
@@ -1942,6 +1988,7 @@ function App() {
         prefetchedSpeechRef.current = null;
         prefetchedTextRef.current = '';
         prefetchInFlightRef.current = false;
+        prefetchPromiseRef.current = null;
         isSendingRef.current = false;
         setIsSending(false);
         stopCurrentAudio();
@@ -1959,7 +2006,7 @@ function App() {
         }
         prefetchedTextRef.current = next;
         prefetchInFlightRef.current = true;
-        void SynthesizeSpeech(next, speechLanguage)
+        const promise = SynthesizeSpeech(next, speechLanguage)
             .then((speech) => {
                 if (prefetchedTextRef.current === next) {
                     prefetchedSpeechRef.current = speech;
@@ -1968,7 +2015,9 @@ function App() {
             .catch(() => undefined)
             .finally(() => {
                 prefetchInFlightRef.current = false;
+                prefetchPromiseRef.current = null;
             });
+        prefetchPromiseRef.current = promise;
     }
 
     function handleStreamToken(content: string) {
