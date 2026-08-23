@@ -2,7 +2,7 @@
 
 > 目标：用**本地 SenseVoice** 替代浏览器 Web Speech，解决中文/日语识别不准的问题。
 > SenseVoice 优势：中文识别极准、日语也好、**自动识别语言**（不用手动切 zh/ja）、本地 GPU、免费。
-> 你的显卡 RTX 4060 Ti 完全够用。
+> 你的显卡 RTX 4060（8G）完全够用。
 
 ---
 
@@ -15,9 +15,16 @@ FunASR 官方提供了 OpenAI 兼容的 serving（`funasr-server`），接口和
 conda create -n funasr python=3.10 -y
 conda activate funasr
 
-pip install "funasr[server]" torch torchaudio
-# 若显卡是 4060 Ti，装 CUDA 版 torch（按你环境选 cu118/cu121/cu124）
-# pip install torch==2.1.0+cu118 torchaudio==2.1.0+cu118 -f https://download.pytorch.org/whl/torch_stable.html
+# 装 CUDA 版 torch（4060 用 cu121 最稳）
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# 装 funasr + server（funasr[server] 是 extra，不是单独包）
+pip install "funasr[server]"
+
+# funasr-server 启动检查只要求 fastapi + uvicorn + python-multipart（Windows 都能装）。
+# 报错里提示的 vllm 仅给 fun-asr-nano 用，sensevoice 不需要，且 vLLM 不支持 Windows——
+# 所以不必装 vllm。
+pip install fastapi uvicorn python-multipart
 ```
 
 > 参考官方 OpenAI 兼容示例：[FunASR examples/openai_api](https://github.com/modelscope/FunASR/blob/main/examples/openai_api/README_zh.md)。
