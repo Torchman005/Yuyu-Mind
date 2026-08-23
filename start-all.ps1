@@ -29,7 +29,7 @@ if (-not (Test-Path $configPath)) {
     $configPath = Join-Path $configDir 'config.json'
 }
 if (Test-Path $configPath) {
-    $config = Get-Content $configPath -Raw | ConvertFrom-Json
+    $config = Get-Content $configPath -Raw -Encoding UTF8 | ConvertFrom-Json
     Write-Host "[i] 使用配置：$configPath" -ForegroundColor Cyan
 } else {
     Write-Host "[!] 未找到 config.json（$configPath），将按默认配置运行" -ForegroundColor Yellow
