@@ -76,6 +76,7 @@ func (a *App) Startup(ctx context.Context) {
 	a.providerReg.Register("openai", aiProvider.NewOpenAICompatFactory())
 	a.providerReg.Register("deepseek", aiProvider.NewOpenAICompatFactory())
 	a.providerReg.Register("moonshot", aiProvider.NewOpenAICompatFactory())
+	a.providerReg.Register("bailian", aiProvider.NewOpenAICompatFactory())
 	a.providerReg.Register("ollama", aiProvider.NewOllamaFactory())
 
 	a.toolReg = tools.NewRegistry()
