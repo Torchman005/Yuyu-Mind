@@ -198,15 +198,15 @@ func DefaultConfig() *Config {
 }
 
 // configDir returns the directory holding config.json.
-// 解析顺序：YUYU_CONFIG_DIR 环境变量 → 项目根目录（当前工作目录，便于用户直接改 config.json）→ 用户配置目录。
+// 解析顺序：YUYU_CONFIG_DIR 环境变量 → 项目 configs/ 目录（当前工作目录，便于用户直接改 config.json）→ 用户配置目录。
 func configDir() (string, error) {
 	if dir := strings.TrimSpace(os.Getenv("YUYU_CONFIG_DIR")); dir != "" {
 		return dir, nil
 	}
-	// 项目本地 config.json 优先（便于修改 + 版本化）。
+	// 项目本地 configs/config.json 优先（便于修改 + 版本化）。
 	if cwd, err := os.Getwd(); err == nil {
-		if file, err := os.Stat(filepath.Join(cwd, "config.json")); err == nil && !file.IsDir() {
-			return cwd, nil
+		if file, err := os.Stat(filepath.Join(cwd, "configs", "config.json")); err == nil && !file.IsDir() {
+			return filepath.Join(cwd, "configs"), nil
 		}
 	}
 	dir, err := os.UserConfigDir()

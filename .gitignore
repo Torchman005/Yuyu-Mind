@@ -31,7 +31,6 @@ Thumbs.db
 
 # Config with secrets
 configs/config.json
-/config.json
 
 # Database
 *.db

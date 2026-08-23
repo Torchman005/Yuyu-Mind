@@ -1,7 +1,7 @@
 ﻿<#
   start-all.ps1 —— 一键启动 Yuyu Mind 桌宠及依赖服务
 
-  自动读取 config.json（优先项目根目录 config.json，其次 %APPDATA%\Yuyu-Mind\config.json），
+  自动读取 config.json（优先项目 configs\config.json，其次 %APPDATA%\Yuyu-Mind\config.json），
   按配置判断是否启动：
     - GPT-SoVITS（当 speech.provider == "gpt_sovits"，路径取 services.gpt_sovits_root）
     - SenseVoice（当 asr.model 已配置且 asr.base_url 为本地地址，conda 参数取 services.*）
@@ -21,9 +21,9 @@ $ErrorActionPreference = 'Stop'
 # 项目根 = 本脚本所在目录（无需手动改）
 $ProjectRoot = $PSScriptRoot
 
-# ---- 定位 config.json（项目根优先，其次 AppData） ----
+# ---- 定位 config.json（项目 configs/ 优先，其次 AppData） ----
 $config = $null
-$configPath = Join-Path $ProjectRoot 'config.json'
+$configPath = Join-Path $ProjectRoot 'configs\config.json'
 if (-not (Test-Path $configPath)) {
     $configDir = if ($env:YUYU_CONFIG_DIR) { $env:YUYU_CONFIG_DIR } else { Join-Path $env:APPDATA 'Yuyu-Mind' }
     $configPath = Join-Path $configDir 'config.json'
