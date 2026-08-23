@@ -84,9 +84,9 @@
     "model": ""
   },
   "asr": {
-    "base_url": "",
+    "base_url": "http://127.0.0.1:10095/v1",
     "api_key": "",
-    "model": ""
+    "model": "sensevoice"
   },
   "services": {
     "gpt_sovits_root": "",

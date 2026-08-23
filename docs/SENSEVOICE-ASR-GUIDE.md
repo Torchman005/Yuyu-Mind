@@ -25,21 +25,22 @@ pip install "funasr[server]" torch torchaudio
 ## 2. 启动 SenseVoice 服务
 
 ```powershell
-python -m funasr_server --model iic/SenseVoiceSmall --port 10095
-# 或按官方示例的 server.py 启动（命令因版本略有差异，以官方 README 为准）
+funasr-server --model sensevoice --port 10095
+# 注：funasr-server 是 funasr[server] 提供的 CLI（不是 python -m funasr_server）。
+# --model 取 sensevoice / paraformer-zh / fun-asr-nano；GPU 下默认 auto 是 fun-asr-nano，想用 SenseVoice 就显式 --model sensevoice
 ```
 
 看到监听 `http://127.0.0.1:10095` 即成功。首次会自动下载 SenseVoiceSmall 模型（约 1GB）。
 
 ## 3. 配置 Yuyu
 
-编辑 `config.json`（`%APPDATA%\Yuyu-Mind\config.json`）加 `asr` 段：
+编辑项目 `configs/config.json`（或 `%APPDATA%\Yuyu-Mind\config.json`）的 `asr` 段：
 
 ```jsonc
 "asr": {
-  "base_url": "http://127.0.0.1:10095/v1",   // 若端点是 /audio/transcriptions 则不带 /v1
-  "api_key": "",                              // 本地服务无需 key
-  "model": "iic/SenseVoiceSmall"
+  "base_url": "http://127.0.0.1:10095/v1",
+  "api_key": "",
+  "model": "sensevoice"   // 必须是 funasr-server 认识的简写（sensevoice），不是 iic/SenseVoiceSmall
 }
 ```
 

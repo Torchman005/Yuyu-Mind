@@ -23,8 +23,8 @@ Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" |
     }
 
 # ---- 停止 SenseVoice ----
-Get-CimInstance Win32_Process -Filter "Name = 'python.exe'" |
-    Where-Object { $_.CommandLine -like '*funasr_server*' -or $_.CommandLine -like '*SenseVoiceSmall*' } |
+Get-CimInstance Win32_Process |
+    Where-Object { $_.CommandLine -like '*funasr-server*' -or $_.CommandLine -like '*funasr_server*' -or $_.CommandLine -like '*SenseVoiceSmall*' } |
     ForEach-Object {
         Write-Host "[.] 停止 SenseVoice（PID $($_.ProcessId)）" -ForegroundColor Cyan
         Stop-Process -Id $_.ProcessId -Force

@@ -89,7 +89,9 @@ if ($config -and $config.asr.model) {
 }
 
 if ($useSense) {
-    Start-InNewCmd 'SenseVoice' $ProjectRoot "`"$condaExe`" run -n $senseVoiceEnv python -m funasr_server --model $senseVoiceModel --port $asrPort"
+    # funasr-server 是 funasr[server] 提供的 CLI（不是 python -m funasr_server）。
+    # --model sensevoice 使用内置 SenseVoice；也可用 --model-path <模型ID> 指定自定义模型。
+    Start-InNewCmd 'SenseVoice' $ProjectRoot "`"$condaExe`" run -n $senseVoiceEnv funasr-server --model sensevoice --port $asrPort"
 } else {
     Write-Host '[i] 未配置本地 ASR（asr.model 为空或为云端），跳过 SenseVoice' -ForegroundColor Yellow
 }
