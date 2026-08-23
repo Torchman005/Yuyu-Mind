@@ -2,8 +2,56 @@ package app
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
+
+	"github.com/yuyu-mind/backend/internal/config"
 )
+
+func TestGetSpeechStreamUrl(t *testing.T) {
+	cfg := &config.Config{
+		Speech: config.SpeechConfig{
+			Provider: "gpt_sovits",
+			GPTSoVITS: config.GPTSoVITSConfig{
+				BaseURL:        "http://127.0.0.1:9880",
+				Endpoint:       "/tts",
+				ReferAudioPath: "E:/语音/zh_10s.wav",
+				PromptText:     "你看！月亮好漂亮",
+				PromptLang:     "zh",
+				TextLang:       "zh",
+				StreamingMode:  2,
+			},
+		},
+	}
+	a := &App{cfg: cfg}
+
+	got, err := a.GetSpeechStreamUrl("你好呀", "")
+	if err != nil {
+		t.Fatalf("GetSpeechStreamUrl: %v", err)
+	}
+	if !strings.HasPrefix(got, "http://127.0.0.1:9880/tts?") {
+		t.Fatalf("unexpected url prefix: %s", got)
+	}
+	for _, want := range []string{"text_lang=zh", "prompt_lang=zh", "streaming_mode=2", "ref_audio_path=", "prompt_text=", "text="} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in url: %s", want, got)
+		}
+	}
+	// language 覆盖 text_lang。
+	got2, err := a.GetSpeechStreamUrl("你好呀", "ja")
+	if err != nil {
+		t.Fatalf("GetSpeechStreamUrl ja: %v", err)
+	}
+	if !strings.Contains(got2, "text_lang=ja") {
+		t.Fatalf("expected text_lang=ja: %s", got2)
+	}
+
+	// 非 gpt_sovits 引擎报错，前端回退 buffered。
+	cfg.Speech.Provider = "fish_audio"
+	if _, err := a.GetSpeechStreamUrl("你好呀", ""); err == nil {
+		t.Fatalf("expected error for non gpt_sovits provider")
+	}
+}
 
 func TestParseGptSovitsResponse(t *testing.T) {
 	// api_v2：JSON data[0].audio。

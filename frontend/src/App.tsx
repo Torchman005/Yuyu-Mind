@@ -9,6 +9,7 @@ import {
     GenerateProactiveMessage,
     GetPluginConfig,
     GetState,
+    GetSpeechStreamUrl,
     InvokePluginAction,
     ListAgentTasks,
     ListPlugins,
@@ -140,6 +141,7 @@ const DESKTOP_COMPANION_CONVERSATION_ID = 'desktop-companion';
 const SPEECH_OUTPUT_MODE = ((import.meta.env.VITE_SPEECH_OUTPUT_MODE as string | undefined) || 'cloud').trim().toLowerCase();
 const ALLOW_SYSTEM_TTS_FALLBACK = ((import.meta.env.VITE_ALLOW_SYSTEM_TTS_FALLBACK as string | undefined) || 'false').trim().toLowerCase() === 'true';
 const ENABLE_STREAMING_TTS = ((import.meta.env.VITE_ENABLE_STREAMING_TTS as string | undefined) || 'false').trim().toLowerCase() === 'true';
+const ENABLE_GPT_SOVITS_STREAMING = ((import.meta.env.VITE_ENABLE_GPT_SOVITS_STREAMING as string | undefined) || 'true').trim().toLowerCase() === 'true';
 const ENABLE_REALTIME_SPEECH = ((import.meta.env.VITE_REALTIME_SPEECH as string | undefined) || 'false').trim().toLowerCase() === 'true';
 const SHOW_SPEECH_DEBUG = ((import.meta.env.VITE_SHOW_SPEECH_DEBUG as string | undefined) || 'false').trim().toLowerCase() === 'true';
 const ASR_PROVIDER = ((import.meta.env.VITE_ASR_PROVIDER as string | undefined) || 'browser').trim().toLowerCase();
@@ -530,6 +532,11 @@ function App() {
     const prefetchedTextRef = useRef('');
     const prefetchInFlightRef = useRef(false);
     const prefetchPromiseRef = useRef<Promise<unknown> | null>(null);
+    // GPT-SoVITS 流式：预载一个指向流式 URL 的 <audio> 元素，播放时近零停顿。
+    const prefetchedAudioRef = useRef<HTMLAudioElement | null>(null);
+    // 是否已确认后端支持流式合成（GetSpeechStreamUrl 可用），后续直接走流式。
+    const streamSupportedRef = useRef(false);
+    const streamCheckInFlightRef = useRef<Promise<boolean> | null>(null);
     // 持有最新 handleChatEvent（避免 EventsOn 一次性注册导致的闭包过期）。
     const chatEventHandlerRef = useRef<(event: ChatStreamEvent) => void>(() => undefined);
 
@@ -1083,6 +1090,121 @@ function App() {
         };
     }, []);
 
+    // playQueueHead 播放流式回复队首句：优先用已预载的流式 audio（近零停顿），其次已预合成的 base64；
+    // 否则若预取仍在途则等待它完成；最后现场合成（内部先试流式，失败回退 buffered）。
+    function playQueueHead(playbackId?: number) {
+        const head = streamSentenceQueueRef.current[0];
+        if (!head) {
+            return;
+        }
+
+        // 1) 已预载的流式 audio 且对应队首。
+        if (prefetchedAudioRef.current && prefetchedTextRef.current === head) {
+            const prefAudio = prefetchedAudioRef.current;
+            prefetchedAudioRef.current = null;
+            const h = streamSentenceQueueRef.current.shift();
+            const pbId = playbackIdRef.current;
+            sentencePlayingRef.current = true;
+            stopCurrentAudio();
+            setVoiceStatus('speaking');
+            void playStreamAudio(h!, pbId, prefAudio);
+            startPrefetch();
+            return;
+        }
+
+        // 2) 已预合成的 base64 且对应队首。
+        if (prefetchedSpeechRef.current && prefetchedTextRef.current === head) {
+            const pref = prefetchedSpeechRef.current;
+            const prefText = prefetchedTextRef.current;
+            prefetchedSpeechRef.current = null;
+            prefetchedTextRef.current = '';
+            const h = streamSentenceQueueRef.current.shift();
+            const pbId = playbackIdRef.current;
+            sentencePlayingRef.current = true;
+            stopCurrentAudio();
+            setVoiceStatus('speaking');
+            void playSpeechReply(pref, prefText, pbId).catch(() => {
+                if (pbId === playbackIdRef.current) {
+                    finishSpeaking(pbId);
+                }
+            });
+            startPrefetch();
+            return;
+        }
+
+        // 过期/未就绪的预取：清掉，避免阻塞后续预取。
+        if (prefetchedAudioRef.current) {
+            discardPrefetchAudio();
+            prefetchedTextRef.current = '';
+        }
+        if (prefetchedSpeechRef.current) {
+            prefetchedSpeechRef.current = null;
+            prefetchedTextRef.current = '';
+        }
+
+        // 3) 预取仍在途 → 等待它完成再播。
+        if (prefetchInFlightRef.current && prefetchPromiseRef.current) {
+            sentencePlayingRef.current = true;
+            void (async () => {
+                try {
+                    await Promise.race([
+                        prefetchPromiseRef.current,
+                        new Promise((resolve) => setTimeout(resolve, 3000)),
+                    ]);
+                } catch {
+                    // 合成失败：走下方现场合成兜底。
+                }
+                if (playbackId !== undefined && playbackId !== playbackIdRef.current) {
+                    return;
+                }
+                const h = streamSentenceQueueRef.current[0];
+                if (!h) {
+                    finishSpeaking(playbackId);
+                    return;
+                }
+                if (prefetchedAudioRef.current && prefetchedTextRef.current === h) {
+                    const pa = prefetchedAudioRef.current;
+                    prefetchedAudioRef.current = null;
+                    const hh = streamSentenceQueueRef.current.shift();
+                    const pb = playbackIdRef.current;
+                    sentencePlayingRef.current = true;
+                    stopCurrentAudio();
+                    setVoiceStatus('speaking');
+                    void playStreamAudio(hh!, pb, pa);
+                } else if (prefetchedSpeechRef.current && prefetchedTextRef.current === h) {
+                    const sp = prefetchedSpeechRef.current;
+                    const ptext = prefetchedTextRef.current;
+                    prefetchedSpeechRef.current = null;
+                    prefetchedTextRef.current = '';
+                    const hh = streamSentenceQueueRef.current.shift();
+                    const pb = playbackIdRef.current;
+                    sentencePlayingRef.current = true;
+                    stopCurrentAudio();
+                    setVoiceStatus('speaking');
+                    void playSpeechReply(sp, ptext, pb).catch(() => {
+                        if (pb === playbackIdRef.current) {
+                            finishSpeaking(pb);
+                        }
+                    });
+                } else {
+                    if (prefetchedAudioRef.current) { discardPrefetchAudio(); prefetchedTextRef.current = ''; }
+                    if (prefetchedSpeechRef.current) { prefetchedSpeechRef.current = null; prefetchedTextRef.current = ''; }
+                    const hh = streamSentenceQueueRef.current.shift();
+                    sentencePlayingRef.current = true;
+                    void speakText(hh!);
+                }
+                startPrefetch();
+            })();
+            return;
+        }
+
+        // 4) 无预取在途 → 现场合成（speakText 内部先试流式，失败回退 buffered）。
+        const h = streamSentenceQueueRef.current.shift();
+        sentencePlayingRef.current = true;
+        void speakText(h!);
+        startPrefetch();
+    }
+
     function finishSpeaking(playbackId?: number) {
         if (playbackId !== undefined && playbackId !== playbackIdRef.current) {
             return;
@@ -1094,85 +1216,12 @@ function App() {
         setMouthLevel(0);
         setVoiceStatus('idle');
 
-        // 流式逐句：优先播已预合成的队首句；否则现场合成；LLM done 后清理流式状态。
+        // 流式逐句：优先播已预载/预合成的队首句；否则现场合成；LLM done 后清理流式状态。
         if (streamReplyActiveRef.current) {
             sentencePlayingRef.current = false;
-
-            const prefetched = prefetchedSpeechRef.current;
-            const queueHead = streamSentenceQueueRef.current[0];
-            if (prefetched && queueHead && prefetchedTextRef.current === queueHead) {
-                // 预合成已就绪且对应队首 → 直接播放，无合成等待。
-                streamSentenceQueueRef.current.shift();
-                const prefetchedText = prefetchedTextRef.current;
-                prefetchedSpeechRef.current = null;
-                prefetchedTextRef.current = '';
-                sentencePlayingRef.current = true;
-                stopCurrentAudio();
-                const playbackId = playbackIdRef.current;
-                setVoiceStatus('speaking');
-                void playSpeechReply(prefetched, prefetchedText, playbackId).catch(() => {
-                    if (playbackId === playbackIdRef.current) {
-                        finishSpeaking(playbackId);
-                    }
-                });
-                startPrefetch();
-                return;
-            }
-
-            // 过期/未就绪的预合成：清掉，避免阻塞后续预取。
-            if (prefetchedSpeechRef.current) {
-                prefetchedSpeechRef.current = null;
-                prefetchedTextRef.current = '';
-            }
-
-            const nextSentence = streamSentenceQueueRef.current[0];
-            if (nextSentence) {
-                // 若该句的预合成仍在进行：等待它完成再播（它已提前启动，通常比现场重新合成更快），
-                // 避免短句播完时重复合成造成的二次停顿。等待设上限，超时则回退现场合成。
-                if (prefetchInFlightRef.current && prefetchPromiseRef.current) {
-                    sentencePlayingRef.current = true;
-                    void (async () => {
-                        try {
-                            await Promise.race([
-                                prefetchPromiseRef.current,
-                                new Promise((resolve) => setTimeout(resolve, 3000)),
-                            ]);
-                        } catch {
-                            // 合成失败：走下方现场合成兜底。
-                        }
-                        if (playbackId !== undefined && playbackId !== playbackIdRef.current) {
-                            return;
-                        }
-                        const pref = prefetchedSpeechRef.current;
-                        const head = streamSentenceQueueRef.current[0];
-                        if (pref && prefetchedTextRef.current === head) {
-                            streamSentenceQueueRef.current.shift();
-                            const prefText = prefetchedTextRef.current;
-                            prefetchedSpeechRef.current = null;
-                            prefetchedTextRef.current = '';
-                            const pbId = playbackIdRef.current;
-                            setVoiceStatus('speaking');
-                            void playSpeechReply(pref, prefText, pbId).catch(() => {
-                                if (pbId === playbackIdRef.current) {
-                                    finishSpeaking(pbId);
-                                }
-                            });
-                        } else {
-                            const text = streamSentenceQueueRef.current.shift();
-                            if (text) {
-                                void speakText(text);
-                            } else {
-                                finishSpeaking(playbackId);
-                            }
-                        }
-                        startPrefetch();
-                    })();
-                    return;
-                }
-                streamSentenceQueueRef.current.shift();
-                sentencePlayingRef.current = true;
-                void speakText(nextSentence);
-                startPrefetch();
+            playQueueHead(playbackId);
+            if (sentencePlayingRef.current) {
+                // playQueueHead 已发起队首播放，交给其 onended 继续 drain。
                 return;
             }
             if (streamDoneRef.current) {
@@ -1180,6 +1229,7 @@ function App() {
                 streamDoneRef.current = false;
                 streamSentenceQueueRef.current = [];
                 prefetchedSpeechRef.current = null;
+                discardPrefetchAudio();
                 prefetchedTextRef.current = '';
                 prefetchInFlightRef.current = false;
                 prefetchPromiseRef.current = null;
@@ -1763,6 +1813,14 @@ function App() {
         }
 
         try {
+            // GPT-SoVITS 流式：优先用流式 URL 渐进播放（减少首字与句间延迟）。
+            if (ENABLE_GPT_SOVITS_STREAMING && (await ensureStreamSupported())) {
+                const streamed = await playStreamAudio(content, playbackId);
+                if (streamed) {
+                    return;
+                }
+                // 流式未开始（如不支持/失败）→ 继续走 buffered。
+            }
             if (SPEECH_OUTPUT_MODE === 'cloud' && ENABLE_STREAMING_TTS) {
                 const streamingStarted = await speakWithStreamedCloudVoice(content);
                 if (streamingStarted) {
@@ -1890,6 +1948,7 @@ function App() {
         streamDoneRef.current = false;
         sentencePlayingRef.current = false;
         prefetchedSpeechRef.current = null;
+        discardPrefetchAudio();
         prefetchedTextRef.current = '';
         prefetchInFlightRef.current = false;
         prefetchPromiseRef.current = null;
@@ -1986,6 +2045,7 @@ function App() {
         streamSentenceQueueRef.current = [];
         sentencePlayingRef.current = false;
         prefetchedSpeechRef.current = null;
+        discardPrefetchAudio();
         prefetchedTextRef.current = '';
         prefetchInFlightRef.current = false;
         prefetchPromiseRef.current = null;
@@ -1995,9 +2055,111 @@ function App() {
         setVoiceStatus('idle');
     }
 
-    // startPrefetch 后台预合成下一句（peek 队首，不弹出），避免句间「合成空档」。
+    // ensureStreamSupported 探测后端是否支持流式合成（GetSpeechStreamUrl 可用）。结果缓存。
+    async function ensureStreamSupported(): Promise<boolean> {
+        if (streamSupportedRef.current) {
+            return true;
+        }
+        if (streamCheckInFlightRef.current) {
+            return streamCheckInFlightRef.current;
+        }
+        const check = (async () => {
+            try {
+                const url = await GetSpeechStreamUrl('测试', speechLanguage);
+                streamSupportedRef.current = !!url;
+            } catch {
+                streamSupportedRef.current = false;
+            } finally {
+                streamCheckInFlightRef.current = null;
+            }
+            return streamSupportedRef.current;
+        })();
+        streamCheckInFlightRef.current = check;
+        return check;
+    }
+
+    // preloadStreamAudio 构建某句的流式 URL 并预载 <audio>（拉流缓冲，不播放），供播放时近零停顿。
+    async function preloadStreamAudio(text: string): Promise<HTMLAudioElement | null> {
+        try {
+            const url = await GetSpeechStreamUrl(text, speechLanguage);
+            if (!url) {
+                return null;
+            }
+            const audio = new Audio(url);
+            audio.preload = 'auto';
+            try { audio.load(); } catch { /* 忽略 */ }
+            return audio;
+        } catch {
+            return null;
+        }
+    }
+
+    // discardPrefetchAudio 放弃未被播放的预载流（停止拉流，避免占用 GPT-SoVITS 的资源）。
+    function discardPrefetchAudio() {
+        const el = prefetchedAudioRef.current;
+        if (el) {
+            el.onended = null;
+            el.onerror = null;
+            try {
+                el.pause();
+                el.removeAttribute('src');
+                el.load();
+            } catch {
+                // 忽略
+            }
+        }
+        prefetchedAudioRef.current = null;
+    }
+
+    // playStreamAudio 用流式 URL 渐进播放一句；preloaded 为预载好的元素（近零停顿）。
+    // 调用方负责先 stopCurrentAudio() 并取 playbackId。返回 true 表示已开始流式播放；
+    // 失败返回 false，调用方回退到 buffered 合成。
+    async function playStreamAudio(content: string, playbackId: number, preloaded?: HTMLAudioElement | null): Promise<boolean> {
+        let audio = preloaded ?? null;
+        if (!audio) {
+            const url = await GetSpeechStreamUrl(content, speechLanguage);
+            if (!url) {
+                return false;
+            }
+            audio = new Audio(url);
+            audio.preload = 'auto';
+            try { audio.load(); } catch { /* 忽略 */ }
+        }
+        if (playbackId !== playbackIdRef.current) {
+            return true;
+        }
+        audioRef.current = audio;
+        attachLipSync(audio, playbackId);
+        setVoiceStatus('speaking');
+        audio.onended = () => finishSpeaking(playbackId);
+        audio.onerror = () => {
+            if (playbackId !== playbackIdRef.current) {
+                return;
+            }
+            // 流式播放失败 → 回退到 buffered 合成。
+            console.warn('GPT-SoVITS streaming 播放失败，回退到 buffered TTS。');
+            void speakWithBufferedCloudVoice(content);
+        };
+        try {
+            await audio.play();
+            return true;
+        } catch (reason) {
+            if (playbackId !== playbackIdRef.current) {
+                return true;
+            }
+            if (isInterruptedPlaybackError(reason)) {
+                finishSpeaking(playbackId);
+                return true;
+            }
+            console.warn('GPT-SoVITS streaming play() 被拒绝，回退到 buffered TTS:', reason);
+            void speakWithBufferedCloudVoice(content);
+            return true;
+        }
+    }
+
+    // startPrefetch 后台预载/预合成下一句（peek 队首，不弹出），避免句间「合成空档」。
     function startPrefetch() {
-        if (prefetchInFlightRef.current || prefetchedSpeechRef.current) {
+        if (prefetchInFlightRef.current || prefetchedSpeechRef.current || prefetchedAudioRef.current) {
             return;
         }
         const next = streamSentenceQueueRef.current[0];
@@ -2006,18 +2168,30 @@ function App() {
         }
         prefetchedTextRef.current = next;
         prefetchInFlightRef.current = true;
-        const promise = SynthesizeSpeech(next, speechLanguage)
-            .then((speech) => {
+        const promise = (async () => {
+            // 优先流式：预载一个指向流式 URL 的 <audio>（播放时近零停顿）。
+            if (ENABLE_GPT_SOVITS_STREAMING && (await ensureStreamSupported())) {
+                const audio = await preloadStreamAudio(next);
+                if (audio && prefetchedTextRef.current === next) {
+                    prefetchedAudioRef.current = audio;
+                }
+                return;
+            }
+            // 回退：buffered 预合成 base64。
+            try {
+                const speech = await SynthesizeSpeech(next, speechLanguage);
                 if (prefetchedTextRef.current === next) {
                     prefetchedSpeechRef.current = speech;
                 }
-            })
-            .catch(() => undefined)
-            .finally(() => {
-                prefetchInFlightRef.current = false;
-                prefetchPromiseRef.current = null;
-            });
+            } catch {
+                // 忽略，播放时兜底。
+            }
+        })();
         prefetchPromiseRef.current = promise;
+        void promise.finally(() => {
+            prefetchInFlightRef.current = false;
+            prefetchPromiseRef.current = null;
+        });
     }
 
     function handleStreamToken(content: string) {

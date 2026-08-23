@@ -39,6 +39,8 @@ export function GetPluginConfig(arg1:string):Promise<Record<string, any>>;
 
 export function GetProviders():Promise<Record<string, types.ProviderConfig>>;
 
+export function GetSpeechStreamUrl(arg1:string,arg2:string):Promise<string>;
+
 export function GetState():Promise<app.AppState>;
 
 export function GetTokenUsageByProviderModel():Promise<Array<db.TokenUsageSummary>>;

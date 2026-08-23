@@ -66,6 +66,10 @@ export function GetProviders() {
   return window['go']['app']['App']['GetProviders']();
 }
 
+export function GetSpeechStreamUrl(arg1, arg2) {
+  return window['go']['app']['App']['GetSpeechStreamUrl'](arg1, arg2);
+}
+
 export function GetState() {
   return window['go']['app']['App']['GetState']();
 }

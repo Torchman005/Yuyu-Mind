@@ -107,6 +107,7 @@ type GPTSoVITSConfig struct {
 	PromptText     string `json:"prompt_text"`      // 参考音频对应的文本内容
 	PromptLang     string `json:"prompt_lang"`      // 参考文本语言（auto/zh/ja/en）
 	TextLang       string `json:"text_lang"`        // 合成文本语言（auto/zh/ja/en）
+	StreamingMode  int    `json:"streaming_mode"`   // GPT-SoVITS 流式模式：0 关闭 | 1 最佳音质 | 2 中等 | 3 更快响应
 }
 
 // FishAudioConfig stores Fish Audio TTS settings.
@@ -169,9 +170,10 @@ func DefaultConfig() *Config {
 				Format:  "mp3",
 			},
 			GPTSoVITS: GPTSoVITSConfig{
-				Endpoint:   "/tts",
-				PromptLang: "auto",
-				TextLang:   "auto",
+				Endpoint:      "/tts",
+				PromptLang:    "auto",
+				TextLang:      "auto",
+				StreamingMode: 1,
 			},
 		},
 		ASR: ASRConfig{

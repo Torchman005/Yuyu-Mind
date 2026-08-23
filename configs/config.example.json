@@ -56,7 +56,8 @@
       "refer_audio_path": "",
       "prompt_text": "",
       "prompt_lang": "zh",
-      "text_lang": "zh"
+      "text_lang": "zh",
+      "streaming_mode": 1
     }
   },
   "vision": {

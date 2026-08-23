@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -24,6 +26,58 @@ type gptSovitsRequest struct {
 	Temperature     float64 `json:"temperature,omitempty"`
 	SpeedFactor     float64 `json:"speed_factor,omitempty"`
 	TextSplitMethod string  `json:"text_split_method,omitempty"`
+}
+
+// GetSpeechStreamUrl 返回一个可直接用于 <audio src> 的 GPT-SoVITS 流式合成 URL。
+// 前端用它做渐进式播放：在上一句播放时提前用 audio.load() 预载，下一句播放时近零停顿。
+// 仅 speech.provider 为 gpt_sovits 时可用；其余引擎返回错误，前端回退到 buffered 合成。
+func (a *App) GetSpeechStreamUrl(text string, language string) (string, error) {
+	if strings.TrimSpace(text) == "" {
+		return "", fmt.Errorf("speech text cannot be empty")
+	}
+	if !strings.EqualFold(strings.TrimSpace(a.cfg.Speech.Provider), "gpt_sovits") {
+		return "", fmt.Errorf("streaming TTS 仅支持 gpt_sovits，当前引擎 %q", a.cfg.Speech.Provider)
+	}
+	cfg := a.cfg.Speech.GPTSoVITS
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+	if baseURL == "" {
+		return "", fmt.Errorf("GPT-SoVITS base url 未配置（config.json → speech.gpt_sovits.base_url）")
+	}
+	referPath := strings.TrimSpace(cfg.ReferAudioPath)
+	if referPath == "" {
+		return "", fmt.Errorf("GPT-SoVITS 参考音频路径未配置（config.json → speech.gpt_sovits.refer_audio_path）")
+	}
+
+	endpoint := strings.TrimSpace(cfg.Endpoint)
+	if endpoint == "" {
+		endpoint = "/tts"
+	}
+	if !strings.HasPrefix(endpoint, "/") {
+		endpoint = "/" + endpoint
+	}
+
+	textLang := strings.TrimSpace(language)
+	if textLang == "" {
+		textLang = defaultString(cfg.TextLang, "auto")
+	}
+
+	streamingMode := cfg.StreamingMode
+	if streamingMode <= 0 {
+		streamingMode = 1
+	}
+
+	q := url.Values{}
+	q.Set("text", text)
+	q.Set("text_lang", textLang)
+	q.Set("ref_audio_path", referPath)
+	q.Set("prompt_text", cfg.PromptText)
+	q.Set("prompt_lang", defaultString(cfg.PromptLang, "auto"))
+	q.Set("top_k", "5")
+	q.Set("top_p", "1.0")
+	q.Set("temperature", "1.0")
+	q.Set("streaming_mode", strconv.Itoa(streamingMode))
+
+	return baseURL + endpoint + "?" + q.Encode(), nil
 }
 
 // synthesizeGptSovitsSpeech 调用本地 GPT-SoVITS 合成语音（音色由参考音频决定）。
