@@ -197,6 +197,17 @@ frontend/                       Wails 前端占位
 
 前置：Go 1.23+（**必须 64 位**，即 `go env GOARCH` 输出 `amd64`）、Node.js 18+、Wails v2 CLI。
 
+**一键启动（推荐，双击即可）**：
+
+```
+start-all.bat            # 自动判断并启动 GPT-SoVITS/SenseVoice + 构建前端 + wails dev
+stop-all.bat             # 一键停止
+```
+
+> `start-all.bat` 内部调用 `start-all.ps1`（可用 `start-all.bat -SkipBuild` 跳过前端构建）。二者读取 `configs/config.json` 判断要启动哪些服务，路径等见 `services` 段。
+
+手动方式：
+
 ```powershell
 # 0) 确认 Go 是 64 位（sonic 等依赖不支持 32 位，会报 overflows int）
 go env GOARCH    # 必须是 amd64
