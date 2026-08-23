@@ -1,13 +1,16 @@
-<#
+﻿<#
   start-all.ps1 —— 一键启动 Yuyu Mind 桌宠及依赖服务
 
-  会读取 config.json，按配置自动判断是否启动：
-    - GPT-SoVITS（当 speech.provider == "gpt_sovits"）
-    - SenseVoice（当 asr.model 已配置且 asr.base_url 为本地地址）
+  自动读取 config.json（优先项目根目录 config.json，其次 %APPDATA%\Yuyu-Mind\config.json），
+  按配置判断是否启动：
+    - GPT-SoVITS（当 speech.provider == "gpt_sovits"，路径取 services.gpt_sovits_root）
+    - SenseVoice（当 asr.model 已配置且 asr.base_url 为本地地址，conda 参数取 services.*）
+
+  无需手动改本脚本：项目根、服务路径、conda 环境都从 config.json 读取。
 
   用法：
-    .\start-all.ps1             # 构建前端 + 启动所有服务 + wails dev
-    .\start-all.ps1 -SkipBuild  # 跳过前端构建（已构建过时用）
+    .\start-all.ps1             # 构建前端 + 启动服务 + wails dev
+    .\start-all.ps1 -SkipBuild  # 跳过前端构建
 #>
 param(
     [switch]$SkipBuild
@@ -15,25 +18,32 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-# ==================== 可修改配置 ====================
-$ProjectRoot    = 'D:\itJinYu_toolkit\AI-pet\Yuyu-Mind2'
-$GptSovitsRoot  = 'D:\itJinYu_toolkit\GPT-SoVITS-v2pro-20250604\GPT-SoVITS-v2pro-20250604'
-$CondaExe       = 'conda'   # 若 conda 不在 PATH，改成绝对路径，如 'C:\Users\23182\miniconda3\Scripts\conda.exe'
-$SenseVoiceEnv  = 'funasr'  # 你安装 FunASR 的 conda 环境名
-$SenseVoiceModel = 'iic/SenseVoiceSmall'
-# ====================================================
+# 项目根 = 本脚本所在目录（无需手动改）
+$ProjectRoot = $PSScriptRoot
 
-# ---- 定位 config.json ----
-$configDir  = if ($env:YUYU_CONFIG_DIR) { $env:YUYU_CONFIG_DIR } else { Join-Path $env:APPDATA 'Yuyu-Mind' }
-$configPath = Join-Path $configDir 'config.json'
-
+# ---- 定位 config.json（项目根优先，其次 AppData） ----
 $config = $null
+$configPath = Join-Path $ProjectRoot 'config.json'
+if (-not (Test-Path $configPath)) {
+    $configDir = if ($env:YUYU_CONFIG_DIR) { $env:YUYU_CONFIG_DIR } else { Join-Path $env:APPDATA 'Yuyu-Mind' }
+    $configPath = Join-Path $configDir 'config.json'
+}
 if (Test-Path $configPath) {
     $config = Get-Content $configPath -Raw | ConvertFrom-Json
+    Write-Host "[i] 使用配置：$configPath" -ForegroundColor Cyan
 } else {
-    Write-Host "[!] 未找到 config.json：$configPath" -ForegroundColor Yellow
-    Write-Host '    将不启动 GPT-SoVITS / SenseVoice（按默认配置运行）'
+    Write-Host "[!] 未找到 config.json（$configPath），将按默认配置运行" -ForegroundColor Yellow
 }
+
+# ---- 从配置读取本地服务路径（services.*），留空则用默认 ----
+$gptSovitsRoot   = [string]$config.services.gpt_sovits_root
+$condaExe        = [string]$config.services.conda_exe
+$senseVoiceEnv   = [string]$config.services.sensevoice_env
+$senseVoiceModel = [string]$config.services.sensevoice_model
+if (-not $gptSovitsRoot)  { $gptSovitsRoot  = 'D:\itJinYu_toolkit\GPT-SoVITS-v2pro-20250604\GPT-SoVITS-v2pro-20250604' }
+if (-not $condaExe)       { $condaExe       = 'conda' }
+if (-not $senseVoiceEnv)  { $senseVoiceEnv  = 'funasr' }
+if (-not $senseVoiceModel){ $senseVoiceModel = 'iic/SenseVoiceSmall' }
 
 # ---- 在新窗口启动一个服务（cmd /k 保持窗口） ----
 function Start-InNewCmd([string]$Title, [string]$WorkDir, [string]$Cmd) {
@@ -45,7 +55,7 @@ function Start-InNewCmd([string]$Title, [string]$WorkDir, [string]$Cmd) {
     [System.Diagnostics.Process]::Start($psi) | Out-Null
 }
 
-# ==================== 判断 GPT-SoVITS ====================
+# ==================== 判断 + 启动 GPT-SoVITS ====================
 $useGpt  = $false
 $gptPort = 9880
 if ($config -and $config.speech.provider -eq 'gpt_sovits') {
@@ -55,17 +65,17 @@ if ($config -and $config.speech.provider -eq 'gpt_sovits') {
 }
 
 if ($useGpt) {
-    $py = Join-Path $GptSovitsRoot 'runtime\python.exe'
+    $py = Join-Path $gptSovitsRoot 'runtime\python.exe'
     if (-not (Test-Path $py)) {
-        Write-Host "[!] 未找到 GPT-SoVITS 的 runtime\python.exe（$GptSovitsRoot），跳过。请改脚本里的 GptSovitsRoot。" -ForegroundColor Red
+        Write-Host "[!] 未找到 GPT-SoVITS runtime\python.exe（$gptSovitsRoot）。请在 config.json 的 services.gpt_sovits_root 填写正确路径。" -ForegroundColor Red
     } else {
-        Start-InNewCmd 'GPT-SoVITS' $GptSovitsRoot "runtime\python.exe api_v2.py -a 127.0.0.1 -p $gptPort -c GPT_SoVITS/configs/tts_infer.yaml"
+        Start-InNewCmd 'GPT-SoVITS' $gptSovitsRoot "runtime\python.exe api_v2.py -a 127.0.0.1 -p $gptPort -c GPT_SoVITS/configs/tts_infer.yaml"
     }
 } else {
     Write-Host '[i] speech.provider != gpt_sovits，跳过 GPT-SoVITS' -ForegroundColor Yellow
 }
 
-# ==================== 判断 SenseVoice ====================
+# ==================== 判断 + 启动 SenseVoice ====================
 $useSense = $false
 $asrPort  = 10095
 if ($config -and $config.asr.model) {
@@ -79,7 +89,7 @@ if ($config -and $config.asr.model) {
 }
 
 if ($useSense) {
-    Start-InNewCmd 'SenseVoice' $ProjectRoot "`"$CondaExe`" run -n $SenseVoiceEnv python -m funasr_server --model $SenseVoiceModel --port $asrPort"
+    Start-InNewCmd 'SenseVoice' $ProjectRoot "`"$condaExe`" run -n $senseVoiceEnv python -m funasr_server --model $senseVoiceModel --port $asrPort"
 } else {
     Write-Host '[i] 未配置本地 ASR（asr.model 为空或为云端），跳过 SenseVoice' -ForegroundColor Yellow
 }

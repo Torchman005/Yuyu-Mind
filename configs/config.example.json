@@ -80,5 +80,11 @@
     "base_url": "",
     "api_key": "",
     "model": ""
+  },
+  "services": {
+    "gpt_sovits_root": "",
+    "conda_exe": "conda",
+    "sensevoice_env": "funasr",
+    "sensevoice_model": "iic/SenseVoiceSmall"
   }
 }

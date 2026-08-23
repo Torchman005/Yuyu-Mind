@@ -22,6 +22,16 @@ type Config struct {
 	Speech         SpeechConfig        `json:"speech"`
 	Vision         VisionConfig        `json:"vision"`
 	ASR            ASRConfig           `json:"asr"`
+	Services       ServiceConfig       `json:"services"`
+}
+
+// ServiceConfig 记录本地服务（GPT-SoVITS / SenseVoice / conda）的安装路径与参数，
+// 供 start-all.ps1 等脚本读取，避免用户手动改脚本。Go 运行时本身不使用这些字段。
+type ServiceConfig struct {
+	GPTSoVITSRoot   string `json:"gpt_sovits_root"`  // GPT-SoVITS 安装根目录（含 runtime\python.exe）
+	CondaExe        string `json:"conda_exe"`        // conda 可执行文件（可留空用 PATH 上的 conda）
+	SenseVoiceEnv   string `json:"sensevoice_env"`   // 安装 FunASR 的 conda 环境名
+	SenseVoiceModel string `json:"sensevoice_model"` // SenseVoice 模型名
 }
 
 // VisionConfig 配置多模态视觉（用于「看屏幕」描述画面）。
@@ -179,14 +189,25 @@ func DefaultConfig() *Config {
 		ASR: ASRConfig{
 			Model: "", // 默认未启用模型 ASR，前端回退浏览器语音识别
 		},
+		Services: ServiceConfig{
+			CondaExe:        "conda",
+			SenseVoiceEnv:   "funasr",
+			SenseVoiceModel: "iic/SenseVoiceSmall",
+		},
 	}
 }
 
-// configDir returns the Yuyu Mind configuration directory.
-// 可用环境变量 YUYU_CONFIG_DIR 覆盖（便于测试与便携配置）。
+// configDir returns the directory holding config.json.
+// 解析顺序：YUYU_CONFIG_DIR 环境变量 → 项目根目录（当前工作目录，便于用户直接改 config.json）→ 用户配置目录。
 func configDir() (string, error) {
 	if dir := strings.TrimSpace(os.Getenv("YUYU_CONFIG_DIR")); dir != "" {
 		return dir, nil
+	}
+	// 项目本地 config.json 优先（便于修改 + 版本化）。
+	if cwd, err := os.Getwd(); err == nil {
+		if file, err := os.Stat(filepath.Join(cwd, "config.json")); err == nil && !file.IsDir() {
+			return cwd, nil
+		}
 	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
@@ -195,13 +216,13 @@ func configDir() (string, error) {
 	return filepath.Join(dir, "Yuyu-Mind"), nil
 }
 
-// defaultDBPath returns the default SQLite database path.
+// defaultDBPath returns the default SQLite database path（始终放在用户配置目录，保留对话数据）。
 func defaultDBPath() (string, error) {
-	dir, err := configDir()
+	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(dir, "yuyu-mind.db"), nil
+	return filepath.Join(dir, "Yuyu-Mind", "yuyu-mind.db"), nil
 }
 
 // Load reads config from disk and creates a default config when missing.
