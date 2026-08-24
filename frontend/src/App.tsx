@@ -141,7 +141,7 @@ const DESKTOP_COMPANION_CONVERSATION_ID = 'desktop-companion';
 const SPEECH_OUTPUT_MODE = ((import.meta.env.VITE_SPEECH_OUTPUT_MODE as string | undefined) || 'cloud').trim().toLowerCase();
 const ALLOW_SYSTEM_TTS_FALLBACK = ((import.meta.env.VITE_ALLOW_SYSTEM_TTS_FALLBACK as string | undefined) || 'false').trim().toLowerCase() === 'true';
 const ENABLE_STREAMING_TTS = ((import.meta.env.VITE_ENABLE_STREAMING_TTS as string | undefined) || 'false').trim().toLowerCase() === 'true';
-const ENABLE_GPT_SOVITS_STREAMING = ((import.meta.env.VITE_ENABLE_GPT_SOVITS_STREAMING as string | undefined) || 'true').trim().toLowerCase() === 'true';
+const ENABLE_GPT_SOVITS_STREAMING = ((import.meta.env.VITE_ENABLE_GPT_SOVITS_STREAMING as string | undefined) || 'false').trim().toLowerCase() === 'true';
 const ENABLE_REALTIME_SPEECH = ((import.meta.env.VITE_REALTIME_SPEECH as string | undefined) || 'false').trim().toLowerCase() === 'true';
 const SHOW_SPEECH_DEBUG = ((import.meta.env.VITE_SHOW_SPEECH_DEBUG as string | undefined) || 'false').trim().toLowerCase() === 'true';
 const ASR_PROVIDER = ((import.meta.env.VITE_ASR_PROVIDER as string | undefined) || 'browser').trim().toLowerCase();
@@ -149,7 +149,7 @@ const ASR_LANGUAGE = (() => {
     const value = ((import.meta.env.VITE_ASR_LANGUAGE as string | undefined) || 'zh').trim().toLowerCase();
     return value === 'auto' ? 'auto' : value.startsWith('ja') ? 'ja' : 'zh';
 })();
-const DEFAULT_SPEECH_LANGUAGE = ((import.meta.env.VITE_SPEECH_LANGUAGE as string | undefined) || 'ja').trim().toLowerCase().startsWith('zh') ? 'zh' : 'ja';
+const DEFAULT_SPEECH_LANGUAGE = ((import.meta.env.VITE_SPEECH_LANGUAGE as string | undefined) || 'zh').trim().toLowerCase().startsWith('ja') ? 'ja' : 'zh';
 const PROACTIVE_ENABLED = ((import.meta.env.VITE_PROACTIVE_ENABLED as string | undefined) || 'true').trim().toLowerCase() === 'true';
 const PROACTIVE_IDLE_MINUTES = Number((import.meta.env.VITE_PROACTIVE_IDLE_MINUTES as string | undefined) || '8');
 const PROACTIVE_COOLDOWN_MINUTES = Number((import.meta.env.VITE_PROACTIVE_COOLDOWN_MINUTES as string | undefined) || '15');
@@ -496,7 +496,9 @@ function App() {
     const [isTextInputOpen, setIsTextInputOpen] = useState(false);
     const [continuousVoiceMode, setContinuousVoiceMode] = useState(() => (localStorage.getItem(CONTINUOUS_VOICE_KEY) ?? localStorage.getItem(LEGACY_CONTINUOUS_VOICE_KEY)) === 'true');
     const [conversationMode, setConversationMode] = useState(() => localStorage.getItem(CONVERSATION_MODE_KEY) === 'free' ? 'free' : DEFAULT_CONVERSATION_MODE);
-    const [speechLanguage, setSpeechLanguage] = useState(() => normalizeSpeechLanguage(localStorage.getItem(SPEECH_LANGUAGE_KEY) || DEFAULT_SPEECH_LANGUAGE));
+    // 默认强制中文语音：本机人设/回复都是中文，且旧版本把默认值误设为 'ja' 且可能残留在 localStorage，
+    // 导致 text_lang=ja 用日语 G2P 读中文而乱读/截断。这里直接以 'zh' 初始化，忽略旧存储。
+    const [speechLanguage, setSpeechLanguage] = useState<string>('zh');
     const freeConversationMode = conversationMode === 'free';
     const effectiveContinuousVoiceMode = continuousVoiceMode || freeConversationMode;
     const feedRef = useRef<HTMLDivElement>(null);
@@ -505,7 +507,6 @@ function App() {
     const bargeRecognitionRef = useRef<any>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const playbackIdRef = useRef(0);
-    const audioContextRef = useRef<AudioContext | null>(null);
     const lipSyncCleanupRef = useRef<(() => void) | null>(null);
     const isSendingRef = useRef(false);
     const voiceStatusRef = useRef('idle');
@@ -1103,9 +1104,9 @@ function App() {
             const prefAudio = prefetchedAudioRef.current;
             prefetchedAudioRef.current = null;
             const h = streamSentenceQueueRef.current.shift();
-            const pbId = playbackIdRef.current;
             sentencePlayingRef.current = true;
             stopCurrentAudio();
+            const pbId = playbackIdRef.current;
             setVoiceStatus('speaking');
             void playStreamAudio(h!, pbId, prefAudio);
             startPrefetch();
@@ -1119,9 +1120,9 @@ function App() {
             prefetchedSpeechRef.current = null;
             prefetchedTextRef.current = '';
             const h = streamSentenceQueueRef.current.shift();
-            const pbId = playbackIdRef.current;
             sentencePlayingRef.current = true;
             stopCurrentAudio();
+            const pbId = playbackIdRef.current;
             setVoiceStatus('speaking');
             void playSpeechReply(pref, prefText, pbId).catch(() => {
                 if (pbId === playbackIdRef.current) {
@@ -1166,9 +1167,9 @@ function App() {
                     const pa = prefetchedAudioRef.current;
                     prefetchedAudioRef.current = null;
                     const hh = streamSentenceQueueRef.current.shift();
-                    const pb = playbackIdRef.current;
                     sentencePlayingRef.current = true;
                     stopCurrentAudio();
+                    const pb = playbackIdRef.current;
                     setVoiceStatus('speaking');
                     void playStreamAudio(hh!, pb, pa);
                 } else if (prefetchedSpeechRef.current && prefetchedTextRef.current === h) {
@@ -1177,9 +1178,9 @@ function App() {
                     prefetchedSpeechRef.current = null;
                     prefetchedTextRef.current = '';
                     const hh = streamSentenceQueueRef.current.shift();
-                    const pb = playbackIdRef.current;
                     sentencePlayingRef.current = true;
                     stopCurrentAudio();
+                    const pb = playbackIdRef.current;
                     setVoiceStatus('speaking');
                     void playSpeechReply(sp, ptext, pb).catch(() => {
                         if (pb === playbackIdRef.current) {
@@ -1425,59 +1426,37 @@ function App() {
         }
     }
 
+    // attachLipSync 用「基于播放时间的简易口型动画」驱动嘴巴，而非把 <audio> 路由进 Web Audio。
+    // 原因：createMediaElementSource 会把 <audio> 输出永久路由进 AudioContext，一旦 context 是
+    // suspended（首句刚创建、无近期用户手势），整句就静音（听不到）。仿照 Shinsekai：音频走浏览器
+    // 默认输出、保证一定有声音；口型用时间动画近似，不再依赖 Web Audio 分析。
     function attachLipSync(audio: HTMLAudioElement, playbackId: number) {
-        const AudioContextConstructor = window.AudioContext || (window as any).webkitAudioContext;
-        if (!AudioContextConstructor) {
-            return;
-        }
-
-        try {
-            const audioContext = audioContextRef.current ?? new AudioContextConstructor();
-            audioContextRef.current = audioContext;
-            const source = audioContext.createMediaElementSource(audio);
-            const analyser = audioContext.createAnalyser();
-            analyser.fftSize = 512;
-            analyser.smoothingTimeConstant = 0.45;
-            source.connect(analyser);
-            analyser.connect(audioContext.destination);
-
-            const samples = new Uint8Array(analyser.fftSize);
-            let frame = 0;
-            let active = true;
-            let lastLevel = 0;
-            const tick = () => {
-                if (!active || playbackId !== playbackIdRef.current) {
-                    return;
-                }
-                analyser.getByteTimeDomainData(samples);
-                let sum = 0;
-                for (const sample of samples) {
-                    const centered = (sample - 128) / 128;
-                    sum += centered * centered;
-                }
-                const rms = Math.sqrt(sum / samples.length);
-                const nextLevel = Math.min(1, Math.max(0, rms * 4.8));
-                lastLevel += (nextLevel - lastLevel) * 0.55;
-                setMouthLevel(lastLevel < 0.018 ? 0 : lastLevel);
-                frame = window.requestAnimationFrame(tick);
-            };
-
-            lipSyncCleanupRef.current?.();
-            lipSyncCleanupRef.current = () => {
-                active = false;
-                if (frame) {
-                    window.cancelAnimationFrame(frame);
-                }
+        let frame = 0;
+        let active = true;
+        const tick = () => {
+            if (!active || playbackId !== playbackIdRef.current) {
+                return;
+            }
+            const playing = !audio.paused && !audio.ended && (audio.duration === Infinity || audio.currentTime < audio.duration);
+            if (playing) {
+                const t = performance.now() / 1000;
+                const level = 0.32 + 0.32 * Math.abs(Math.sin(t * 7.5)) * Math.abs(Math.sin(t * 3.2)) + Math.random() * 0.12;
+                setMouthLevel(Math.min(1, Math.max(0, level)));
+            } else {
                 setMouthLevel(0);
-                source.disconnect();
-                analyser.disconnect();
-            };
+            }
+            frame = window.requestAnimationFrame(tick);
+        };
 
-            void audioContext.resume?.();
-            tick();
-        } catch (error) {
-            console.warn('Lip sync analyser unavailable:', error);
-        }
+        lipSyncCleanupRef.current?.();
+        lipSyncCleanupRef.current = () => {
+            active = false;
+            if (frame) {
+                window.cancelAnimationFrame(frame);
+            }
+            setMouthLevel(0);
+        };
+        tick();
     }
 
     function speakWithSystemVoice(text: string, playbackId = playbackIdRef.current) {
@@ -1535,7 +1514,11 @@ function App() {
             setVoiceError('云端 TTS 音频播放失败，已切换到系统朗读。');
             speakWithSystemVoice(content, playbackId);
         };
-        await audio.play();
+        await audio.play().then(() => {
+            console.log('[tts] play started, duration=', audio.duration);
+        }).catch((err) => {
+            console.warn('[tts] play rejected:', err?.name, err?.message);
+        });
         addSpeechMetric({phase: 'buffered-play-started', elapsedMs: 0});
         startBargeInListening(playbackId);
         return true;
@@ -1552,7 +1535,27 @@ function App() {
         });
 
         try {
-            const speech = await SynthesizeSpeech(content, speechLanguage);
+            // 合成偶发失败（如 GPT-SoVITS 瞬时忙）会丢一句；这里重试一次再放弃，避免静默丢句。
+            let speech: app.SpeechReply | null = null;
+            let lastError: unknown;
+            for (let attempt = 0; attempt < 2; attempt++) {
+                try {
+                    speech = await SynthesizeSpeech(content, speechLanguage);
+                    break;
+                } catch (reason) {
+                    lastError = reason;
+                    if (playbackId !== playbackIdRef.current) {
+                        return true;
+                    }
+                    if (attempt === 0) {
+                        await new Promise((resolve) => setTimeout(resolve, 300));
+                    }
+                }
+            }
+            if (!speech) {
+                throw lastError;
+            }
+            console.log('[tts] synth ok:', JSON.stringify(content), 'audioBase64Len=', speech.audioBase64.length, 'provider=', speech.provider);
             addSpeechMetric({
                 phase: 'buffered-audio-ready',
                 elapsedMs: Math.round(performance.now() - startedAt),
@@ -1570,6 +1573,7 @@ function App() {
                 finishSpeaking(playbackId);
                 return true;
             }
+            console.warn('[tts] synth failed:', JSON.stringify(content), reason);
             if (!ALLOW_SYSTEM_TTS_FALLBACK) {
                 console.warn('Cloud TTS failed:', reason);
                 setVoiceError(fallbackMessage || '云端 TTS 暂时连不上，已停止播放。请检查 TTS_PROVIDER、API Key 或网络。');
@@ -2199,6 +2203,7 @@ function App() {
         if (!text) {
             return;
         }
+        console.log('[tts] stream token:', JSON.stringify(text), 'queue=', streamSentenceQueueRef.current.length, 'playing=', sentencePlayingRef.current);
         if (sentencePlayingRef.current) {
             streamSentenceQueueRef.current.push(text);
         } else {

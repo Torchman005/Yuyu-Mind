@@ -6,12 +6,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 )
+
+// ttsSplitMethod 是发送给 GPT-SoVITS 的 text_split_method。
+// 默认 cut5 会在逗号等处分句并常把「带尾随逗号的短片段」哼成轻哼；cut1 对整句朗读更稳，
+// 能避免短片段被哼声/丢读。
+const ttsSplitMethod = "cut1"
 
 // gptSovitsRequest 对应 GPT-SoVITS api_v2.py 的 TTS 入参。
 // 不同版本字段略有差异，这里覆盖常用字段，多余的用 omitempty 省略。
@@ -60,6 +67,10 @@ func (a *App) GetSpeechStreamUrl(text string, language string) (string, error) {
 	if textLang == "" {
 		textLang = defaultString(cfg.TextLang, "auto")
 	}
+	// 文本语言须与文本脚本一致，避免中文文本被日语 G2P 乱读/截断。
+	if detected := DetectTextLang(text); detected != "" {
+		textLang = detected
+	}
 
 	streamingMode := cfg.StreamingMode
 	if streamingMode <= 0 {
@@ -75,6 +86,7 @@ func (a *App) GetSpeechStreamUrl(text string, language string) (string, error) {
 	q.Set("top_k", "5")
 	q.Set("top_p", "1.0")
 	q.Set("temperature", "1.0")
+	q.Set("text_split_method", ttsSplitMethod)
 	q.Set("streaming_mode", strconv.Itoa(streamingMode))
 
 	return baseURL + endpoint + "?" + q.Encode(), nil
@@ -105,20 +117,27 @@ func (a *App) synthesizeGptSovitsSpeech(text string, language string) (SpeechRep
 	if textLang == "" {
 		textLang = defaultString(cfg.TextLang, "auto")
 	}
+	// 文本语言必须与实际文本脚本一致：中文文本不能用日语 G2P（否则会乱码/截断）。
+	// 若传入语言与文本脚本不符，按脚本自动纠正（例如前端默认曾误传 ja，中文回复被当日语读）。
+	if detected := DetectTextLang(text); detected != "" {
+		textLang = detected
+	}
 
 	body, err := json.Marshal(gptSovitsRequest{
-		Text:         text,
-		TextLang:     textLang,
-		RefAudioPath: referPath,
-		PromptText:   cfg.PromptText,
-		PromptLang:   defaultString(cfg.PromptLang, "auto"),
-		TopK:         5,
-		TopP:         1.0,
-		Temperature:  1.0,
+		Text:            text,
+		TextLang:        textLang,
+		RefAudioPath:    referPath,
+		PromptText:      cfg.PromptText,
+		PromptLang:      defaultString(cfg.PromptLang, "auto"),
+		TopK:            5,
+		TopP:            1.0,
+		Temperature:     1.0,
+		TextSplitMethod: ttsSplitMethod,
 	})
 	if err != nil {
 		return SpeechReply{}, fmt.Errorf("marshal GPT-SoVITS request: %w", err)
 	}
+	slog.Info("[tts] gpt-sovits request", "text", text, "text_lang", textLang)
 
 	req, err := http.NewRequestWithContext(a.ctx, http.MethodPost, baseURL+endpoint, bytes.NewReader(body))
 	if err != nil {
@@ -135,6 +154,7 @@ func (a *App) synthesizeGptSovitsSpeech(text string, language string) (SpeechRep
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		slog.Error("[tts] gpt-sovits http error", "text", text, "text_lang", textLang, "status", resp.StatusCode, "body", strings.TrimSpace(string(msg)))
 		return SpeechReply{}, fmt.Errorf("GPT-SoVITS 返回 %s: %s", resp.Status, strings.TrimSpace(string(msg)))
 	}
 
@@ -144,8 +164,10 @@ func (a *App) synthesizeGptSovitsSpeech(text string, language string) (SpeechRep
 	}
 	audio, err := parseGptSovitsResponse(data, resp.Header.Get("Content-Type"))
 	if err != nil {
+		slog.Error("[tts] gpt-sovits parse error", "text", text, "text_lang", textLang, "err", err)
 		return SpeechReply{}, err
 	}
+	slog.Info("[tts] gpt-sovits ok", "text", text, "text_lang", textLang, "audio_bytes", len(audio))
 
 	return SpeechReply{
 		AudioBase64: base64.StdEncoding.EncodeToString(audio),
@@ -198,4 +220,27 @@ func defaultString(value, fallback string) string {
 		return strings.TrimSpace(value)
 	}
 	return fallback
+}
+
+// DetectTextLang 粗略判断文本主体脚本：含日文假名 → "ja"；否则若含汉字 → "zh"；
+// 其余返回空串（交由调用方用配置/默认 language）。
+// 用于让 GPT-SoVITS 的 text_lang 始终匹配文本真实语言，避免中文文本被日语 G2P 乱读/截断。
+func DetectTextLang(text string) string {
+	hasKana := false
+	hasHan := false
+	for _, r := range text {
+		switch {
+		case r >= '\u3040' && r <= '\u30ff': // 平假名/片假名
+			hasKana = true
+		case unicode.Is(unicode.Han, r):
+			hasHan = true
+		}
+	}
+	if hasKana {
+		return "ja"
+	}
+	if hasHan {
+		return "zh"
+	}
+	return ""
 }

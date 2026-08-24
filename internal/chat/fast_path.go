@@ -31,5 +31,7 @@ func shouldSkipPlanner(content string) bool {
 	}
 
 	// 过长消息更可能含复杂意图，保守起见走 Planner。
-	return len([]rune(text)) <= 24
+	// 阈值设为 40 个字符（原 24）：语音闲聊常见的 1-2 句话也能走快速通道，进一步压缩首字延迟；
+	// 复杂意图（任务/工具/记忆）已由上方信号词拦截，仍有较大概率命中 Planner。
+	return len([]rune(text)) <= 40
 }

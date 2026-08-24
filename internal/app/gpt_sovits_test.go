@@ -37,19 +37,34 @@ func TestGetSpeechStreamUrl(t *testing.T) {
 			t.Fatalf("missing %q in url: %s", want, got)
 		}
 	}
-	// language 覆盖 text_lang。
+	// 文本脚本自动纠正：中文文本即使传入 language=ja，也应强制 text_lang=zh（避免被日语 G2P 乱读）。
 	got2, err := a.GetSpeechStreamUrl("你好呀", "ja")
 	if err != nil {
 		t.Fatalf("GetSpeechStreamUrl ja: %v", err)
 	}
-	if !strings.Contains(got2, "text_lang=ja") {
-		t.Fatalf("expected text_lang=ja: %s", got2)
+	if !strings.Contains(got2, "text_lang=zh") {
+		t.Fatalf("expected text_lang=zh for Chinese text (auto-detected): %s", got2)
 	}
 
 	// 非 gpt_sovits 引擎报错，前端回退 buffered。
 	cfg.Speech.Provider = "fish_audio"
 	if _, err := a.GetSpeechStreamUrl("你好呀", ""); err == nil {
 		t.Fatalf("expected error for non gpt_sovits provider")
+	}
+}
+
+func TestDetectTextLang(t *testing.T) {
+	cases := map[string]string{
+		"主人心情好，我也跟着开心呢": "zh",
+		"今日はいい天気ですね":   "ja",
+		"こんにちは、谢谢你":    "ja", // 含假名 → ja
+		"Hello world":    "",  // 无汉字/假名
+		"数字 123 和标点，。":  "zh",
+	}
+	for text, want := range cases {
+		if got := DetectTextLang(text); got != want {
+			t.Fatalf("DetectTextLang(%q) = %q, want %q", text, got, want)
+		}
 	}
 }
 

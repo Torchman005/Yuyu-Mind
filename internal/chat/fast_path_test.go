@@ -7,6 +7,7 @@ func TestShouldSkipPlanner(t *testing.T) {
 		"你好":                true,  // 简单问候
 		"今天好累啊":             true,  // 简单情绪表达
 		"哈哈，太逗了":            true,  // 简单闲聊
+		"今天心情真不错我们一起出去走走吧呼吸一下新鲜空气聊聊天": true, // 25-40 字符的无信号闲聊 → 快速通道
 		"帮我写一个 Hello World": false, // 任务
 		"你还记得我之前说的吗":        false, // 记忆
 		"查一下今天的天气":          false, // 工具查询
@@ -19,7 +20,7 @@ func TestShouldSkipPlanner(t *testing.T) {
 		}
 	}
 
-	// 超长消息（>24 字符）即使无信号也保守走 Planner。
+	// 超长消息（>40 字符）即使无信号也保守走 Planner。
 	long := "这是一个非常长的消息，包含了很多内容和上下文信息，为了安全起见应该走 Planner 完整决策流程"
 	if shouldSkipPlanner(long) {
 		t.Fatalf("long message should not skip planner")

@@ -106,7 +106,7 @@ func splitReply(text string, maxRunes int) []string {
 		current.WriteRune(r)
 		currentRunes++
 		if isSentenceBoundary(r) || currentRunes >= maxRunes {
-			part := strings.TrimSpace(current.String())
+			part := trimSentencePart(current.String())
 			if part != "" {
 				parts = append(parts, part)
 			}
@@ -114,7 +114,7 @@ func splitReply(text string, maxRunes int) []string {
 			currentRunes = 0
 		}
 	}
-	if rest := strings.TrimSpace(current.String()); rest != "" {
+	if rest := trimSentencePart(current.String()); rest != "" {
 		parts = append(parts, rest)
 	}
 	return parts

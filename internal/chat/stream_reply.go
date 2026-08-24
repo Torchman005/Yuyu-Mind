@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -67,18 +68,34 @@ func (s *streamingSentencer) drain(force bool) []string {
 		if cut < 0 {
 			break
 		}
-		parts = append(parts, strings.TrimSpace(string(runes[:cut])))
+		parts = append(parts, trimSentencePart(string(runes[:cut])))
 		text = string(runes[cut:])
 	}
 
 	if force && strings.TrimSpace(text) != "" {
-		parts = append(parts, strings.TrimSpace(text))
+		parts = append(parts, trimSentencePart(text))
 		text = ""
 	}
 
 	s.buf.Reset()
 	s.buf.WriteString(text)
 	return parts
+}
+
+// trimSentencePart 去掉片段末尾的逗号类字符，避免 GPT-SoVITS 对「带尾随逗号的短片段」过度切分而哼声
+// （如「这一声主人，」会被哼成轻哼；去掉尾随逗号成「这一声主人」则能正常读出）。
+func trimSentencePart(part string) string {
+	return strings.TrimRight(strings.TrimSpace(part), "，、；,;")
+}
+
+// refineSentenceEmotion 返回某句应下发的离散情绪：内容带明显情绪、与上次不同且非中性时才返回，
+// 否则返回空串（表示维持现状）。用于「表情随台词走」的逐句微调，避免频繁闪烁。
+func refineSentenceEmotion(part, lastEmotion string) string {
+	inferred := InferEmotionFromText(part)
+	if inferred == "" || inferred == lastEmotion || inferred == EmotionNeutral {
+		return ""
+	}
+	return inferred
 }
 
 // streamReply 流式生成回复：边生成边按完整句子 emit + 持久化，降低「首句」延迟。
@@ -102,6 +119,7 @@ func (s *Service) streamReply(
 	now := time.Now()
 	parts := make([]string, 0, 8)
 	totalRunes := 0
+	lastEmotion := decision.Emotion
 
 	flushPart := func(part string) error {
 		if replyer.cfg.MaxReplyChars > 0 && totalRunes+len([]rune(part)) > replyer.cfg.MaxReplyChars {
@@ -110,7 +128,23 @@ func (s *Service) streamReply(
 		}
 		totalRunes += len([]rune(part))
 		parts = append(parts, part)
+		slog.Info("[tts] stream token", "part", part, "runes", len([]rune(part)), "total_runes", totalRunes)
 		if emitter != nil {
+			// 逐句情绪微调：某句内容带明显情绪时，在下发该句前更新离散表情，
+			// 使 Live2D 逐句反应（对齐 Shinsekai「表情随台词走」的体验）。
+			if refined := refineSentenceEmotion(part, lastEmotion); refined != "" {
+				lastEmotion = refined
+				emitter.Emit(ChatEvent{
+					Type:      EventTypeEmotion,
+					Emotion:   refined,
+					Mood:      decision.Mood,
+					Energy:    decision.Energy,
+					Valence:   decision.Valence,
+					Dominance: decision.Dominance,
+					Gesture:   decision.Gesture,
+					Hand:      decision.Hand,
+				})
+			}
 			emitter.Emit(ChatEvent{Type: EventTypeToken, Content: part})
 		}
 		return s.db.Messages.Create(ctx, &db.Message{
