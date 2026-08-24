@@ -78,9 +78,12 @@ func (s *SendService) SendGuidedReply(
 
 var stageLinePattern = regexp.MustCompile(`(?m)^\s*[\(（\[\[【][^\n]{0,80}[\)）\]\]】]\s*$`)
 var leadingStagePattern = regexp.MustCompile(`^\s*[\(（\[\[【][^\n]{0,40}[\)）\]\]】]\s*`)
+// inlineStagePattern 去掉行内动作/心理描写，如「主人（笑）我在这」→「主人我在这」。
+var inlineStagePattern = regexp.MustCompile(`[\(（\[\[【][^\)）\]】]{1,20}[\)）\]】]`)
 
 func postprocessReply(raw string) string {
 	text := strings.TrimSpace(raw)
+	text = inlineStagePattern.ReplaceAllString(text, "")
 	text = stageLinePattern.ReplaceAllString(text, "")
 	text = leadingStagePattern.ReplaceAllString(text, "")
 	text = strings.ReplaceAll(text, "\r\n", "\n")

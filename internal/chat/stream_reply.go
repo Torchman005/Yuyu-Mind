@@ -178,13 +178,18 @@ func (s *Service) streamReply(
 
 	// flushDialogItem 处理结构化回复中模型给出的「一句台词 + 该句情绪/动作」。
 	// 每句前下发其自带情绪，使 Live2D 表情随台词走（对齐 Shinsekai）。
+	// 台词经 postprocessReply 去掉可能残留的动作/心理描写（如「（笑）」「心想…」）。
 	flushDialogItem := func(item DialogItem) error {
-		if replyer.cfg.MaxReplyChars > 0 && totalRunes+len([]rune(item.Speech)) > replyer.cfg.MaxReplyChars {
+		speech := postprocessReply(item.Speech)
+		if speech == "" {
+			return nil
+		}
+		if replyer.cfg.MaxReplyChars > 0 && totalRunes+len([]rune(speech)) > replyer.cfg.MaxReplyChars {
 			return errReplyTooLong
 		}
-		totalRunes += len([]rune(item.Speech))
-		parts = append(parts, item.Speech)
-		slog.Info("[tts] stream dialog", "speech", item.Speech, "emotion", item.Emotion, "runes", len([]rune(item.Speech)))
+		totalRunes += len([]rune(speech))
+		parts = append(parts, speech)
+		slog.Info("[tts] stream dialog", "speech", speech, "emotion", item.Emotion, "runes", len([]rune(speech)))
 		if emitter != nil {
 			emitter.Emit(ChatEvent{
 				Type:      EventTypeEmotion,
@@ -196,13 +201,13 @@ func (s *Service) streamReply(
 				Gesture:   item.Gesture,
 				Hand:      item.Hand,
 			})
-			emitter.Emit(ChatEvent{Type: EventTypeToken, Content: item.Speech})
+			emitter.Emit(ChatEvent{Type: EventTypeToken, Content: speech})
 		}
 		return s.db.Messages.Create(ctx, &db.Message{
 			ID:             uuid.New().String(),
 			ConversationID: snapshot.Target.ConversationID,
 			Role:           "assistant",
-			Content:        item.Speech,
+			Content:        speech,
 			SourceKind:     "guided_reply",
 			Emotion:        item.Emotion,
 			Mood:           item.Mood,
