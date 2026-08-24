@@ -465,6 +465,7 @@ function inferAvatarPerformance(text: string, emotion: string, isSpeaking: boole
         tears: hasSad ? 0.55 : 0,
         puff: mood === 'playful' && /哼|不嘛|才不|む/.test(lower) ? 0.45 : 0,
         hand: hasExcitement ? 'left' : hasTechnical ? 'right' : hasComfort ? 'left' : 'none',
+        gesture: 'none',
     };
 }
 
@@ -561,6 +562,7 @@ function App() {
             energy: typeof performanceHint.energy === 'number' ? clamp(performanceHint.energy, 0, 1) : base.energy,
             valence: typeof performanceHint.valence === 'number' ? clamp(performanceHint.valence, -1, 1) : base.valence,
             dominance: typeof performanceHint.dominance === 'number' ? clamp(performanceHint.dominance, -1, 1) : base.dominance,
+            gesture: performanceHint.gesture ?? base.gesture,
             hand: performanceHint.hand ?? base.hand,
         };
     }, [assistantLine, emotion, voiceStatus, performanceHint]);

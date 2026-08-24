@@ -23,6 +23,7 @@ export type AvatarPerformance = {
     tears: number;
     puff: number;
     hand: 'none' | 'left' | 'right' | 'both';
+    gesture: string;
 };
 
 type RendererStatus = 'ready' | 'fallback' | 'loading';
@@ -274,6 +275,7 @@ const defaultPerformance: AvatarPerformance = {
     tears: 0,
     puff: 0,
     hand: 'none',
+    gesture: 'none',
 };
 
 function performanceTargets(performance: AvatarPerformance, emotion: string) {
@@ -306,6 +308,11 @@ function easeInOutSine(t: number) {
 }
 
 function gestureKindForPerformance(performance: AvatarPerformance, emotion: string): GestureKind {
+    // 优先用模型显式给出的 gesture（结构化输出逐句提供）；非法/空则回退到按 mood/emotion 推导。
+    const explicit = (performance.gesture || '').trim() as GestureKind;
+    if (['bounce', 'tilt', 'lean', 'playfulSway', 'surprisePop', 'comfortNod', 'none'].includes(explicit)) {
+        return explicit;
+    }
     if (performance.mood === 'surprised' || emotion === 'surprised') {
         return 'surprisePop';
     }
@@ -347,7 +354,7 @@ function gestureDuration(kind: GestureKind, energy: number) {
 }
 
 function updateGesturePhrase(state: NaturalPresenceState, performance: AvatarPerformance, emotion: string, elapsedMs: number) {
-    const key = `${performance.key}:${performance.mood}:${Math.round(performance.energy * 10)}:${Math.round(performance.headTilt * 10)}:${performance.hand}:${emotion}`;
+    const key = `${performance.key}:${performance.mood}:${Math.round(performance.energy * 10)}:${Math.round(performance.headTilt * 10)}:${performance.hand}:${performance.gesture}:${emotion}`;
     const kind = gestureKindForPerformance(performance, emotion);
     if (kind !== 'none' && key !== state.lastGestureKey) {
         state.gesture = {
