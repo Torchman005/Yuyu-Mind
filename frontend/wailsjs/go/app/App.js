@@ -54,6 +54,10 @@ export function GetAgentTask(arg1) {
   return window['go']['app']['App']['GetAgentTask'](arg1);
 }
 
+export function GetConfigJSON() {
+  return window['go']['app']['App']['GetConfigJSON']();
+}
+
 export function GetMessages(arg1) {
   return window['go']['app']['App']['GetMessages'](arg1);
 }
@@ -128,6 +132,10 @@ export function PromoteMemoryCandidate(arg1) {
 
 export function RejectMemoryCandidate(arg1) {
   return window['go']['app']['App']['RejectMemoryCandidate'](arg1);
+}
+
+export function SaveConfigJSON(arg1) {
+  return window['go']['app']['App']['SaveConfigJSON'](arg1);
 }
 
 export function SearchMemories(arg1, arg2, arg3, arg4) {

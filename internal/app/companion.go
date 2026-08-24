@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -194,6 +195,34 @@ func (a *App) ClearChat() (AppState, error) {
 		AgentStatus:   "online",
 		AgentProvider: a.activeProviderName(),
 	}, nil
+}
+
+// GetConfigJSON 返回当前配置（JSON 对象），供详情页「设置」里以 JSON 编辑器展示与编辑。
+func (a *App) GetConfigJSON() (map[string]any, error) {
+	if a.cfg == nil {
+		return nil, errors.New("config not ready")
+	}
+	data, err := json.Marshal(a.cfg)
+	if err != nil {
+		return nil, err
+	}
+	var m map[string]any
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// SaveConfigJSON 用前端提交的配置 JSON 覆盖当前配置并写回磁盘。
+func (a *App) SaveConfigJSON(cfg map[string]any) error {
+	if a.cfg == nil {
+		return errors.New("config not ready")
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return a.cfg.ApplyJSON(data)
 }
 
 func (a *App) SendMessage(content string) (ChatReply, error) {

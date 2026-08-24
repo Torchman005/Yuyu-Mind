@@ -234,7 +234,7 @@ Each element is one spoken line and carries its own expression, so the avatar re
 - "energy": a number 0.0..1.0; "valence": -1.0..1.0; "dominance": -1.0..1.0.
 - "gesture": one of none|bounce|tilt|lean|playfulSway|surprisePop|comfortNod.
 - "hand": one of none|left|right|both.
-Split into 1-4 short, natural spoken lines; pick each line's emotion/mood/gesture to match its content (favor lively/playful for this persona).
+Split into 1-2 short, concise spoken lines; keep the reply brief (say little, don't ramble or pad). Pick each line's emotion/mood/gesture to match its content.
 
 Persona:
 %s

@@ -4,17 +4,22 @@ import {
     AnswerAgentTaskQuestion,
     CancelAgentTask,
     ClearChat,
+    CreateConversation,
     DisablePlugin,
     EnablePlugin,
     GenerateProactiveMessage,
+    GetConfigJSON,
+    GetMessages,
     GetPluginConfig,
     GetState,
     GetSpeechStreamUrl,
     InvokePluginAction,
     ListAgentTasks,
+    ListConversations,
     ListPlugins,
     ObserveScreen,
     ProbeFishLive,
+    SaveConfigJSON,
     SendAgentTaskControl,
     SetPluginConfig,
     StreamChat,
@@ -156,6 +161,17 @@ const PROACTIVE_COOLDOWN_MINUTES = Number((import.meta.env.VITE_PROACTIVE_COOLDO
 const PROACTIVE_QUIET_HOURS = ((import.meta.env.VITE_PROACTIVE_QUIET_HOURS as string | undefined) || '01:00-09:00').trim();
 const PROACTIVE_CHECK_SECONDS = Number((import.meta.env.VITE_PROACTIVE_CHECK_SECONDS as string | undefined) || '30');
 const PROACTIVE_FREE_MODE_ENABLED = ((import.meta.env.VITE_PROACTIVE_FREE_MODE_ENABLED as string | undefined) || 'true').trim().toLowerCase() === 'true';
+
+// ---- Web 版桌面详情页：左侧导航 + 右侧视图 ----
+type ViewKey = 'chat' | 'skins' | 'model' | 'plugins' | 'tasks' | 'settings';
+const WEB_NAV: { key: ViewKey; label: string; icon: string }[] = [
+    { key: 'chat', label: '对话', icon: '💬' },
+    { key: 'skins', label: '外观 / 皮肤', icon: '🎨' },
+    { key: 'model', label: '模型信息', icon: '🧠' },
+    { key: 'plugins', label: '插件管理', icon: '🧩' },
+    { key: 'tasks', label: '后台任务', icon: '📋' },
+    { key: 'settings', label: '设置', icon: '⚙️' },
+];
 const PROACTIVE_PLUGIN_CONTEXT_HINT_MINUTES = Number((import.meta.env.VITE_PROACTIVE_PLUGIN_CONTEXT_HINT_MINUTES as string | undefined) || '20');
 const PROACTIVE_CHANCE_PERCENT = clamp(Number((import.meta.env.VITE_PROACTIVE_CHANCE_PERCENT as string | undefined) || '65'), 0, 100);
 const PROACTIVE_MAX_PER_HOUR = Number((import.meta.env.VITE_PROACTIVE_MAX_PER_HOUR as string | undefined) || '8');
@@ -480,6 +496,7 @@ function App() {
     const [pluginsOpen, setPluginsOpen] = useState(false);
     const [pluginResult, setPluginResult] = useState('');
     const [pluginActionInput, setPluginActionInput] = useState('');
+    const [pluginDetail, setPluginDetail] = useState<app.PluginInfo | null>(null);
     const [tasks, setTasks] = useState<db.AgentTask[]>([]);
     const [tasksOpen, setTasksOpen] = useState(false);
     const [taskAnswer, setTaskAnswer] = useState<Record<string, string>>({});
@@ -491,9 +508,17 @@ function App() {
     const [voiceError, setVoiceError] = useState('');
     const [mouthLevel, setMouthLevel] = useState(0);
     const [speechMetrics, setSpeechMetrics] = useState<SpeechMetric[]>([]);
-    const [isPetMode, setIsPetMode] = useState(() => (localStorage.getItem(PET_MODE_KEY) ?? localStorage.getItem(LEGACY_PET_MODE_KEY)) === 'true');
+    const [isPetMode, setIsPetMode] = useState(true);
     const [petScale, setPetScale] = useState(readStoredPetScale);
     const [isPetControlsOpen, setIsPetControlsOpen] = useState(false);
+    const [activeView, setActiveView] = useState<ViewKey>('chat');
+    // 多对话历史：会话列表 + 当前会话 id。
+    const [conversations, setConversations] = useState<db.Conversation[]>([]);
+    const [activeConversationId, setActiveConversationId] = useState('');
+    // 配置 JSON 编辑器。
+    const [configText, setConfigText] = useState('');
+    const [configEditorState, setConfigEditorState] = useState<'idle' | 'loading' | 'saved' | 'error'>('idle');
+    const [configEditorMessage, setConfigEditorMessage] = useState('');
     const [isTextInputOpen, setIsTextInputOpen] = useState(false);
     const [continuousVoiceMode, setContinuousVoiceMode] = useState(() => (localStorage.getItem(CONTINUOUS_VOICE_KEY) ?? localStorage.getItem(LEGACY_CONTINUOUS_VOICE_KEY)) === 'true');
     const [conversationMode, setConversationMode] = useState(() => localStorage.getItem(CONVERSATION_MODE_KEY) === 'free' ? 'free' : DEFAULT_CONVERSATION_MODE);
@@ -585,6 +610,12 @@ function App() {
 
     useEffect(() => {
         refreshPlugins();
+    }, []);
+
+    // 启动加载会话列表（多对话历史）。
+    useEffect(() => {
+        void loadConversations();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // 每次渲染后把最新的 handleChatEvent 写入 ref，供一次性注册的 chat:event 订阅调用（避免闭包过期）。
@@ -1961,7 +1992,7 @@ function App() {
 
         try {
             await StreamChat(new chat.ChatRequest({
-                conversation_id: DESKTOP_COMPANION_CONVERSATION_ID,
+                conversation_id: activeConversationId || DESKTOP_COMPANION_CONVERSATION_ID,
                 content,
                 use_tools: false,
             }));
@@ -2025,15 +2056,108 @@ function App() {
         });
     }
 
+    // ---- 多对话历史 ----
+    function mapDbMessages(rows: db.Message[]): app.CompanionMessage[] {
+        return (rows ?? []).map((row) => ({
+            id: row.id,
+            role: row.role,
+            content: row.content || '',
+            emotion: row.emotion || 'neutral',
+            mood: row.mood || 'calm',
+            energy: Number(row.energy ?? 0),
+            valence: Number(row.valence ?? 0),
+            dominance: Number(row.dominance ?? 0),
+            gesture: row.gesture || '',
+            hand: row.hand || 'none',
+            createdAt: row.created_at,
+        }));
+    }
+
+    async function reloadConversation(id: string) {
+        if (!id) {
+            return;
+        }
+        try {
+            const rows = await GetMessages(id);
+            setMessages(mapDbMessages(rows));
+        } catch {
+            // 忽略
+        }
+    }
+
+    async function loadConversations() {
+        try {
+            const list = await ListConversations();
+            setConversations(list ?? []);
+            const firstId = activeConversationId || (list && list[0]?.id) || '';
+            if (firstId) {
+                setActiveConversationId(firstId);
+                await reloadConversation(firstId);
+            }
+        } catch {
+            // 忽略
+        }
+    }
+
+    async function newConversation() {
+        try {
+            const conv = await CreateConversation('新对话');
+            setConversations((prev) => [conv, ...prev]);
+            setActiveConversationId(conv.id);
+            setMessages([]);
+            setPerformanceHint(null);
+            setActiveView('chat');
+        } catch (reason) {
+            setError(String(reason));
+        }
+    }
+
+    function selectConversation(id: string) {
+        if (!id || id === activeConversationId) {
+            return;
+        }
+        setActiveConversationId(id);
+        setPerformanceHint(null);
+        void reloadConversation(id);
+        setActiveView('chat');
+    }
+
+    async function refreshConfigEditor() {
+        setConfigEditorState('loading');
+        try {
+            const cfg = await GetConfigJSON();
+            setConfigText(JSON.stringify(cfg, null, 2));
+            setConfigEditorState('idle');
+            setConfigEditorMessage('');
+        } catch (reason) {
+            setConfigEditorState('error');
+            setConfigEditorMessage(String(reason));
+        }
+    }
+
+    async function saveConfigEditor() {
+        setConfigEditorState('loading');
+        try {
+            const parsed = JSON.parse(configText);
+            await SaveConfigJSON(parsed);
+            setConfigEditorState('saved');
+            setConfigEditorMessage('保存成功，重启后完全生效。');
+        } catch (reason) {
+            setConfigEditorState('error');
+            setConfigEditorMessage(String(reason));
+        }
+    }
+
     function completeStreamReply() {
         // LLM 已 done：结束「发送中」状态，刷新消息，安排追问（TTS 队列继续后台播放）。
         streamDoneRef.current = true;
         isSendingRef.current = false;
         setIsSending(false);
+        void reloadConversation(activeConversationId || DESKTOP_COMPANION_CONVERSATION_ID);
+        void loadConversations();
         void GetState()
             .then((state: app.AppState) => {
-                setMessages(state.messages ?? []);
-                setAgentStatus(state.agentStatus || 'offline');
+                setAgentStatus(state.agentStatus || 'online');
                 setAgentProvider(state.agentProvider || 'unknown');
                 setProviderError(state.providerError || '');
             })
@@ -2827,256 +2951,203 @@ function App() {
     );
 
     return (
-        <main className={isPetMode ? 'app-shell pet-mode' : 'app-shell'}>
-            <section className="stage" aria-label="Yuyu Live2D 舞台" onWheel={resizePetWithWheel}>
-                {!isPetMode && (
-                    <div className="status-bar">
-                        <span>{DESKTOP_PET_NAME} AI</span>
-                        <span>{emotionLabel[emotion] ?? emotion} · Agent {agentStatus} · {agentProvider}</span>
-                    </div>
-                )}
-
-                <Live2DStage
-                    emotion={emotion}
-                    isSpeaking={voiceStatus === 'speaking'}
-                    mouthLevel={mouthLevel}
-                    petScale={petScale}
-                    performance={avatarPerformance}
-                />
-
-                {SHOW_SPEECH_DEBUG && speechMetrics.length > 0 && (
-                    <div className="speech-metrics" aria-label="Speech timing log">
-                        <strong>Speech timing</strong>
-                        {speechMetrics.map((metric, index) => (
-                            <div className="speech-metric-row" key={`${metric.phase}-${index}`}>
-                                <span>{metric.phase}</span>
-                                <b>{typeof metric.elapsedMs === 'number' ? `${metric.elapsedMs}ms` : '-'}</b>
-                                {metric.detail && <small>{metric.detail}</small>}
+        <main className={`app-shell ${isPetMode ? 'pet-mode' : 'web'}`}>
+            {isPetMode ? (
+                <section className="stage" aria-label="Yuyu 桌宠" onWheel={resizePetWithWheel}>
+                    <Live2DStage
+                        emotion={emotion}
+                        isSpeaking={voiceStatus === 'speaking'}
+                        mouthLevel={mouthLevel}
+                        petScale={petScale}
+                        performance={avatarPerformance}
+                    />
+                    {voiceStatus === 'speaking' && assistantLine.trim() && (
+                        <div className="pet-subtitle" aria-live="polite"><p>{assistantLine}</p></div>
+                    )}
+                    {isPetControlsOpen ? (
+                        <div className="pet-controls" aria-label="桌宠控制">
+                            {composer}
+                            <div className="pet-mode-actions">
+                                <button type="button" className="pet-mode-toggle" onClick={() => setIsPetMode(false)}>返回详情</button>
                             </div>
+                            <span className="pet-shortcut">{PET_CONTROLS_SHORTCUT} · V 语音输入</span>
+                        </div>
+                    ) : null}
+                </section>
+            ) : (
+            <div className="web-shell">
+                <aside className="web-sidebar">
+                    <div className="web-brand">
+                        <span className="web-brand-logo">🐱</span>
+                        <div className="web-brand-text">
+                            <strong>{DESKTOP_PET_NAME}</strong>
+                            <small>Desktop Companion</small>
+                        </div>
+                    </div>
+                    <button type="button" className="new-conversation" onClick={() => void newConversation()}>
+                        <span>＋ 新对话</span>
+                    </button>
+                    <div className="conversation-list" aria-label="对话历史">
+                        {conversations.length === 0 && <div className="empty-state small">暂无历史对话</div>}
+                        {conversations.map((conv) => (
+                            <button
+                                key={conv.id}
+                                type="button"
+                                className={`conversation-item${activeConversationId === conv.id ? ' active' : ''}`}
+                                onClick={() => selectConversation(conv.id)}
+                            >
+                                <span className="conversation-title">{conv.title || '未命名对话'}</span>
+                            </button>
                         ))}
                     </div>
-                )}
-
-                {isPetMode && voiceStatus === 'speaking' && assistantLine.trim() && (
-                    <div className="pet-subtitle" aria-live="polite">
-                        <p>{assistantLine}</p>
-                    </div>
-                )}
-
-                {!isPetMode && (
-                    <div className="speech-bubble">
-                        <p>{assistantLine}</p>
-                    </div>
-                )}
-
-                {isPetMode && isPetControlsOpen ? (
-                    <div className="pet-controls" aria-label="桌宠控制">
-                        {composer}
-                        <div className="pet-mode-actions">
-                            <button type="button" className="pet-mode-toggle" onClick={() => void observeScreen()} disabled={isSending || isObservingScreen}>
-                                看屏幕
-                            </button>
-                            <button type="button" className="pet-mode-toggle" onClick={() => setIsPetControlsOpen(false)}>
-                                收起
-                            </button>
-                            <button type="button" className="pet-mode-toggle" onClick={() => setIsPetMode(false)}>
-                                完整模式
-                            </button>
-                        </div>
-                        <span className="pet-shortcut">{PET_CONTROLS_SHORTCUT} · V 语音输入</span>
-                    </div>
-                ) : !isPetMode && (
-                    <div className="stage-tools">
-                        <button type="button" onClick={() => void observeScreen()} disabled={isSending || isObservingScreen}>
-                            {isObservingScreen ? '观察中' : '看屏幕'}
-                        </button>
-                        <span className="stage-tag">Live2D</span>
-                        <span className="stage-tag">本地记忆</span>
-                        <span className="stage-tag">{voiceStatus === 'speaking' ? '朗读中' : voiceStatus === 'listening' ? '聆听中' : '待机'}</span>
-                    </div>
-                )}
-            </section>
-
-            {!isPetMode && (
-                <section className="chat-panel" aria-label={`${DESKTOP_PET_NAME} chat`}>
-                    <header>
-                        <div className="header-title">
-                            <p className="eyebrow">Desktop Companion</p>
-                            <h1>{DESKTOP_PET_NAME}</h1>
-                        </div>
-                        <div className="header-actions">
-                            <span className={`pill agent-${agentStatus}`}>{agentStatus} · {agentProvider}</span>
+                    <nav className="web-nav" aria-label="主导航">
+                        {WEB_NAV.map((item) => (
                             <button
+                                key={item.key}
                                 type="button"
-                                className="window-button"
-                                onClick={WindowMinimise}
-                                aria-label="最小化"
+                                className={`web-nav-item${activeView === item.key ? ' active' : ''}`}
+                                onClick={() => setActiveView(item.key)}
                             >
-                                −
+                                <span className="web-nav-icon">{item.icon}</span>
+                                <span>{item.label}</span>
                             </button>
-                            <button
-                                type="button"
-                                className="window-button window-close"
-                                onClick={Quit}
-                                aria-label="关闭"
-                            >
-                                ×
-                            </button>
-                        </div>
-                    </header>
-
-                    <div className="toolbar" role="toolbar" aria-label="功能">
-                        <button
-                            type="button"
-                            className="ghost-button"
-                            onClick={() => setIsPetMode(true)}
-                        >
-                            桌宠模式
-                        </button>
-                        <button
-                            type="button"
-                            className="ghost-button"
-                            aria-pressed={freeConversationMode}
-                            onClick={() => setConversationMode((value) => value === 'free' ? 'manual' : 'free')}
-                        >
-                            自由聊天 {freeConversationMode ? '开' : '关'}
-                        </button>
-                        <button
-                            type="button"
-                            className="ghost-button"
-                            aria-pressed={effectiveContinuousVoiceMode}
-                            onClick={() => setContinuousVoiceMode((value) => !value)}
-                            disabled={freeConversationMode}
-                        >
-                            持续对话 {effectiveContinuousVoiceMode ? '开' : '关'}
-                        </button>
-                        <button
-                            type="button"
-                            className="ghost-button"
-                            aria-pressed={speechLanguage === 'ja'}
-                            onClick={() => setSpeechLanguage((value) => value === 'zh' ? 'ja' : 'zh')}
-                        >
-                            语音 {speechLanguage === 'zh' ? '中文' : '日语'}
-                        </button>
-                        <button
-                            type="button"
-                            className="ghost-button"
-                            aria-pressed={pluginsOpen}
-                            onClick={() => {
-                                setPluginsOpen((value) => !value);
-                                if (!pluginsOpen) {
-                                    refreshPlugins();
-                                }
-                            }}
-                        >
-                            插件 {plugins.length > 0 ? `(${plugins.length})` : ''}
-                        </button>
-                        <button
-                            type="button"
-                            className="ghost-button"
-                            aria-pressed={tasksOpen}
-                            onClick={() => {
-                                setTasksOpen((value) => !value);
-                                if (!tasksOpen) {
-                                    refreshTasks();
-                                }
-                            }}
-                        >
-                            任务 {tasks.length > 0 ? `(${tasks.length})` : ''}
-                        </button>
-                        <button
-                            type="button"
-                            className="ghost-button"
-                            onClick={clearChat}
-                            disabled={isSending || voiceStatus === 'speaking' || messages.length === 0}
-                        >
-                            清空聊天
-                        </button>
-                        {SHOW_SPEECH_DEBUG && (
-                            <button
-                                type="button"
-                                className="ghost-button"
-                                onClick={probeFishLive}
-                                disabled={isSending || voiceStatus === 'speaking'}
-                            >
-                                Fish Test
-                            </button>
-                        )}
+                        ))}
+                    </nav>
+                    <div className="web-sidebar-foot">
+                        <span className={`pill agent-${agentStatus}`}>{agentStatus} · {agentProvider}</span>
+                        <button type="button" className="ghost-button" onClick={() => setIsPetMode(true)}>🐾 桌宠模式</button>
+                        <small className="web-version">Yuyu-Mind2 · v0.1</small>
                     </div>
+                </aside>
 
-                    {pluginsOpen && (
-                        <div className="plugin-panel" aria-label="插件面板">
-                            <div className="plugin-panel-header">
-                                <strong>插件</strong>
-                                <div className="plugin-input-row">
-                                    <input
-                                        value={pluginActionInput}
-                                        onChange={(event) => setPluginActionInput(event.target.value)}
-                                        placeholder='动作参数 JSON，如 {"path":"notes.md"}'
-                                    />
-                                    <button type="button" className="ghost-button" onClick={refreshPlugins}>刷新</button>
+                <section className="web-content" aria-label="列表内容">
+                    {activeView === 'chat' && (
+                        <section className="chat-panel" aria-label={`${DESKTOP_PET_NAME} chat`}>
+                            <header>
+                                <div className="header-title">
+                                    <h1>{DESKTOP_PET_NAME}</h1>
+                                    <p className="eyebrow">DeepSeek-style · {voiceStatus === 'speaking' ? '朗读中' : voiceStatus === 'listening' ? '聆听中' : '待机'}</p>
                                 </div>
+                                <div className="header-actions">
+                                    <span className={`pill agent-${agentStatus}`}>{agentStatus} · {agentProvider}</span>
+                                    <button type="button" className="window-button" onClick={WindowMinimise} aria-label="最小化">−</button>
+                                    <button type="button" className="window-button window-close" onClick={Quit} aria-label="关闭">×</button>
+                                </div>
+                            </header>
+                            <div className="message-feed" ref={feedRef}>
+                                {displayedMessages.length === 0 && (
+                                    <div className="empty-state">
+                                        <strong>开始新的对话吧。</strong>
+                                        <span>输入一句话，和 {DESKTOP_PET_NAME} 聊起来～</span>
+                                    </div>
+                                )}
+                                {displayedMessages.map((message) => (
+                                    <article className={`message ${message.role}`} key={message.id}>
+                                        <span className="message-role">{message.role === 'user' ? '你' : DESKTOP_PET_NAME}</span>
+                                        <p>{message.content}</p>
+                                    </article>
+                                ))}
                             </div>
-                            {plugins.length === 0 && (
-                                <div className="empty-state">
-                                    <span>暂无插件。插件系统内核已就绪，可扩展电脑工具 / 游戏 / 任务等能力。</span>
-                                </div>
-                            )}
-                            {plugins.map((plugin) => (
-                                <div className={`plugin-card${plugin.enabled ? '' : ' disabled'}`} key={plugin.name}>
-                                    <div className="plugin-card-main">
-                                        <b>{plugin.displayName || plugin.name}</b>
-                                        <small>v{plugin.version} · {plugin.author || '内置'}</small>
-                                        <p>{plugin.description}</p>
-                                        {plugin.permissions && plugin.permissions.length > 0 && (
-                                            <span className="plugin-perms">{plugin.permissions.join(', ')}</span>
-                                        )}
-                                    </div>
-                                    <div className="plugin-card-actions">
-                                        <button
-                                            type="button"
-                                            onClick={() => void togglePlugin(plugin)}
-                                        >
-                                            {plugin.enabled ? '停用' : '启用'}
-                                        </button>
-                                        {(plugin.actions ?? []).map((action) => (
-                                            <button
-                                                type="button"
-                                                key={String(action.name)}
-                                                onClick={() => void invokePluginAction(plugin.name, String(action.name))}
-                                            >
-                                                {action.name}
-                                            </button>
-                                        ))}
-                                        <button
-                                            type="button"
-                                            onClick={() => void showPluginConfig(plugin.name)}
-                                        >
-                                            配置
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => void savePluginConfig(plugin.name)}
-                                        >
-                                            保存配置
-                                        </button>
-                                    </div>
-                                </div>
-                            ))}
-                            {pluginResult && <pre className="plugin-result">{pluginResult}</pre>}
-                        </div>
+                            {providerError && <div className="error">模型状态：{providerError}</div>}
+                            {error && <div className="error">{error}</div>}
+                            {voiceError && <div className="error">{voiceError}</div>}
+                            {composer}
+                        </section>
                     )}
 
-                    {tasksOpen && (
-                        <div className="plugin-panel" aria-label="任务面板">
+                    {activeView === 'skins' && (
+                        <section className="web-view skins-view">
+                            <h2 className="web-view-title">外观 / Live2D 皮肤</h2>
+                            <div className="skin-preview">
+                                <Live2DStage
+                                    emotion={emotion}
+                                    isSpeaking={voiceStatus === 'speaking'}
+                                    mouthLevel={mouthLevel}
+                                    petScale={petScale}
+                                    performance={avatarPerformance}
+                                />
+                            </div>
+                            <div className="empty-state">皮肤体系待接入——切换不同 Cubism 模型源后，可在此选择形象。</div>
+                        </section>
+                    )}
+
+                    {activeView === 'model' && (
+                        <section className="web-view">
+                            <h2 className="web-view-title">模型信息</h2>
+                            <div className="info-card"><b>对话模型（LLM）</b><span>{agentProvider} · {agentStatus}</span></div>
+                            <div className="info-card"><b>语音合成（TTS）</b><span>GPT-SoVITS · 本地 · 音色复刻</span></div>
+                            <div className="info-card"><b>语音识别（ASR）</b><span>SenseVoice · 本地</span></div>
+                            <div className="info-card"><b>视觉</b><span>未接入</span></div>
+                            {providerError && <div className="error">模型状态：{providerError}</div>}
+                        </section>
+                    )}
+
+                    {activeView === 'plugins' && (
+                        <section className="web-view">
+                            <h2 className="web-view-title">插件管理</h2>
+                            {pluginDetail ? (
+                                <div className="plugin-detail">
+                                    <button type="button" className="ghost-button" onClick={() => setPluginDetail(null)}>← 返回插件列表</button>
+                                    <div className="plugin-detail-card">
+                                        <div className="plugin-card-main">
+                                            <b>{pluginDetail.displayName || pluginDetail.name}</b>
+                                            <small>v{pluginDetail.version} · {pluginDetail.author || '内置'} · {pluginDetail.enabled ? '已启用' : '未启用'}</small>
+                                            <p>{pluginDetail.description}</p>
+                                            {pluginDetail.permissions && pluginDetail.permissions.length > 0 && <span className="plugin-perms">权限：{pluginDetail.permissions.join(', ')}</span>}
+                                        </div>
+                                        <h3 className="web-view-sub">使用方法</h3>
+                                        <div className="plugin-card-actions">
+                                            <button type="button" onClick={() => void togglePlugin(pluginDetail)}>{pluginDetail.enabled ? '停用' : '启用'}</button>
+                                            {(pluginDetail.actions ?? []).map((action) => (
+                                                <button type="button" key={String(action.name)} onClick={() => void invokePluginAction(pluginDetail.name, String(action.name))}>{action.name}</button>
+                                            ))}
+                                            <button type="button" onClick={() => void showPluginConfig(pluginDetail.name)}>配置</button>
+                                            <button type="button" onClick={() => void savePluginConfig(pluginDetail.name)}>保存配置</button>
+                                        </div>
+                                        <p className="plugin-hint">启用后，在聊天里用自然语言触发「{pluginDetail.displayName || pluginDetail.name}」的动作即可（如「{pluginDetail.actions?.[0]?.name || 'list'}」）。</p>
+                                        {pluginResult && <pre className="plugin-result">{pluginResult}</pre>}
+                                    </div>
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="plugin-panel-header">
+                                        <strong>插件 {plugins.length > 0 ? `(${plugins.length})` : ''}</strong>
+                                        <button type="button" className="ghost-button" onClick={refreshPlugins}>刷新</button>
+                                    </div>
+                                    {plugins.length === 0 && (
+                                        <div className="empty-state"><span>暂无插件。插件系统内核已就绪，可扩展电脑工具 / 游戏 / 任务等能力。</span></div>
+                                    )}
+                                    <div className="plugin-grid">
+                                        {plugins.map((plugin) => (
+                                            <div className={`plugin-card clickable${plugin.enabled ? '' : ' disabled'}`} key={plugin.name} onClick={() => setPluginDetail(plugin)}>
+                                                <div className="plugin-card-main">
+                                                    <b>{plugin.displayName || plugin.name}</b>
+                                                    <small>v{plugin.version} · {plugin.author || '内置'}</small>
+                                                    <p>{plugin.description}</p>
+                                                    {plugin.permissions && plugin.permissions.length > 0 && <span className="plugin-perms">{plugin.permissions.join(', ')}</span>}
+                                                </div>
+                                                <div className="plugin-card-actions">
+                                                    <button type="button" onClick={(e) => { e.stopPropagation(); void togglePlugin(plugin); }}>{plugin.enabled ? '停用' : '启用'}</button>
+                                                    <button type="button" onClick={(e) => { e.stopPropagation(); setPluginDetail(plugin); }}>详情</button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    {pluginResult && <pre className="plugin-result">{pluginResult}</pre>}
+                                </>
+                            )}
+                        </section>
+                    )}
+
+                    {activeView === 'tasks' && (
+                        <section className="web-view">
+                            <h2 className="web-view-title">后台任务</h2>
                             <div className="plugin-panel-header">
                                 <strong>后台任务</strong>
                                 <button type="button" className="ghost-button" onClick={refreshTasks}>刷新</button>
                             </div>
                             {tasks.length === 0 && (
-                                <div className="empty-state">
-                                    <span>暂无后台任务。在聊天里让我「写代码 / 做 PPT / 创建文件」会在这里显示。</span>
-                                </div>
+                                <div className="empty-state"><span>暂无后台任务。在聊天里让我「写代码 / 做 PPT / 创建文件」会在这里显示。</span></div>
                             )}
                             {tasks.map((task) => (
                                 <div className="plugin-card" key={task.id}>
@@ -3088,11 +3159,7 @@ function App() {
                                     <div className="plugin-card-actions">
                                         {task.status === 'waiting_for_input' && (
                                             <>
-                                                <input
-                                                    value={taskAnswer[task.id] || ''}
-                                                    onChange={(event) => setTaskAnswer((prev) => ({...prev, [task.id]: event.target.value}))}
-                                                    placeholder="补充信息..."
-                                                />
+                                                <input value={taskAnswer[task.id] || ''} onChange={(event) => setTaskAnswer((prev) => ({...prev, [task.id]: event.target.value}))} placeholder="补充信息..." />
                                                 <button type="button" onClick={() => void answerTask(task.id)}>回答</button>
                                             </>
                                         )}
@@ -3108,31 +3175,51 @@ function App() {
                                     </div>
                                 </div>
                             ))}
-                        </div>
+                        </section>
                     )}
 
-                    <div className="message-feed" ref={feedRef}>
-                        {displayedMessages.length === 0 && (
-                            <div className="empty-state">
-                                <strong>第一步已经就位。</strong>
-                                <span>试试输入“你好”或“记住我喜欢中文简洁回复”。</span>
+                    {activeView === 'settings' && (
+                        <section className="web-view">
+                            <h2 className="web-view-title">设置</h2>
+                            <div className="info-card"><b>语音语言</b>
+                                <button type="button" className="ghost-button" onClick={() => setSpeechLanguage((value) => value === 'zh' ? 'ja' : 'zh')} aria-pressed={speechLanguage === 'ja'}>
+                                    {speechLanguage === 'zh' ? '中文' : '日语'}
+                                </button>
                             </div>
-                        )}
-
-                        {displayedMessages.map((message) => (
-                            <article className={`message ${message.role}`} key={message.id}>
-                            <span className="message-role">{message.role === 'user' ? '你' : DESKTOP_PET_NAME}</span>
-                                <p>{message.content}</p>
-                            </article>
-                        ))}
-                    </div>
-
-                    {providerError && <div className="error">模型状态：{providerError}</div>}
-                    {error && <div className="error">{error}</div>}
-                    {voiceError && <div className="error">{voiceError}</div>}
-
-                    {composer}
+                            <div className="info-card"><b>自由聊天</b>
+                                <button type="button" className="ghost-button" onClick={() => setConversationMode((value) => value === 'free' ? 'manual' : 'free')} aria-pressed={freeConversationMode}>
+                                    {freeConversationMode ? '开' : '关'}
+                                </button>
+                            </div>
+                            <div className="info-card"><b>持续对话</b>
+                                <button type="button" className="ghost-button" onClick={() => setContinuousVoiceMode((value) => !value)} aria-pressed={effectiveContinuousVoiceMode} disabled={freeConversationMode}>
+                                    {effectiveContinuousVoiceMode ? '开' : '关'}
+                                </button>
+                            </div>
+                            <h3 className="web-view-sub">配置文件（可编辑任意配置项）</h3>
+                            <div className="config-editor">
+                                <textarea
+                                    className="config-editor-textarea"
+                                    value={configText}
+                                    onChange={(event) => setConfigText(event.target.value)}
+                                    spellCheck={false}
+                                    placeholder="点击「加载配置」读取当前 config.json，修改后点「保存配置」写回。"
+                                />
+                                <div className="config-editor-bar">
+                                    <button type="button" className="ghost-button" onClick={() => void refreshConfigEditor()}>加载配置</button>
+                                    <button type="button" className="ghost-button" onClick={() => void saveConfigEditor()} disabled={configEditorState === 'loading'}>保存配置</button>
+                                    <span className={`config-editor-status ${configEditorState}`}>{configEditorState === 'loading' ? '处理中…' : configEditorState === 'saved' ? '已保存' : configEditorState === 'error' ? '出错' : ''}</span>
+                                </div>
+                                {configEditorMessage && <div className="error">{configEditorMessage}</div>}
+                            </div>
+                            <h3 className="web-view-sub">快捷键</h3>
+                            <div className="info-card"><b>语音输入</b><span>V</span></div>
+                            <h3 className="web-view-sub">关于</h3>
+                            <div className="info-card"><b>版本</b><span>Yuyu-Mind2 · v0.1</span></div>
+                        </section>
+                    )}
                 </section>
+            </div>
             )}
         </main>
     );

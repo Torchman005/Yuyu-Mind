@@ -33,6 +33,8 @@ export function GetActiveProvider():Promise<types.ProviderConfig>;
 
 export function GetAgentTask(arg1:string):Promise<db.AgentTask>;
 
+export function GetConfigJSON():Promise<Record<string, any>>;
+
 export function GetMessages(arg1:string):Promise<Array<db.Message>>;
 
 export function GetPluginConfig(arg1:string):Promise<Record<string, any>>;
@@ -70,6 +72,8 @@ export function ProbeFishLive():Promise<app.FishLiveProbeResult>;
 export function PromoteMemoryCandidate(arg1:string):Promise<db.UserMemory>;
 
 export function RejectMemoryCandidate(arg1:string):Promise<void>;
+
+export function SaveConfigJSON(arg1:Record<string, any>):Promise<void>;
 
 export function SearchMemories(arg1:string,arg2:string,arg3:string,arg4:number):Promise<Array<db.UserMemory>>;
 

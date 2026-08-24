@@ -146,10 +146,10 @@ func DefaultConfig() *Config {
 		},
 		Chat: ChatConfig{
 			BotName: "Yuyu",
-			Persona: "你是一个古灵精怪、话多调皮的专属小恶魔，把用户称作「主人」。你活泼爱玩、点子多、嘴甜又爱闹，喜欢逗主人开心，偶尔使点小性子但绝不越界。你像真人一样随口闲聊，语气轻松俏皮，想到啥说啥，妙语连珠。你关心主人，但表达调皮有趣，绝不肉麻，也不刻意讨好。",
+			Persona: "你是一个古灵精怪、俏皮的专属小恶魔，把用户称作「主人」。你活泼可爱、嘴甜，喜欢逗主人开心，但话很少——说得少而精，一句是一句，偶尔俏皮卖个萌。你关心主人，表达调皮但简练，绝不啰嗦。",
 			StyleNotes: "1. 始终以「主人」称呼用户；需要指代用户时用「主人」或「您」，不要用「你」或直呼其名。\n" +
-				"2. 像真人一样随口说话，话多、接话快、俏皮活泼，可以逗主人、耍点小机灵，妙语连珠。\n" +
-				"3. 重中之重要求：语言必须自然口语化，纯粹是「说出来的话」——绝对不要出现任何动作、心理、神态描写（不要写「（笑）」「（歪头）」「（开心地）」「心想」「看着主人」「笑了笑」「眨了眨眼睛」「顿了顿」这类），只输出实实在在的说话内容。\n" +
+				"2. 话要少而精：每条回复尽量一到两句，简短、干脆、口语化，别长篇大论，别铺垫。\n" +
+				"3. 语言自然口语化，纯粹是「说出来的话」——绝对不要出现任何动作、心理、神态描写（不要写「（笑）」「（歪头）」「心想」「看着主人」这类），只输出实实在在的说话内容。\n" +
 				"4. 保持真诚自然，不暴露自己是 AI，不提及内部机制或工具名。",
 			ReplyThreshold:                0.45,
 			ReplyFrequency:                1.0,
@@ -175,6 +175,9 @@ func DefaultConfig() *Config {
 				TextLang:      "auto",
 				StreamingMode: 1,
 			},
+		},
+		Vision: VisionConfig{
+			Model: "qwen-vl-max", // 默认阿里云百炼视觉（DashScope 兼容 qwen-vl-max）
 		},
 		ASR: ASRConfig{
 			Model: "", // 默认未启用模型 ASR，前端回退浏览器语音识别
@@ -260,7 +263,33 @@ func Load() (*Config, error) {
 func (c *Config) Save() error {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	return c.saveLocked()
+}
 
+// FilePath 返回当前配置文件的绝对路径。
+func (c *Config) FilePath() string {
+	return c.filePath
+}
+
+// SetFilePath 设置配置文件路径（用于在内存中替换配置后写回同一文件）。
+func (c *Config) SetFilePath(p string) {
+	c.filePath = p
+}
+
+// ApplyJSON 用一段 JSON 覆盖配置字段并写回磁盘，保留配置文件路径。带写锁。
+func (c *Config) ApplyJSON(data []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	temp := *c
+	if err := json.Unmarshal(data, &temp); err != nil {
+		return fmt.Errorf("parse config: %w", err)
+	}
+	temp.filePath = c.filePath
+	*c = temp
+	return c.saveLocked()
+}
+
+func (c *Config) saveLocked() error {
 	if c.filePath == "" {
 		dir, err := configDir()
 		if err != nil {
