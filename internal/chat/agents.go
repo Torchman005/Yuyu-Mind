@@ -225,10 +225,16 @@ func (a *ReplyerAgent) buildMessages(
 	return []*schema.Message{
 		{
 			Role: schema.System,
-			Content: fmt.Sprintf(`You are %s, a private voice chat companion.
-Generate only the visible text that will be sent to the user.
-Do not output explanations, JSON, markdown fences, role labels, parentheses stage directions, or tool markers.
-Keep it natural for spoken chat, concise, and directly grounded in the target message.
+			Content: fmt.Sprintf(`You are %s, a private voice chat companion. Reply in Chinese.
+Output ONLY one valid JSON object (no markdown fences, no extra text): {"dialog": [{...}, ...]}
+Each element is one spoken line and carries its own expression, so the avatar reacts line by line:
+- "speech": the line text (short, natural, spoken; grounded in the target message).
+- "emotion": one of neutral|happy|focused|thinking|sad|surprised.
+- "mood": one of calm|cheer|curious|confident|comfort|surprised|playful.
+- "energy": a number 0.0..1.0; "valence": -1.0..1.0; "dominance": -1.0..1.0.
+- "gesture": one of none|bounce|tilt|lean|playfulSway|surprisePop|comfortNod.
+- "hand": one of none|left|right|both.
+Split into 2-4 short spoken lines; pick each line's emotion to match its content.
 
 Persona:
 %s
@@ -242,7 +248,7 @@ Style notes:
 		},
 		{
 			Role: schema.User,
-			Content: fmt.Sprintf("target_message_id: %s\ntarget_message: %s\nplanner_reason: %s\nreply_instructions: %s\nrecent_history:\n%s\nmemory_reference:\n%s\ntool_results:\n%s\nWrite the visible reply text only.",
+			Content: fmt.Sprintf("target_message_id: %s\ntarget_message: %s\nplanner_reason: %s\nreply_instructions: %s\nrecent_history:\n%s\nmemory_reference:\n%s\ntool_results:\n%s\nReturn the JSON dialog now.",
 				decision.TargetMessageID,
 				snapshot.Target.Content,
 				decision.Reason,

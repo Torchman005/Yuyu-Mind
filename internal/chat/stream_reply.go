@@ -130,8 +130,7 @@ func (s *Service) streamReply(
 		parts = append(parts, part)
 		slog.Info("[tts] stream token", "part", part, "runes", len([]rune(part)), "total_runes", totalRunes)
 		if emitter != nil {
-			// 逐句情绪微调：某句内容带明显情绪时，在下发该句前更新离散表情，
-			// 使 Live2D 逐句反应（对齐 Shinsekai「表情随台词走」的体验）。
+			// 逐句情绪微调（flat-text 回退路径）：某句内容带明显情绪时，在下发该句前更新离散表情。
 			if refined := refineSentenceEmotion(part, lastEmotion); refined != "" {
 				lastEmotion = refined
 				emitter.Emit(ChatEvent{
@@ -177,6 +176,46 @@ func (s *Service) streamReply(
 		return nil
 	}
 
+	// flushDialogItem 处理结构化回复中模型给出的「一句台词 + 该句情绪/动作」。
+	// 每句前下发其自带情绪，使 Live2D 表情随台词走（对齐 Shinsekai）。
+	flushDialogItem := func(item DialogItem) error {
+		if replyer.cfg.MaxReplyChars > 0 && totalRunes+len([]rune(item.Speech)) > replyer.cfg.MaxReplyChars {
+			return errReplyTooLong
+		}
+		totalRunes += len([]rune(item.Speech))
+		parts = append(parts, item.Speech)
+		slog.Info("[tts] stream dialog", "speech", item.Speech, "emotion", item.Emotion, "runes", len([]rune(item.Speech)))
+		if emitter != nil {
+			emitter.Emit(ChatEvent{
+				Type:      EventTypeEmotion,
+				Emotion:   item.Emotion,
+				Mood:      item.Mood,
+				Energy:    item.Energy,
+				Valence:   item.Valence,
+				Dominance: item.Dominance,
+				Gesture:   item.Gesture,
+				Hand:      item.Hand,
+			})
+			emitter.Emit(ChatEvent{Type: EventTypeToken, Content: item.Speech})
+		}
+		return s.db.Messages.Create(ctx, &db.Message{
+			ID:             uuid.New().String(),
+			ConversationID: snapshot.Target.ConversationID,
+			Role:           "assistant",
+			Content:        item.Speech,
+			SourceKind:     "guided_reply",
+			Emotion:        item.Emotion,
+			Mood:           item.Mood,
+			Energy:         item.Energy,
+			Valence:        item.Valence,
+			Dominance:      item.Dominance,
+			Gesture:        item.Gesture,
+			Hand:           item.Hand,
+			CreatedAt:      now,
+		})
+	}
+
+	parser := newDialogStreamParser()
 	stopped := false
 	for {
 		chunk, recvErr := reader.Recv()
@@ -189,17 +228,30 @@ func (s *Service) streamReply(
 		if chunk == nil {
 			continue
 		}
-		if err := emitSentences(sentencer.feed(chunk.Content)); err != nil {
-			if errors.Is(err, errReplyTooLong) {
-				stopped = true
-				break
+		for _, item := range parser.feed(chunk.Content) {
+			if err := flushDialogItem(item); err != nil {
+				if errors.Is(err, errReplyTooLong) {
+					stopped = true
+					break
+				}
+				return nil, err
 			}
-			return nil, err
+		}
+		if stopped {
+			break
 		}
 	}
-	if !stopped {
-		if err := emitSentences(sentencer.flush()); err != nil && !errors.Is(err, errReplyTooLong) {
-			return nil, err
+
+	// 结构化输出未解析出任何台词（模型直接给了 flat text，或 JSON 不规范）→ 回退到按句切分。
+	if !stopped && parser.yieldedItems == 0 {
+		raw := strings.TrimSpace(parser.accumulated)
+		if raw != "" {
+			if err := emitSentences(sentencer.feed(raw)); err != nil && !errors.Is(err, errReplyTooLong) {
+				return nil, err
+			}
+			if err := emitSentences(sentencer.flush()); err != nil && !errors.Is(err, errReplyTooLong) {
+				return nil, err
+			}
 		}
 	}
 
