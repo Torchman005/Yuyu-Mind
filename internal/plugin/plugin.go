@@ -21,6 +21,13 @@ type Action struct {
 	InputSchema map[string]any `json:"inputSchema,omitempty"`
 }
 
+// Tool 描述插件注册给 LLM 的一个工具（供 Planner / Worker 调用）。
+type Tool struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	InputSchema map[string]any `json:"inputSchema,omitempty"`
+}
+
 // Manifest 描述插件元数据、权限与能力，是插件系统的对外契约。
 // 与前端 app.PluginInfo（companion.go）字段一一对应。
 type Manifest struct {
@@ -31,9 +38,11 @@ type Manifest struct {
 	Version       string         `json:"version"`
 	Author        string         `json:"author"`
 	Entry         string         `json:"entry"`
+	Runtime       string         `json:"runtime,omitempty"`
 	Permissions   []string       `json:"permissions"`
 	ConfigSchema  map[string]any `json:"configSchema,omitempty"`
 	Actions       []Action       `json:"actions,omitempty"`
+	Tools         []Tool         `json:"tools,omitempty"`
 }
 
 // ConfigStore 持久化插件配置。由宿主实现（如 settings 键值表）。

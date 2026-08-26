@@ -4,6 +4,7 @@ import {memory} from '../models';
 import {db} from '../models';
 import {app} from '../models';
 import {types} from '../models';
+import {loghub} from '../models';
 import {chat} from '../models';
 import {agent} from '../models';
 
@@ -34,6 +35,10 @@ export function GetActiveProvider():Promise<types.ProviderConfig>;
 export function GetAgentTask(arg1:string):Promise<db.AgentTask>;
 
 export function GetConfigJSON():Promise<Record<string, any>>;
+
+export function GetLogLevel():Promise<string>;
+
+export function GetLogs(arg1:string,arg2:number):Promise<Array<loghub.Entry>>;
 
 export function GetMessages(arg1:string):Promise<Array<db.Message>>;
 
@@ -73,6 +78,8 @@ export function PromoteMemoryCandidate(arg1:string):Promise<db.UserMemory>;
 
 export function RejectMemoryCandidate(arg1:string):Promise<void>;
 
+export function ReloadPlugins():Promise<app.PluginListReply>;
+
 export function SaveConfigJSON(arg1:Record<string, any>):Promise<void>;
 
 export function SearchMemories(arg1:string,arg2:string,arg3:string,arg4:number):Promise<Array<db.UserMemory>>;
@@ -82,6 +89,8 @@ export function SendAgentTaskControl(arg1:string,arg2:string,arg3:Record<string,
 export function SendMessage(arg1:string):Promise<app.ChatReply>;
 
 export function SetActiveProvider(arg1:string,arg2:string):Promise<void>;
+
+export function SetLogLevel(arg1:string):Promise<void>;
 
 export function SetPluginConfig(arg1:string,arg2:Record<string, any>):Promise<void>;
 

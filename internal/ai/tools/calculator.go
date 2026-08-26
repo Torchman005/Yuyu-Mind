@@ -26,10 +26,16 @@ func NewCalculatorTool() *CalculatorTool {
 
 // Info 返回提供给模型的工具元数据。
 func (t *CalculatorTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
-	return &schema.ToolInfo{
+	return attachSchema(&schema.ToolInfo{
 		Name: "calculator",
 		Desc: "Evaluate a mathematical expression. Supports +, -, *, /, parentheses. Example: (2+3)*4",
-	}, nil
+	}, map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"expression": map[string]any{"type": "string", "description": "A mathematical expression to evaluate, e.g. 2+3*4"},
+		},
+		"required": []string{"expression"},
+	}), nil
 }
 
 // InvokableRun 执行表达式计算。

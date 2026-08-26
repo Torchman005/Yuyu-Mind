@@ -23,6 +23,7 @@ type Config struct {
 	Vision         VisionConfig        `json:"vision"`
 	ASR            ASRConfig           `json:"asr"`
 	Services       ServiceConfig       `json:"services"`
+	LogLevel       string              `json:"log_level"` // DEBUG|INFO|WARN|ERROR，默认 DEBUG
 }
 
 // ServiceConfig 记录本地服务（GPT-SoVITS / SenseVoice / conda）的安装路径与参数，
@@ -70,6 +71,7 @@ type AppConfig struct {
 	MaxTurns      int    `json:"max_turns"`
 	DBPath        string `json:"db_path"`
 	WorkspaceRoot string `json:"workspace_root"`
+	PluginsRoot   string `json:"plugins_root"`
 }
 
 // ChatConfig stores backend chat orchestration settings.
@@ -140,10 +142,12 @@ func DefaultConfig() *Config {
 			},
 		},
 		App: AppConfig{
-			Theme:    "system",
-			Language: "zh-CN",
-			MaxTurns: 20,
+			Theme:       "system",
+			Language:    "zh-CN",
+			MaxTurns:    20,
+			PluginsRoot: "plugins",
 		},
+		LogLevel: "DEBUG",
 		Chat: ChatConfig{
 			BotName: "Yuyu",
 			Persona: "你是一个古灵精怪、俏皮的专属小恶魔，把用户称作「主人」。你活泼可爱、嘴甜，喜欢逗主人开心，但话很少——说得少而精，一句是一句，偶尔俏皮卖个萌。你关心主人，表达调皮但简练，绝不啰嗦。",
@@ -289,11 +293,18 @@ func (c *Config) ApplyJSON(data []byte) error {
 	return c.saveLocked()
 }
 
+// SetLogLevel 设置日志等级并落盘（DEBUG|INFO|WARN|ERROR）。
+func (c *Config) SetLogLevel(level string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.LogLevel = level
+	return c.saveLocked()
+}
+
 func (c *Config) saveLocked() error {
 	if c.filePath == "" {
 		dir, err := configDir()
-		if err != nil {
-			return fmt.Errorf("config dir: %w", err)
+		if err != nil {			return fmt.Errorf("config dir: %w", err)
 		}
 		c.filePath = filepath.Join(dir, "config.json")
 	}

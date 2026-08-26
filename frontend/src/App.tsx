@@ -9,6 +9,8 @@ import {
     EnablePlugin,
     GenerateProactiveMessage,
     GetConfigJSON,
+    GetLogLevel,
+    GetLogs,
     GetMessages,
     GetPluginConfig,
     GetState,
@@ -19,8 +21,10 @@ import {
     ListPlugins,
     ObserveScreen,
     ProbeFishLive,
+    ReloadPlugins,
     SaveConfigJSON,
     SendAgentTaskControl,
+    SetLogLevel,
     SetPluginConfig,
     StreamChat,
     SynthesizeSpeech,
@@ -37,7 +41,7 @@ import {
     WindowSetBackgroundColour,
     WindowSetSize,
 } from '../wailsjs/runtime/runtime';
-import {app, chat, db} from '../wailsjs/go/models';
+import {app, chat, db, loghub} from '../wailsjs/go/models';
 import {AvatarPerformance, Live2DStage} from './components/Live2DStage';
 
 type Message = app.CompanionMessage;
@@ -163,13 +167,14 @@ const PROACTIVE_CHECK_SECONDS = Number((import.meta.env.VITE_PROACTIVE_CHECK_SEC
 const PROACTIVE_FREE_MODE_ENABLED = ((import.meta.env.VITE_PROACTIVE_FREE_MODE_ENABLED as string | undefined) || 'true').trim().toLowerCase() === 'true';
 
 // ---- Web 版桌面详情页：左侧导航 + 右侧视图 ----
-type ViewKey = 'chat' | 'skins' | 'model' | 'plugins' | 'tasks' | 'settings';
+type ViewKey = 'chat' | 'skins' | 'model' | 'plugins' | 'tasks' | 'settings' | 'logs';
 const WEB_NAV: { key: ViewKey; label: string; icon: string }[] = [
     { key: 'chat', label: '对话', icon: '💬' },
     { key: 'skins', label: '外观 / 皮肤', icon: '🎨' },
     { key: 'model', label: '模型信息', icon: '🧠' },
     { key: 'plugins', label: '插件管理', icon: '🧩' },
     { key: 'tasks', label: '后台任务', icon: '📋' },
+    { key: 'logs', label: '桌宠日志', icon: '📜' },
     { key: 'settings', label: '设置', icon: '⚙️' },
 ];
 const PROACTIVE_PLUGIN_CONTEXT_HINT_MINUTES = Number((import.meta.env.VITE_PROACTIVE_PLUGIN_CONTEXT_HINT_MINUTES as string | undefined) || '20');
@@ -500,6 +505,10 @@ function App() {
     const [tasks, setTasks] = useState<db.AgentTask[]>([]);
     const [tasksOpen, setTasksOpen] = useState(false);
     const [taskAnswer, setTaskAnswer] = useState<Record<string, string>>({});
+    const [logs, setLogs] = useState<loghub.Entry[]>([]);
+    const [logLevel, setLogLevel] = useState('DEBUG');
+    const [logFilter, setLogFilter] = useState('');
+    const [logLoading, setLogLoading] = useState(false);
     const [performanceHint, setPerformanceHint] = useState<PerformanceHint | null>(null);
     const [isSending, setIsSending] = useState(false);
     const [isObservingScreen, setIsObservingScreen] = useState(false);
@@ -2388,6 +2397,15 @@ function App() {
             .catch((reason: unknown) => setError(String(reason)));
     }
 
+    async function reloadPlugins() {
+        try {
+            const reply = await ReloadPlugins();
+            setPlugins(reply.plugins ?? []);
+        } catch (reason) {
+            setError(String(reason));
+        }
+    }
+
     async function togglePlugin(plugin: app.PluginInfo) {
         try {
             if (plugin.enabled) {
@@ -2458,6 +2476,34 @@ function App() {
             .then((items) => setTasks(items ?? []))
             .catch((reason: unknown) => setError(String(reason)));
     }
+
+    async function refreshLogs() {
+        setLogLoading(true);
+        try {
+            const level = logFilter || logLevel;
+            const items = await GetLogs(level, 800);
+            setLogs(items ?? []);
+        } catch (reason) {
+            setError(String(reason));
+        } finally {
+            setLogLoading(false);
+        }
+    }
+
+    async function changeLogLevel(level: string) {
+        setLogLevel(level);
+        try {
+            await SetLogLevel(level);
+        } catch (reason) {
+            setError(String(reason));
+        }
+        await refreshLogs();
+    }
+
+    useEffect(() => {
+        void refreshLogs();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [logFilter]);
 
     async function cancelTask(taskId: string) {
         try {
@@ -3104,6 +3150,17 @@ function App() {
                                             <button type="button" onClick={() => void showPluginConfig(pluginDetail.name)}>配置</button>
                                             <button type="button" onClick={() => void savePluginConfig(pluginDetail.name)}>保存配置</button>
                                         </div>
+                                        {(pluginDetail.tools ?? []).length > 0 && (
+                                            <>
+                                                <h3 className="web-view-sub">模型工具</h3>
+                                                <div className="plugin-tool-tags">
+                                                    {(pluginDetail.tools ?? []).map((tool) => (
+                                                        <span className="plugin-tool-tag" key={String(tool.name)} title={String(tool.description ?? '')}>{String(tool.name)}</span>
+                                                    ))}
+                                                </div>
+                                                <p className="plugin-hint">这些能力已注册给对话模型，可在聊天里用自然语言触发（如「调用 {String(pluginDetail.tools?.[0]?.name ?? '')}」）。</p>
+                                            </>
+                                        )}
                                         <p className="plugin-hint">启用后，在聊天里用自然语言触发「{pluginDetail.displayName || pluginDetail.name}」的动作即可（如「{pluginDetail.actions?.[0]?.name || 'list'}」）。</p>
                                         {pluginResult && <pre className="plugin-result">{pluginResult}</pre>}
                                     </div>
@@ -3112,7 +3169,10 @@ function App() {
                                 <>
                                     <div className="plugin-panel-header">
                                         <strong>插件 {plugins.length > 0 ? `(${plugins.length})` : ''}</strong>
-                                        <button type="button" className="ghost-button" onClick={refreshPlugins}>刷新</button>
+                                        <div className="plugin-panel-actions">
+                                            <button type="button" className="ghost-button" onClick={reloadPlugins}>重新加载</button>
+                                            <button type="button" className="ghost-button" onClick={refreshPlugins}>刷新</button>
+                                        </div>
                                     </div>
                                     {plugins.length === 0 && (
                                         <div className="empty-state"><span>暂无插件。插件系统内核已就绪，可扩展电脑工具 / 游戏 / 任务等能力。</span></div>
@@ -3175,6 +3235,49 @@ function App() {
                                     </div>
                                 </div>
                             ))}
+                        </section>
+                    )}
+
+                    {activeView === 'logs' && (
+                        <section className="web-view">
+                            <div className="log-header">
+                                <h2 className="web-view-title">桌宠日志</h2>
+                                <div className="log-toolbar">
+                                    <select value={logFilter} onChange={(event) => setLogFilter(event.target.value)} aria-label="日志级别">
+                                        <option value="">全部（当前等级 {logLevel}）</option>
+                                        <option value="DEBUG">DEBUG</option>
+                                        <option value="INFO">INFO</option>
+                                        <option value="WARN">WARN</option>
+                                        <option value="ERROR">ERROR</option>
+                                    </select>
+                                    <button type="button" className="ghost-button" onClick={() => void refreshLogs()}>刷新</button>
+                                    <button type="button" className="ghost-button" onClick={() => setLogs([])}>清屏</button>
+                                </div>
+                            </div>
+                            <div className="info-card">
+                                <b>采集等级</b>
+                                <span>{logLevel}</span>
+                                <div className="log-levels">
+                                    {['DEBUG', 'INFO', 'WARN', 'ERROR'].map((lv) => (
+                                        <button key={lv} type="button" className={`ghost-button${logLevel === lv ? ' active' : ''}`} onClick={() => void changeLogLevel(lv)}>{lv}</button>
+                                    ))}
+                                </div>
+                                <span className="log-hint">等级保存在配置文件 config.json 的 "log_level"（默认 DEBUG）。</span>
+                            </div>
+                            {logLoading && <div className="empty-state">加载中…</div>}
+                            {logs.length === 0 && !logLoading && <div className="empty-state"><span>暂无日志。等级设为 DEBUG 可看到更详细输出（含插件调用）。</span></div>}
+                            <div className="log-view">
+                                {logs.map((entry, index) => (
+                                    <div className={`log-entry log-${(entry.level || 'info').toLowerCase()}`} key={`${index}-${entry.time}`}>
+                                        <span className="log-time">{entry.time ? new Date(entry.time).toLocaleTimeString() : ''}</span>
+                                        <span className="log-level">{entry.level}</span>
+                                        <span className="log-message">{entry.message}{entry.source ? `\n${entry.source}` : ''}</span>
+                                        {entry.attrs && Object.keys(entry.attrs).length > 0 && (
+                                            <pre className="log-attrs">{JSON.stringify(entry.attrs)}</pre>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
                         </section>
                     )}
 

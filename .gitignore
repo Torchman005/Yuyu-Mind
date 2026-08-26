@@ -49,3 +49,6 @@ frontend/dist/
 
 # Claude
 .claude/
+
+# Local sidecar plugins (installed/author runs; not part of the project source)
+/plugins/

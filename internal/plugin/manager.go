@@ -236,6 +236,29 @@ func (m *Manager) InvokeAction(ctx context.Context, id, action string, input map
 	return handler(ctx, input)
 }
 
+// Remove 卸载一个插件：停止并移除其运行状态。用于目录插件热卸载。
+// 已注册进工具注册表的工具桩不会被摘除（工具注册表不支持按插件移除），
+// 若之后重新注册同名插件会覆盖这些桩，可接受。
+func (m *Manager) Remove(ctx context.Context, id string) error {
+	reg, ok := m.lookup(id)
+	if !ok {
+		return nil
+	}
+	reg.mu.Lock()
+	if reg.started {
+		_ = reg.plugin.Stop(ctx)
+		reg.started = false
+	}
+	reg.enabled = false
+	reg.mu.Unlock()
+
+	m.mu.Lock()
+	delete(m.plugins, id)
+	m.mu.Unlock()
+	m.logger.Info("plugin removed", "plugin", id)
+	return nil
+}
+
 // StopAll 停用所有插件（宿主退出时调用）。
 func (m *Manager) StopAll(ctx context.Context) {
 	m.mu.RLock()

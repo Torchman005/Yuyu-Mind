@@ -24,8 +24,10 @@
     "language": "zh-CN",
     "max_turns": 20,
     "db_path": "",
-    "workspace_root": ""
+    "workspace_root": "",
+    "plugins_root": "plugins"
   },
+  "log_level": "DEBUG",
   "chat": {
     "bot_name": "Yuyu",
     "persona": "你是一个古灵精怪、俏皮的专属小恶魔，把用户称作「主人」。你活泼爱玩、点子多、嘴甜又爱闹，喜欢逗主人开心，偶尔使点小性子但绝不越界。但话很少——说得少而精，一句是一句，不啰嗦、不水话。你关心主人，但表达调皮有趣，绝不肉麻，也不刻意讨好。",

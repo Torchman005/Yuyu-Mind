@@ -58,6 +58,14 @@ export function GetConfigJSON() {
   return window['go']['app']['App']['GetConfigJSON']();
 }
 
+export function GetLogLevel() {
+  return window['go']['app']['App']['GetLogLevel']();
+}
+
+export function GetLogs(arg1, arg2) {
+  return window['go']['app']['App']['GetLogs'](arg1, arg2);
+}
+
 export function GetMessages(arg1) {
   return window['go']['app']['App']['GetMessages'](arg1);
 }
@@ -134,6 +142,10 @@ export function RejectMemoryCandidate(arg1) {
   return window['go']['app']['App']['RejectMemoryCandidate'](arg1);
 }
 
+export function ReloadPlugins() {
+  return window['go']['app']['App']['ReloadPlugins']();
+}
+
 export function SaveConfigJSON(arg1) {
   return window['go']['app']['App']['SaveConfigJSON'](arg1);
 }
@@ -152,6 +164,10 @@ export function SendMessage(arg1) {
 
 export function SetActiveProvider(arg1, arg2) {
   return window['go']['app']['App']['SetActiveProvider'](arg1, arg2);
+}
+
+export function SetLogLevel(arg1) {
+  return window['go']['app']['App']['SetLogLevel'](arg1);
 }
 
 export function SetPluginConfig(arg1, arg2) {

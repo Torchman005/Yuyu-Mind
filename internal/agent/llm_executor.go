@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 
@@ -121,7 +122,7 @@ func (e *LLMExecutor) Execute(ctx context.Context, task TaskSpec, runtime Runtim
 			approvedForRun = true
 		}
 
-		toolMessages, err := executeWorkerToolCalls(ctx, reply, allowedTools)
+		toolMessages, err := executeWorkerToolCalls(ctx, runtime, reply, allowedTools)
 		if err != nil {
 			return nil, err
 		}
@@ -260,7 +261,7 @@ func collectToolInfos(ctx context.Context, tools []tool.BaseTool) ([]*schema.Too
 }
 
 // executeWorkerToolCalls 执行模型返回的工具调用，返回追加到会话的工具消息。
-func executeWorkerToolCalls(ctx context.Context, msg *schema.Message, tools []tool.BaseTool) ([]*schema.Message, error) {
+func executeWorkerToolCalls(ctx context.Context, runtime Runtime, msg *schema.Message, tools []tool.BaseTool) ([]*schema.Message, error) {
 	toolMap := make(map[string]tool.BaseTool, len(tools))
 	for _, t := range tools {
 		info, err := t.Info(ctx)
@@ -272,6 +273,16 @@ func executeWorkerToolCalls(ctx context.Context, msg *schema.Message, tools []to
 
 	results := []*schema.Message{msg}
 	for _, tc := range msg.ToolCalls {
+		// 立刻在日志/任务页里展示「正在调用哪个工具」，避免长工具(如 run_agent)静默无进展。
+		_ = runtime.Emit(ctx, EventTypeProgress, "info", "Worker 调用工具。", map[string]any{
+			"tool_call_id": tc.ID,
+			"tool":         tc.Function.Name,
+			"arguments":    truncateForLog(tc.Function.Arguments, 2000),
+		})
+		slog.Info("worker tool call",
+			"tool", tc.Function.Name,
+			"arguments", truncateForLog(tc.Function.Arguments, 2000),
+		)
 		t, ok := toolMap[tc.Function.Name]
 		if !ok {
 			results = append(results, &schema.Message{
@@ -294,6 +305,10 @@ func executeWorkerToolCalls(ctx context.Context, msg *schema.Message, tools []to
 		if err != nil {
 			result = fmt.Sprintf("Error executing tool %q: %v", tc.Function.Name, err)
 		}
+		slog.Info("worker tool result",
+			"tool", tc.Function.Name,
+			"result", truncateForLog(result, 3000),
+		)
 		results = append(results, &schema.Message{
 			Role:       schema.Tool,
 			Content:    result,

@@ -88,7 +88,13 @@
 > 关键取舍：先牺牲「第三方二进制热插拔」，换取「稳定接口 + 权限模型 + 生命周期」的正确性；sidecar 协议在阶段 2 再补齐。
 >
 > ✅ **已落地（M2 内核 + 前端）**：`internal/plugin` 包（`Plugin`/`Manifest`/`Action`/`Host` 接口 + `Manager` 注册/启停/列表/动作派发 + `system` 内置插件）；`app.go` 接线（工具注册进宿主工具表 + Shutdown StopAll）；Wails 方法 `ListPlugins`/`EnablePlugin`/`DisablePlugin`/`InvokePluginAction`；前端 `App.tsx` 插件面板（列表/启停/调用动作）+ `App.css` 样式 + wailsjs 绑定补全；`manager_test.go` 单元测试通过。`go build`/`go vet`/`go test ./internal/plugin` 均通过；前端改动需本地 `npm run build` 验证。
-> ⬜ **待办**：插件配置持久化、动作级权限强制、sidecar 协议。
+>
+> ✅ **已升级为「目录即插件」的即插即用（M5）**：插件 = 一个目录，元数据写在 `plugin.json`/`.yaml`/`.yml`/`.toml` 之一，配置写在 `config.<fmt>`。宿主在启动 / `ReloadPlugins` 时扫描 `plugins_root`（`config.app.plugins_root`，默认 `plugins/`，相对可执行文件目录）下的每个子目录，读 manifest 注册能力；实现能力的是 sidecar 入口（默认 Node.js `main.js`，按 `runtime` 字段或扩展名识别），按需拉起、stdio JSON-RPC（`invoke_action`/`invoke_tool`）。配置读写走 `FileConfigStore`（插件目录内的 config 文件，内置插件回退到 settings）。新增/删除插件目录后在插件页点「重新加载」即热生效，**无需改任何 Go 代码**。
+>   - 新增：`internal/plugin/fileconfig.go`（manifest/config 的 json/yaml/toml 解析 + `FileConfigStore` + `CompositeConfigStore`）、`internal/plugin/dirplugin.go`（`DirPlugin` + `DiscoverPluginDirs` + 懒拉起 sidecar + `SetBaseDir` 注入 `YUYU_WORKSPACE`）、`internal/app/plugin_dir.go`（`resolvePluginsRoot`/`loadDirPlugins`/`ReloadPlugins`）；`Manager.Remove` 支持热卸载；`Manifest` 增加 `Runtime`/`Tools`；`PluginInfo` 增加 `tools`/`loadedTools`；`app.go` 对发现的目录插件调用 `SetBaseDir(workspace.Root())`。
+>   - 示例：`plugins/hello/`（plugin.json + config.json + main.js + README，一条动作 `hello` + 一个工具 `shout`）、`plugins/code-assistant/`（用 **Codex CLI** 写代码的工具 `run_agent` + 一键开 IDE 的动作 `open_in_ide`/`open_workspace`）。
+>
+> ✅ **桌宠日志（M6）**：新增 `internal/loghub`（既是 `slog.Handler` 又缓存内存环形缓冲），前端详情页新增「桌宠日志」导航项 `GetLogs`/`GetLogLevel`/`SetLogLevel`，展示含插件调用在内的日志；等级由配置 `log_level` 控制（默认 DEBUG），可在页面运行时切换并写回配置文件。插件工具/动作调用会 `slog.Info("plugin tool/action invoked: ...")`，因此排查「桌宠为何不做事」可先看这页日志。
+> ⬜ **待办**：动作级权限强制、`goja` 脚本引擎（阶段 3）、工具桩在卸载后的摘除（当前重名覆盖、不主动 `RemoveTool`）。
 
 ### 难点 3：操控电脑的安全边界 —— 🔶 进行中（M3 地基已落地）
 

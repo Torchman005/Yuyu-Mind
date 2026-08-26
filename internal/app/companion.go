@@ -107,6 +107,8 @@ type PluginInfo struct {
 	ConfigSchema  map[string]any   `json:"configSchema"`
 	Actions       []map[string]any `json:"actions"`
 	LoadedActions []string         `json:"loadedActions"`
+	Tools         []map[string]any `json:"tools"`
+	LoadedTools   []string         `json:"loadedTools"`
 }
 
 type PluginListReply struct {

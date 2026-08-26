@@ -40,10 +40,17 @@ func NewListFilesTool(ws *Workspace) *ListFilesTool { return &ListFilesTool{ws: 
 
 // Info 返回工具元数据。
 func (t *ListFilesTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
-	return &schema.ToolInfo{
+	return attachSchema(&schema.ToolInfo{
 		Name: "list_files",
 		Desc: "List files and directories inside the workspace. Use this to explore the project structure before reading or writing files.",
-	}, nil
+	}, map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"path":        map[string]any{"type": "string", "description": "Relative directory path under the workspace. Empty means workspace root."},
+			"recursive":   map[string]any{"type": "boolean", "description": "Whether to list recursively."},
+			"max_entries": map[string]any{"type": "integer", "description": "Maximum number of entries to return, default 200."},
+		},
+	}), nil
 }
 
 // InvokableRun 执行目录列举。
@@ -147,10 +154,17 @@ func NewReadFileTool(ws *Workspace) *ReadFileTool { return &ReadFileTool{ws: ws}
 
 // Info 返回工具元数据。
 func (t *ReadFileTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
-	return &schema.ToolInfo{
+	return attachSchema(&schema.ToolInfo{
 		Name: "read_file",
 		Desc: "Read the text content of a file inside the workspace. Returns the file content, truncated if it exceeds max_bytes.",
-	}, nil
+	}, map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"path":      map[string]any{"type": "string", "description": "Relative file path under the workspace."},
+			"max_bytes": map[string]any{"type": "integer", "description": "Maximum bytes to read, default 65536."},
+		},
+		"required": []string{"path"},
+	}), nil
 }
 
 // InvokableRun 执行文件读取。
@@ -219,10 +233,17 @@ func NewWriteFileTool(ws *Workspace) *WriteFileTool { return &WriteFileTool{ws: 
 
 // Info 返回工具元数据。
 func (t *WriteFileTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
-	return &schema.ToolInfo{
+	return attachSchema(&schema.ToolInfo{
 		Name: "write_file",
 		Desc: "Write text content to a file inside the workspace, creating parent directories as needed. Overwrites existing files. Use only with explicit user approval.",
-	}, nil
+	}, map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"path":    map[string]any{"type": "string", "description": "Relative file path under the workspace."},
+			"content": map[string]any{"type": "string", "description": "The complete text content to write."},
+		},
+		"required": []string{"path", "content"},
+	}), nil
 }
 
 // InvokableRun 执行文件写入。

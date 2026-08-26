@@ -127,13 +127,20 @@ func (s *Service) StreamChat(ctx context.Context, req ChatRequest, emitter Emitt
 	} else {
 		planner := NewPlannerAgent(trackedModel, s.cfg.Chat)
 		var err error
-		decision, err = planner.Plan(ctx, snapshot, gate)
+		decision, err = planner.Plan(ctx, snapshot, gate, s.toolReg.GetAll())
 		if err != nil {
 			rt.CompleteNoReply()
 			emitError(emitter, err)
 			s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "planner", collector, time.Since(startedAt), "failed", err)
 			return err
 		}
+		// 便于在「桌宠日志」页排查：模型看到了哪些工具、它最终怎么决策。
+		slog.Debug("planner decision",
+			slog.Any("action", decision.Action),
+			slog.Any("reason", decision.Reason),
+			slog.Any("tool_calls", decision.ToolCalls),
+			slog.Any("available_tools", toolNames(s.toolReg.GetAll())),
+		)
 	}
 
 	// 情绪在流式文本之前发出，前端据此在「逐句朗读」开始前就驱动表情。

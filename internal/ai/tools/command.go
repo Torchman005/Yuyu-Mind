@@ -39,10 +39,19 @@ func NewCommandTool(ws *Workspace) *CommandTool {
 
 // Info 返回工具元数据。
 func (t *CommandTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
-	return &schema.ToolInfo{
+	return attachSchema(&schema.ToolInfo{
 		Name: "execute_command",
 		Desc: "Run a command inside the workspace and return its combined output. Use only with explicit user approval.",
-	}, nil
+	}, map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"command":    map[string]any{"type": "string", "description": "Executable program name, e.g. git, go, cmd."},
+			"args":       map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Arguments passed to the program."},
+			"work_dir":   map[string]any{"type": "string", "description": "Relative directory under the workspace to run in. Empty means workspace root."},
+			"timeout_ms": map[string]any{"type": "integer", "description": "Timeout in milliseconds, default 30000, max 120000."},
+		},
+		"required": []string{"command"},
+	}), nil
 }
 
 // InvokableRun 在工作区目录内执行命令并返回合并输出。

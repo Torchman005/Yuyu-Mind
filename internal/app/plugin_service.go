@@ -110,6 +110,19 @@ func toPluginInfo(status plugin.PluginStatus) PluginInfo {
 		}
 		actions = append(actions, item)
 	}
+	tools := make([]map[string]any, 0, len(manifest.Tools))
+	loadedTools := make([]string, 0, len(manifest.Tools))
+	for _, t := range manifest.Tools {
+		item := map[string]any{
+			"name":        t.Name,
+			"description": t.Description,
+		}
+		if t.InputSchema != nil {
+			item["inputSchema"] = t.InputSchema
+		}
+		tools = append(tools, item)
+		loadedTools = append(loadedTools, t.Name)
+	}
 	return PluginInfo{
 		SchemaVersion: manifest.SchemaVersion,
 		Name:          manifest.Name,
@@ -123,5 +136,7 @@ func toPluginInfo(status plugin.PluginStatus) PluginInfo {
 		ConfigSchema:  manifest.ConfigSchema,
 		Actions:       actions,
 		LoadedActions: status.Actions,
+		Tools:         tools,
+		LoadedTools:   loadedTools,
 	}
 }

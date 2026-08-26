@@ -16,6 +16,7 @@ import (
 	"github.com/yuyu-mind/backend/internal/chat"
 	"github.com/yuyu-mind/backend/internal/config"
 	"github.com/yuyu-mind/backend/internal/db"
+	"github.com/yuyu-mind/backend/internal/loghub"
 	"github.com/yuyu-mind/backend/internal/memory"
 	"github.com/yuyu-mind/backend/internal/plugin"
 	pkgTypes "github.com/yuyu-mind/backend/pkg/types"
@@ -35,6 +36,9 @@ type App struct {
 	memorySvc     *memory.ServiceMemory
 	memStore      memory.Store
 	pluginMgr     *plugin.Manager
+	pluginFileStore *plugin.FileConfigStore
+	pluginsRoot   string
+	logHub        *loghub.Hub
 }
 
 // New 创建 App 实例。
@@ -57,6 +61,14 @@ func (a *App) Startup(ctx context.Context) {
 		return
 	}
 	a.cfg = cfg
+
+	// 安装日志中枢：既写 stderr，也缓存进内存供前端「桌宠日志」页读取。等级随配置，默认 DEBUG。
+	a.logHub = loghub.NewHub(
+		slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: parseLogLevel(cfg.LogLevel), AddSource: true}),
+		parseLogLevel(cfg.LogLevel),
+		2000,
+	)
+	slog.SetDefault(slog.New(a.logHub))
 
 	callback.Register(slog.Default())
 
@@ -141,7 +153,10 @@ func (a *App) Startup(ctx context.Context) {
 		}
 		return nil
 	}, slog.Default())
-	a.pluginMgr.SetConfigStore(&settingsConfigStore{settings: database.Settings})
+	// 目录插件配置走插件目录内的 config.<fmt> 文件；内置插件回退到 settings 键值表。
+	a.pluginsRoot = resolvePluginsRoot(cfg.App.PluginsRoot)
+	a.pluginFileStore = plugin.NewFileConfigStore(nil)
+	a.pluginMgr.SetConfigStore(plugin.NewCompositeConfigStore(a.pluginFileStore, &settingsConfigStore{settings: database.Settings}))
 	if err := a.pluginMgr.Register(ctx, plugin.NewSystemPlugin()); err != nil {
 		slog.Error("failed to register built-in plugin", "error", err)
 	}
@@ -150,6 +165,8 @@ func (a *App) Startup(ctx context.Context) {
 			slog.Error("failed to register workspace plugin", "error", err)
 		}
 	}
+	// 即插即用：扫描插件目录，注册所有含元数据文件的目录插件。
+	a.loadDirPlugins(ctx)
 
 	slog.Info("Yuyu Mind backend started",
 		"provider", cfg.ActiveProvider.ProviderID,

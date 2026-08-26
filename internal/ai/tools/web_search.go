@@ -47,10 +47,16 @@ func NewWebSearchToolWithProvider(provider SearchProvider) *WebSearchTool {
 
 // Info 返回提供给模型的工具元数据。
 func (t *WebSearchTool) Info(ctx context.Context) (*schema.ToolInfo, error) {
-	return &schema.ToolInfo{
+	return attachSchema(&schema.ToolInfo{
 		Name: "web_search",
 		Desc: "Search the web for information. Use this when you need to find current information, facts, or look things up online.",
-	}, nil
+	}, map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"query": map[string]any{"type": "string", "description": "The search query"},
+		},
+		"required": []string{"query"},
+	}), nil
 }
 
 // InvokableRun 执行网页搜索。

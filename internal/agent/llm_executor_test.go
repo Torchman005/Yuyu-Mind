@@ -129,7 +129,7 @@ func TestExecuteWorkerToolCalls(t *testing.T) {
 		},
 	}
 
-	msgs, err := executeWorkerToolCalls(context.Background(), msg, tools)
+	msgs, err := executeWorkerToolCalls(context.Background(), &fakeRuntime{}, msg, tools)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}

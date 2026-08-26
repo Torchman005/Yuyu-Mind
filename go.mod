@@ -5,9 +5,12 @@ go 1.23.0
 require (
 	github.com/cloudwego/eino v0.9.9
 	github.com/cloudwego/eino-ext/components/model/openai v0.1.13
+	github.com/eino-contrib/jsonschema v1.0.3
 	github.com/google/uuid v1.6.0
+	github.com/pelletier/go-toml/v2 v2.0.9
 	github.com/wailsapp/wails/v2 v2.12.0
 	golang.org/x/sys v0.30.0
+	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.34.5
 )
 
@@ -22,7 +25,6 @@ require (
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/cloudwego/eino-ext/libs/acl/openai v0.1.17 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/eino-contrib/jsonschema v1.0.3 // indirect
 	github.com/evanphx/json-patch v0.5.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
@@ -45,7 +47,6 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/ncruces/go-strftime v0.1.9 // indirect
 	github.com/nikolalohinski/gonja v1.5.3 // indirect
-	github.com/pelletier/go-toml/v2 v2.0.9 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
@@ -66,7 +67,6 @@ require (
 	golang.org/x/exp v0.0.0-20230713183714-613f0c0eb8a1 // indirect
 	golang.org/x/net v0.35.0 // indirect
 	golang.org/x/text v0.22.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.55.3 // indirect
 	modernc.org/mathutil v1.6.0 // indirect
 	modernc.org/memory v1.8.0 // indirect
