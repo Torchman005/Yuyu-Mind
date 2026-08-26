@@ -43,452 +43,95 @@ import {
 } from '../wailsjs/runtime/runtime';
 import {app, chat, db, loghub} from '../wailsjs/go/models';
 import {AvatarPerformance, Live2DStage} from './components/Live2DStage';
-
-type Message = app.CompanionMessage;
-type ChatResponse = app.ChatReply;
-
-type SpeechStreamEvent = {
-    sessionId?: string;
-    audioBase64?: string;
-    contentType?: string;
-    error?: string;
-    provider?: string;
-    phase?: string;
-    elapsedMs?: number;
-    detail?: string;
-};
-
-type SpeechMetric = {
-    phase: string;
-    elapsedMs?: number;
-    detail?: string;
-};
-
-type FishLiveProbeResult = {
-    ok?: boolean;
-    error?: string;
-    events?: string[];
-    elapsedMs?: number;
-    audioSize?: number;
-};
-
-type ASRReply = {
-    text?: string;
-    provider?: string;
-    language?: string;
-    duration?: number;
-    error?: string;
-};
-
-// 后端 chat:event 事件（对应 internal/chat/types.go 的 ChatEvent）。
-type ChatStreamEvent = {
-    type?: string;
-    content?: string;
-    tool_id?: string;
-    tool_name?: string;
-    emotion?: string;
-    mood?: string;
-    energy?: number;
-    valence?: number;
-    dominance?: number;
-    gesture?: string;
-    hand?: string;
-};
-
-type PerformanceHint = {
-    mood?: AvatarPerformance['mood'];
-    energy?: number;
-    valence?: number;
-    dominance?: number;
-    gesture?: string;
-    hand?: AvatarPerformance['hand'];
-};
-
-const emotionLabel: Record<string, string> = {
-    neutral: '待机',
-    happy: '开心',
-    focused: '专注',
-    thinking: '思考',
-    sad: '低落',
-    surprised: '惊讶',
-};
-
-const taskStatusLabel: Record<string, string> = {
-    queued: '排队中',
-    running: '执行中',
-    waiting_for_input: '等待补充',
-    waiting_for_approval: '待审批',
-    completed: '已完成',
-    failed: '失败',
-    cancelled: '已取消',
-};
-
-const PET_MODE_KEY = 'yuyu.petMode';
-const PET_SCALE_KEY = 'yuyu.petScale';
-const CONTINUOUS_VOICE_KEY = 'yuyu.continuousVoice';
-const CONVERSATION_MODE_KEY = 'yuyu.conversationMode';
-const SPEECH_LANGUAGE_KEY = 'yuyu.speechLanguage';
-const LEGACY_PET_MODE_KEY = 'mochi.petMode';
-const LEGACY_PET_SCALE_KEY = 'mochi.petScale';
-const LEGACY_CONTINUOUS_VOICE_KEY = 'mochi.continuousVoice';
-const PET_CONTROLS_SHORTCUT = 'Ctrl + Shift + M';
-const PET_BASE_WIDTH = 380;
-const PET_BASE_HEIGHT = 560;
-const PET_MIN_SCALE = 0.6;
-const PET_MAX_SCALE = 1.8;
-const PET_SCALE_STEP = 0.08;
-const PET_HIT_INSET_X = 0.06;
-const PET_HIT_INSET_TOP = 0.02;
-const PET_HIT_INSET_BOTTOM = 0.02;
-const DESKTOP_PET_NAME = (
-    (import.meta.env.VITE_YUYU_DESKTOP_PET_NAME as string | undefined)
-    || (import.meta.env.VITE_DESKTOP_PET_NAME as string | undefined)
-    || ''
-).trim() || 'Yuyu';
-// 与后端 internal/app/companion.go 的 defaultCompanionConversationID 保持一致。
-const DESKTOP_COMPANION_CONVERSATION_ID = 'desktop-companion';
-const SPEECH_OUTPUT_MODE = ((import.meta.env.VITE_SPEECH_OUTPUT_MODE as string | undefined) || 'cloud').trim().toLowerCase();
-const ALLOW_SYSTEM_TTS_FALLBACK = ((import.meta.env.VITE_ALLOW_SYSTEM_TTS_FALLBACK as string | undefined) || 'false').trim().toLowerCase() === 'true';
-const ENABLE_STREAMING_TTS = ((import.meta.env.VITE_ENABLE_STREAMING_TTS as string | undefined) || 'false').trim().toLowerCase() === 'true';
-const ENABLE_GPT_SOVITS_STREAMING = ((import.meta.env.VITE_ENABLE_GPT_SOVITS_STREAMING as string | undefined) || 'false').trim().toLowerCase() === 'true';
-const ENABLE_REALTIME_SPEECH = ((import.meta.env.VITE_REALTIME_SPEECH as string | undefined) || 'false').trim().toLowerCase() === 'true';
-const SHOW_SPEECH_DEBUG = ((import.meta.env.VITE_SHOW_SPEECH_DEBUG as string | undefined) || 'false').trim().toLowerCase() === 'true';
-const ASR_PROVIDER = ((import.meta.env.VITE_ASR_PROVIDER as string | undefined) || 'browser').trim().toLowerCase();
-const ASR_LANGUAGE = (() => {
-    const value = ((import.meta.env.VITE_ASR_LANGUAGE as string | undefined) || 'zh').trim().toLowerCase();
-    return value === 'auto' ? 'auto' : value.startsWith('ja') ? 'ja' : 'zh';
-})();
-const DEFAULT_SPEECH_LANGUAGE = ((import.meta.env.VITE_SPEECH_LANGUAGE as string | undefined) || 'zh').trim().toLowerCase().startsWith('ja') ? 'ja' : 'zh';
-const PROACTIVE_ENABLED = ((import.meta.env.VITE_PROACTIVE_ENABLED as string | undefined) || 'true').trim().toLowerCase() === 'true';
-const PROACTIVE_IDLE_MINUTES = Number((import.meta.env.VITE_PROACTIVE_IDLE_MINUTES as string | undefined) || '8');
-const PROACTIVE_COOLDOWN_MINUTES = Number((import.meta.env.VITE_PROACTIVE_COOLDOWN_MINUTES as string | undefined) || '15');
-const PROACTIVE_QUIET_HOURS = ((import.meta.env.VITE_PROACTIVE_QUIET_HOURS as string | undefined) || '01:00-09:00').trim();
-const PROACTIVE_CHECK_SECONDS = Number((import.meta.env.VITE_PROACTIVE_CHECK_SECONDS as string | undefined) || '30');
-const PROACTIVE_FREE_MODE_ENABLED = ((import.meta.env.VITE_PROACTIVE_FREE_MODE_ENABLED as string | undefined) || 'true').trim().toLowerCase() === 'true';
-
-// ---- Web 版桌面详情页：左侧导航 + 右侧视图 ----
-type ViewKey = 'chat' | 'skins' | 'model' | 'plugins' | 'tasks' | 'settings' | 'logs';
-const WEB_NAV: { key: ViewKey; label: string; icon: string }[] = [
-    { key: 'chat', label: '对话', icon: '💬' },
-    { key: 'skins', label: '外观 / 皮肤', icon: '🎨' },
-    { key: 'model', label: '模型信息', icon: '🧠' },
-    { key: 'plugins', label: '插件管理', icon: '🧩' },
-    { key: 'tasks', label: '后台任务', icon: '📋' },
-    { key: 'logs', label: '桌宠日志', icon: '📜' },
-    { key: 'settings', label: '设置', icon: '⚙️' },
-];
-const PROACTIVE_PLUGIN_CONTEXT_HINT_MINUTES = Number((import.meta.env.VITE_PROACTIVE_PLUGIN_CONTEXT_HINT_MINUTES as string | undefined) || '20');
-const PROACTIVE_CHANCE_PERCENT = clamp(Number((import.meta.env.VITE_PROACTIVE_CHANCE_PERCENT as string | undefined) || '65'), 0, 100);
-const PROACTIVE_MAX_PER_HOUR = Number((import.meta.env.VITE_PROACTIVE_MAX_PER_HOUR as string | undefined) || '8');
-const FOLLOW_UP_ENABLED = ((import.meta.env.VITE_FOLLOW_UP_ENABLED as string | undefined) || 'true').trim().toLowerCase() === 'true';
-const FOLLOW_UP_CHANCE_PERCENT = clamp(Number((import.meta.env.VITE_FOLLOW_UP_CHANCE_PERCENT as string | undefined) || '55'), 0, 100);
-const FOLLOW_UP_DELAY_MS = Number((import.meta.env.VITE_FOLLOW_UP_DELAY_MS as string | undefined) || '1800');
-const FOLLOW_UP_COOLDOWN_MS = Number((import.meta.env.VITE_FOLLOW_UP_COOLDOWN_MS as string | undefined) || '12000');
-const MAX_VISIBLE_CHAT_ROUNDS = Number((import.meta.env.VITE_MAX_VISIBLE_CHAT_ROUNDS as string | undefined) || '20');
-const DEFAULT_CONVERSATION_MODE = ((import.meta.env.VITE_CONVERSATION_MODE as string | undefined) || 'manual').trim().toLowerCase() === 'free' ? 'free' : 'manual';
-const VOICE_RELISTEN_DELAY_MS = 280;
-const VOICE_LOOP_MAX_EMPTY_TURNS = 4;
-const VOICE_LOOP_EMPTY_BACKOFF_MS = 900;
-const VOICE_LOOP_MAX_BACKOFF_MS = 3500;
-const VOICE_MIN_CHARS = 2;
-const VOICE_LOOP_MIN_CHARS = 3;
-const VOICE_LOW_CONFIDENCE = 0.35;
-const VOICE_GATE_ENABLED = ((import.meta.env.VITE_VOICE_GATE_ENABLED as string | undefined) || 'true').trim().toLowerCase() === 'true';
-const VOICE_GATE_THRESHOLD = Number((import.meta.env.VITE_VOICE_GATE_THRESHOLD as string | undefined) || '0.035');
-const VOICE_GATE_HOLD_MS = Number((import.meta.env.VITE_VOICE_GATE_HOLD_MS as string | undefined) || '160');
-const VOICE_GATE_TIMEOUT_MS = Number((import.meta.env.VITE_VOICE_GATE_TIMEOUT_MS as string | undefined) || '12000');
-const VOICE_AUTO_SUBMIT_SILENCE_MS = Number((import.meta.env.VITE_VOICE_AUTO_SUBMIT_SILENCE_MS as string | undefined) || '900');
-const VOICE_MAX_UTTERANCE_MS = Number((import.meta.env.VITE_VOICE_MAX_UTTERANCE_MS as string | undefined) || '15000');
-const BARGE_IN_MIN_CHARS = 2;
-const BARGE_IN_ECHO_SIMILARITY = 0.68;
-
-function canUseWailsRuntime() {
-    return Boolean((window as any).runtime);
-}
-
-function clamp(value: number, min: number, max: number) {
-    return Math.min(max, Math.max(min, value));
-}
-
-function readStoredPetScale() {
-    const value = Number(localStorage.getItem(PET_SCALE_KEY) ?? localStorage.getItem(LEGACY_PET_SCALE_KEY));
-    if (!Number.isFinite(value)) {
-        return 1;
-    }
-    return clamp(value, PET_MIN_SCALE, PET_MAX_SCALE);
-}
-
-function isEditableTarget(target: EventTarget | null) {
-    const element = target as HTMLElement | null;
-    return Boolean(element?.closest('input, textarea, [contenteditable="true"]'));
-}
-
-function visibleChatMessages(items: Message[], maxRounds: number) {
-    if (!Number.isFinite(maxRounds) || maxRounds <= 0) {
-        return items;
-    }
-
-    const userIndexes = items
-        .map((message, index) => message.role === 'user' ? index : -1)
-        .filter((index) => index >= 0);
-    if (userIndexes.length <= maxRounds) {
-        return items;
-    }
-
-    return items.slice(userIndexes[userIndexes.length - maxRounds]);
-}
-
-function decodeBase64Audio(base64: string) {
-    const binary = window.atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-        bytes[index] = binary.charCodeAt(index);
-    }
-    return bytes;
-}
-
-function blobToBase64(blob: Blob) {
-    return new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-            const result = String(reader.result || '');
-            resolve(result.includes(',') ? result.split(',').pop() || '' : result);
-        };
-        reader.onerror = () => reject(reader.error || new Error('Failed to read audio blob'));
-        reader.readAsDataURL(blob);
-    });
-}
-
-// encodeWavPCM 把 Float32 PCM 编码成 16-bit 单声道 WAV（供 SenseVoice/funasr 等只认 WAV 的 ASR 使用）。
-function encodeWavPCM(float32: Float32Array, sampleRate: number): ArrayBuffer {
-    const buffer = new ArrayBuffer(44 + float32.length * 2);
-    const view = new DataView(buffer);
-    const writeString = (offset: number, str: string) => {
-        for (let i = 0; i < str.length; i++) {
-            view.setUint8(offset + i, str.charCodeAt(i));
-        }
-    };
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + float32.length * 2, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true); // PCM
-    view.setUint16(22, 1, true); // mono
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true);
-    view.setUint16(32, 2, true);
-    view.setUint16(34, 16, true);
-    writeString(36, 'data');
-    view.setUint32(40, float32.length * 2, true);
-    let offset = 44;
-    for (let i = 0; i < float32.length; i++) {
-        const s = Math.max(-1, Math.min(1, float32[i]));
-        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-        offset += 2;
-    }
-    return buffer;
-}
-
-// webmToWav16kMono 把录音（webm/opus）解码成 16kHz 单声道 WAV。
-// 浏览器 MediaRecorder 只能录 webm/opus，而 funasr-server（soundfile）解不了 webm，
-// 所以这里先用 Web Audio 解码 + 重采样到 16k，再编码为 WAV 递给后端。
-async function webmToWav16kMono(blob: Blob): Promise<{base64: string; contentType: string}> {
-    const arrayBuffer = await blob.arrayBuffer();
-    const OfflineCtx = (window as any).OfflineAudioContext;
-    const AudioCtxClass = (window as any).AudioContext || (window as any).webkitAudioContext;
-    const decodeCtx = (OfflineCtx ? new OfflineCtx(1, 1, 16000) : new AudioCtxClass());
-    try {
-        const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
-        const targetRate = 16000;
-        const length = Math.max(1, Math.ceil(audioBuffer.duration * targetRate));
-        const resampleCtx = new OfflineCtx(1, length, targetRate);
-        const source = resampleCtx.createBufferSource();
-        source.buffer = audioBuffer;
-        source.connect(resampleCtx.destination);
-        source.start();
-        const rendered = await resampleCtx.startRendering();
-        const pcm = rendered.getChannelData(0);
-        const wav = encodeWavPCM(pcm, targetRate);
-        return {
-            base64: await blobToBase64(new Blob([wav], {type: 'audio/wav'})),
-            contentType: 'audio/wav',
-        };
-    } finally {
-        void decodeCtx.close?.();
-    }
-}
-
-function normalizeSpeechLanguage(value: string | null | undefined) {
-    return String(value || '').trim().toLowerCase().startsWith('zh') ? 'zh' : 'ja';
-}
-
-function speechRecognitionLang(language: string) {
-    return normalizeSpeechLanguage(language) === 'zh' ? 'zh-CN' : 'ja-JP';
-}
-
-function asrRecognitionLanguage(speechLanguage: string) {
-    return ASR_LANGUAGE === 'auto' ? normalizeSpeechLanguage(speechLanguage) : ASR_LANGUAGE;
-}
-
-function asrProviderLanguage(speechLanguage: string) {
-    return ASR_LANGUAGE === 'auto' ? '' : asrRecognitionLanguage(speechLanguage);
-}
-
-function isInterruptedPlaybackError(reason: unknown) {
-    const message = String(reason instanceof Error ? reason.message : reason);
-    return reason instanceof DOMException && reason.name === 'AbortError'
-        || message.includes('play() request was interrupted')
-        || message.includes('AbortError');
-}
-
-function isWithinQuietHours(value: string) {
-    const match = value.match(/^(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})$/);
-    if (!match) {
-        return false;
-    }
-    const [, startHour, startMinute, endHour, endMinute] = match;
-    const start = Number(startHour) * 60 + Number(startMinute);
-    const end = Number(endHour) * 60 + Number(endMinute);
-    const now = new Date();
-    const current = now.getHours() * 60 + now.getMinutes();
-    if (start === end) {
-        return false;
-    }
-    if (start < end) {
-        return current >= start && current < end;
-    }
-    return current >= start || current < end;
-}
-
-function normalizeSpeechText(value: string) {
-    return value
-        .trim()
-        .toLowerCase()
-        .replace(/[\s，。！？、,.!?~～"'“”‘’：:；;（）()[\]{}<>《》]/g, '');
-}
-
-function textSimilarity(left: string, right: string) {
-    const a = normalizeSpeechText(left);
-    const b = normalizeSpeechText(right);
-    if (!a || !b) {
-        return 0;
-    }
-    let matches = 0;
-    const used = new Set<number>();
-    for (const char of a) {
-        const index = [...b].findIndex((candidate, candidateIndex) => candidate === char && !used.has(candidateIndex));
-        if (index >= 0) {
-            used.add(index);
-            matches += 1;
-        }
-    }
-    return matches / Math.max(a.length, b.length);
-}
-
-function isLikelyNoiseTranscript(text: string) {
-    const normalized = normalizeSpeechText(text);
-    if (!normalized) {
-        return true;
-    }
-    const noiseWords = new Set([
-        '啊', '呃', '额', '嗯', '唔', '哦', '喔', '诶', '欸', '哎', '唉',
-        '哈', '哈哈', '呵呵', '嗯嗯', '啊啊', '呃呃',
-        'um', 'uh', 'hmm', 'mmm', 'ah', 'oh',
-    ]);
-    if (noiseWords.has(normalized)) {
-        return true;
-    }
-    if (/^[啊呃额嗯唔哦喔诶欸哎唉哈呵]+$/.test(normalized) && normalized.length <= 4) {
-        return true;
-    }
-    return false;
-}
-
-function isUsableVoiceTranscript(text: string, confidence = 0, options: {fromLoop?: boolean; assistantLine?: string} = {}) {
-    const normalized = normalizeSpeechText(text);
-    const minChars = options.fromLoop ? VOICE_LOOP_MIN_CHARS : VOICE_MIN_CHARS;
-    if (normalized.length < minChars || isLikelyNoiseTranscript(text)) {
-        return false;
-    }
-    if (confidence > 0 && confidence < VOICE_LOW_CONFIDENCE && normalized.length < 8) {
-        return false;
-    }
-    if (options.assistantLine && textSimilarity(text, options.assistantLine) >= BARGE_IN_ECHO_SIMILARITY) {
-        return false;
-    }
-    return true;
-}
-
-function inferAvatarPerformance(text: string, emotion: string, isSpeaking: boolean): AvatarPerformance {
-    const line = text.trim();
-    const lower = line.toLowerCase();
-    const hasQuestion = /[?？]|\bwhy\b|\bhow\b|为什么|怎么|如何|什么/.test(lower);
-    const hasExcitement = /[!！]{1,}|太好了|好耶|厉害|不错|开心|喜欢|かわいい|すごい/.test(lower);
-    const hasComfort = /没事|别急|慢慢|辛苦|抱抱|安心|大丈夫|そばに/.test(lower);
-    const hasTechnical = /代码|报错|配置|接口|模型|延迟|tts|api|bug|日志|构建|测试/i.test(line);
-    const hasPlayful = /嘿|哼|欸|诶|嘛|呀|哦|ふふ|えへ|にゃ|喵|～|~/.test(line);
-    const hasSad = /抱歉|难过|低落|失败|崩|痛|泪|ごめん|かなしい/.test(lower);
-    const hasSurprise = /欸|诶|哇|竟然|真的|突然|surprise|えっ|びっくり/.test(lower);
-
-    let mood: AvatarPerformance['mood'] = 'calm';
-    if (emotion === 'surprised' || hasSurprise) {
-        mood = 'surprised';
-    } else if (emotion === 'happy' || hasExcitement) {
-        mood = 'cheer';
-    } else if (hasComfort || emotion === 'sad') {
-        mood = 'comfort';
-    } else if (hasQuestion || emotion === 'thinking') {
-        mood = 'curious';
-    } else if (hasTechnical || emotion === 'focused') {
-        mood = 'confident';
-    } else if (hasPlayful) {
-        mood = 'playful';
-    }
-
-    const energyBase = isSpeaking ? 0.42 : 0.2;
-    const energy = clamp(
-        energyBase +
-        (hasExcitement ? 0.22 : 0) +
-        (hasPlayful ? 0.16 : 0) +
-        (hasTechnical ? 0.08 : 0) +
-        (hasSad ? -0.08 : 0),
-        0.12,
-        0.92,
-    );
-    const tiltSeed = ((line.length % 7) - 3) / 3;
-
-    // 连续 VAD 回退（LLM 未产出时用文本/表情启发式推断）。
-    const valence = emotion === 'sad' || hasSad ? -0.5
-        : emotion === 'happy' || hasExcitement ? 0.7
-        : mood === 'cheer' ? 0.6
-        : mood === 'playful' ? 0.5
-        : mood === 'comfort' ? 0.25
-        : mood === 'confident' ? 0.3
-        : mood === 'surprised' ? 0.2
-        : 0.05;
-    const dominance = mood === 'confident' || hasTechnical ? 0.4
-        : emotion === 'sad' || hasSad ? -0.3
-        : emotion === 'surprised' || hasSurprise ? -0.1
-        : 0;
-
-    return {
-        key: `${line.slice(0, 18)}:${line.length}:${emotion}`,
-        mood,
-        energy,
-        valence,
-        dominance,
-        lean: hasTechnical ? 0.32 : hasComfort ? -0.12 : hasPlayful ? 0.22 : 0,
-        headTilt: mood === 'curious' ? 0.42 : mood === 'playful' ? tiltSeed * 0.34 : mood === 'surprised' ? -0.18 : tiltSeed * 0.12,
-        eyeSmile: mood === 'cheer' || mood === 'playful' ? 0.55 : mood === 'comfort' ? 0.25 : 0.08,
-        sparkle: mood === 'cheer' || hasExcitement ? 0.8 : 0,
-        blush: mood === 'cheer' || mood === 'playful' ? 0.35 : 0,
-        tears: hasSad ? 0.55 : 0,
-        puff: mood === 'playful' && /哼|不嘛|才不|む/.test(lower) ? 0.45 : 0,
-        hand: hasExcitement ? 'left' : hasTechnical ? 'right' : hasComfort ? 'left' : 'none',
-        gesture: 'none',
-    };
-}
+import {ChatComposer, ChatView, ModelView, PetModeView, SkinsView, WebSidebar} from './components/AppShell';
+import {
+    ASR_PROVIDER,
+    ALLOW_SYSTEM_TTS_FALLBACK,
+    BARGE_IN_MIN_CHARS,
+    CONTINUOUS_VOICE_KEY,
+    CONVERSATION_MODE_KEY,
+    DEFAULT_CONVERSATION_MODE,
+    DEFAULT_SPEECH_LANGUAGE,
+    DESKTOP_COMPANION_CONVERSATION_ID,
+    DESKTOP_PET_NAME,
+    ENABLE_GPT_SOVITS_STREAMING,
+    ENABLE_REALTIME_SPEECH,
+    ENABLE_STREAMING_TTS,
+    FOLLOW_UP_CHANCE_PERCENT,
+    FOLLOW_UP_COOLDOWN_MS,
+    FOLLOW_UP_DELAY_MS,
+    FOLLOW_UP_ENABLED,
+    LEGACY_CONTINUOUS_VOICE_KEY,
+    LEGACY_PET_MODE_KEY,
+    MAX_VISIBLE_CHAT_ROUNDS,
+    PET_BASE_HEIGHT,
+    PET_BASE_WIDTH,
+    PET_CONTROLS_SHORTCUT,
+    PET_HIT_INSET_BOTTOM,
+    PET_HIT_INSET_TOP,
+    PET_HIT_INSET_X,
+    PET_MAX_SCALE,
+    PET_MIN_SCALE,
+    PET_MODE_KEY,
+    PET_SCALE_KEY,
+    PET_SCALE_STEP,
+    PROACTIVE_CHANCE_PERCENT,
+    PROACTIVE_CHECK_SECONDS,
+    PROACTIVE_COOLDOWN_MINUTES,
+    PROACTIVE_ENABLED,
+    PROACTIVE_FREE_MODE_ENABLED,
+    PROACTIVE_IDLE_MINUTES,
+    PROACTIVE_MAX_PER_HOUR,
+    PROACTIVE_PLUGIN_CONTEXT_HINT_MINUTES,
+    PROACTIVE_QUIET_HOURS,
+    REVIEW_ACTION_NAMES,
+    SHOW_SPEECH_DEBUG,
+    SPEECH_LANGUAGE_KEY,
+    SPEECH_OUTPUT_MODE,
+    VOICE_AUTO_SUBMIT_SILENCE_MS,
+    VOICE_GATE_ENABLED,
+    VOICE_GATE_HOLD_MS,
+    VOICE_GATE_THRESHOLD,
+    VOICE_GATE_TIMEOUT_MS,
+    VOICE_LOOP_EMPTY_BACKOFF_MS,
+    VOICE_LOOP_MAX_BACKOFF_MS,
+    VOICE_LOOP_MAX_EMPTY_TURNS,
+    VOICE_MAX_UTTERANCE_MS,
+    VOICE_RELISTEN_DELAY_MS,
+    taskStatusLabel,
+} from './appConfig';
+import {
+    ASRReply,
+    ChatResponse,
+    ChatStreamEvent,
+    FishLiveProbeResult,
+    Message,
+    PerformanceHint,
+    PluginChange,
+    SpeechMetric,
+    SpeechStreamEvent,
+    ViewKey,
+} from './appTypes';
+import {
+    asrProviderLanguage,
+    asrRecognitionLanguage,
+    blobToBase64,
+    canUseWailsRuntime,
+    clamp,
+    decodeBase64Audio,
+    inferAvatarPerformance,
+    isEditableTarget,
+    isInterruptedPlaybackError,
+    isUsableVoiceTranscript,
+    isWithinQuietHours,
+    normalizeSpeechLanguage,
+    normalizeSpeechText,
+    readStoredPetScale,
+    speechRecognitionLang,
+    textSimilarity,
+    visibleChatMessages,
+    webmToWav16kMono,
+} from './utils';
 
 function App() {
     const [messages, setMessages] = useState<Message[]>([]);
@@ -502,12 +145,12 @@ function App() {
     const [pluginResult, setPluginResult] = useState('');
     const [pluginActionInput, setPluginActionInput] = useState('');
     const [pluginDetail, setPluginDetail] = useState<app.PluginInfo | null>(null);
-    const [reviewDiff, setReviewDiff] = useState('');
-    const [reviewBranch, setReviewBranch] = useState('');
-    const [reviewLoading, setReviewLoading] = useState(false);
+    const [pluginConfigText, setPluginConfigText] = useState('');
+    const [pluginConfigOpen, setPluginConfigOpen] = useState(false);
     const [tasks, setTasks] = useState<db.AgentTask[]>([]);
     const [tasksOpen, setTasksOpen] = useState(false);
     const [taskAnswer, setTaskAnswer] = useState<Record<string, string>>({});
+    const [taskReviewDiffOpen, setTaskReviewDiffOpen] = useState<Record<string, boolean>>({});
     const [logs, setLogs] = useState<loghub.Entry[]>([]);
     const [logLevel, setLogLevel] = useState('DEBUG');
     const [logFilter, setLogFilter] = useState('');
@@ -2491,35 +2134,92 @@ function App() {
         ]);
     }
 
-    function hasReviewActions(plugin: app.PluginInfo | null): boolean {
-        if (!plugin) return false;
-        const names = (plugin.actions ?? []).map((a) => String(a.name));
-        return names.includes('show_diff') && names.includes('accept_changes') && names.includes('reject_changes');
+    function openPluginDetail(plugin: app.PluginInfo) {
+        setPluginDetail(plugin);
+        setPluginResult('');
+        setPluginConfigText('');
+        setPluginConfigOpen(false);
     }
 
-    async function loadReviewDiff(pluginName: string) {
-        setReviewLoading(true);
+    function actionDescription(action: any): string {
+        return String(action?.description || action?.name || '');
+    }
+
+    function manualActions(plugin: app.PluginInfo): any[] {
+        return (plugin.actions ?? []).filter((action) => !REVIEW_ACTION_NAMES.has(String(action.name)));
+    }
+
+    function formatChangeKind(change: PluginChange): string {
+        const kind = String(change.kind || '').toLowerCase();
+        if (change.nestedRepo) return '嵌套仓库';
+        if (change.directory) return '目录';
+        if (kind === 'added') return '新增';
+        if (kind === 'deleted') return '删除';
+        if (kind === 'renamed') return '重命名';
+        if (kind === 'modified') return '修改';
+        return String(change.status || '变更');
+    }
+
+    function parseJSONMaybe(raw?: string): any {
+        if (!raw) return null;
         try {
-            const result = await InvokePluginAction(pluginName, 'show_diff', {});
-            const parsed = (result && typeof result === 'object') ? result as Record<string, any> : {};
-            setReviewDiff(String(parsed.diff ?? ''));
-            setReviewBranch(String(parsed.branch ?? ''));
-        } catch (reason) {
-            setError(String(reason));
-        } finally {
-            setReviewLoading(false);
+            return JSON.parse(raw);
+        } catch {
+            return null;
         }
     }
 
-    async function reviewDecision(pluginName: string, action: 'accept_changes' | 'reject_changes') {
+    function taskCodeReview(task: db.AgentTask): Record<string, any> | null {
+        const result = parseJSONMaybe(task.result_json || '');
+        const direct = result?.metadata?.code_review || result?.code_review || result?.metadata?.review;
+        if (direct && typeof direct === 'object') return direct as Record<string, any>;
+
+        const summary = String(result?.summary || '');
+        const start = summary.indexOf('{');
+        const end = summary.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+            const nested = parseJSONMaybe(summary.slice(start, end + 1));
+            if (nested && typeof nested === 'object' && (nested.diff || nested.files || nested.branch)) return nested as Record<string, any>;
+        }
+        return null;
+    }
+
+    function taskReviewFiles(task: db.AgentTask): PluginChange[] {
+        const review = taskCodeReview(task);
+        const files = review?.files;
+        return Array.isArray(files) ? files as PluginChange[] : [];
+    }
+
+    function taskReviewDiff(task: db.AgentTask): string {
+        const review = taskCodeReview(task);
+        return String(review?.diff || '');
+    }
+
+    async function openTaskReviewInVSCode(task: db.AgentTask) {
+        const review = taskCodeReview(task);
+        if (!review) return;
+        setPluginResult('');
         try {
-            const result = await InvokePluginAction(pluginName, action, {});
-            const text = action === 'accept_changes' ? '已接受新代码，合并进基线分支。' : '已保留旧代码，丢弃改动分支。';
-            setReviewDiff('');
-            setReviewBranch('');
+            const payload: Record<string, any> = {...review, limit: 12};
+            const result = await InvokePluginAction(String(review.plugin || 'code-assistant'), 'open_changes', payload);
+            const parsed = (result && typeof result === 'object') ? result as Record<string, any> : {};
+            setPluginResult(parsed.note ? String(parsed.note) : '已在 VS Code 打开任务变更。');
+        } catch (reason) {
+            setError(String(reason));
+        }
+    }
+
+    async function reviewTaskDecision(task: db.AgentTask, action: 'accept_changes' | 'reject_changes') {
+        const review = taskCodeReview(task);
+        const pluginName = String(review?.plugin || 'code-assistant');
+        try {
+            const result = await InvokePluginAction(pluginName, action, review || {});
+            const text = action === 'accept_changes' ? '已接受任务生成的代码改动。' : '已拒绝任务生成的代码改动。';
+            setTaskReviewDiffOpen((prev) => ({...prev, [task.id]: false}));
             appendConversationLine(text);
             void speakText(text);
             setPluginResult(JSON.stringify(result, null, 2));
+            refreshTasks();
         } catch (reason) {
             setError(String(reason));
         }
@@ -2529,7 +2229,8 @@ function App() {
         setPluginResult('');
         try {
             const config = await GetPluginConfig(pluginName);
-            setPluginResult(JSON.stringify(config, null, 2));
+            setPluginConfigText(JSON.stringify(config ?? {}, null, 2));
+            setPluginConfigOpen(true);
         } catch (reason) {
             setError(String(reason));
         }
@@ -2537,7 +2238,7 @@ function App() {
 
     async function savePluginConfig(pluginName: string) {
         let input: Record<string, any> = {};
-        const raw = pluginActionInput.trim();
+        const raw = pluginConfigText.trim();
         if (raw) {
             try {
                 const parsed = JSON.parse(raw);
@@ -2550,6 +2251,7 @@ function App() {
         try {
             await SetPluginConfig(pluginName, input);
             setPluginResult('配置已保存');
+            setPluginConfigOpen(true);
             refreshPlugins();
         } catch (reason) {
             setError(String(reason));
@@ -3068,172 +2770,77 @@ function App() {
     }
 
     const composer = (
-        <form className={isTextInputOpen ? 'composer composer-open' : 'composer'} onSubmit={sendMessage}>
-            {isTextInputOpen && (
-                <input
-                    ref={composerInputRef}
-                    value={draft}
-                    onChange={(event) => setDraft(event.target.value)}
-                    placeholder={`和 ${DESKTOP_PET_NAME} 说点什么...`}
-                    autoComplete="off"
-                />
-            )}
-            <button
-                type="button"
-                className="text-button"
-                onClick={() => setIsTextInputOpen((value) => !value)}
-                aria-pressed={isTextInputOpen}
-            >
-                文字
-            </button>
-            <button
-                type="button"
-                className={`voice-button voice-${voiceStatus}`}
-                onClick={() => {
-                    startManualVoiceInput();
-                }}
-                disabled={isSending || voiceStatus === 'thinking'}
-            >
-                {voiceStatus === 'listening' ? '停止' : (freeConversationMode ? '自由' : effectiveContinuousVoiceMode ? '连续' : '语音')}
-            </button>
-            {isTextInputOpen && (
-                <button type="submit" disabled={isSending || !draft.trim()}>
-                    {isSending ? '发送中' : '发送'}
-                </button>
-            )}
-        </form>
+        <ChatComposer
+            isTextInputOpen={isTextInputOpen}
+            draft={draft}
+            isSending={isSending}
+            voiceStatus={voiceStatus}
+            freeConversationMode={freeConversationMode}
+            effectiveContinuousVoiceMode={effectiveContinuousVoiceMode}
+            inputRef={composerInputRef}
+            onDraftChange={setDraft}
+            onToggleText={() => setIsTextInputOpen((value) => !value)}
+            onVoice={startManualVoiceInput}
+            onSubmit={sendMessage}
+        />
     );
 
     return (
         <main className={`app-shell ${isPetMode ? 'pet-mode' : 'web'}`}>
             {isPetMode ? (
-                <section className="stage" aria-label="Yuyu 桌宠" onWheel={resizePetWithWheel}>
-                    <Live2DStage
-                        emotion={emotion}
-                        isSpeaking={voiceStatus === 'speaking'}
-                        mouthLevel={mouthLevel}
-                        petScale={petScale}
-                        performance={avatarPerformance}
-                    />
-                    {voiceStatus === 'speaking' && assistantLine.trim() && (
-                        <div className="pet-subtitle" aria-live="polite"><p>{assistantLine}</p></div>
-                    )}
-                    {isPetControlsOpen ? (
-                        <div className="pet-controls" aria-label="桌宠控制">
-                            {composer}
-                            <div className="pet-mode-actions">
-                                <button type="button" className="pet-mode-toggle" onClick={() => setIsPetMode(false)}>返回详情</button>
-                            </div>
-                            <span className="pet-shortcut">{PET_CONTROLS_SHORTCUT} · V 语音输入</span>
-                        </div>
-                    ) : null}
-                </section>
+                <PetModeView
+                    emotion={emotion}
+                    voiceStatus={voiceStatus}
+                    mouthLevel={mouthLevel}
+                    petScale={petScale}
+                    performance={avatarPerformance}
+                    assistantLine={assistantLine}
+                    controlsOpen={isPetControlsOpen}
+                    composer={composer}
+                    onWheel={resizePetWithWheel}
+                    onExitPetMode={() => setIsPetMode(false)}
+                />
             ) : (
             <div className="web-shell">
-                <aside className="web-sidebar">
-                    <div className="web-brand">
-                        <span className="web-brand-logo">🐱</span>
-                        <div className="web-brand-text">
-                            <strong>{DESKTOP_PET_NAME}</strong>
-                            <small>Desktop Companion</small>
-                        </div>
-                    </div>
-                    <button type="button" className="new-conversation" onClick={() => void newConversation()}>
-                        <span>＋ 新对话</span>
-                    </button>
-                    <div className="conversation-list" aria-label="对话历史">
-                        {conversations.length === 0 && <div className="empty-state small">暂无历史对话</div>}
-                        {conversations.map((conv) => (
-                            <button
-                                key={conv.id}
-                                type="button"
-                                className={`conversation-item${activeConversationId === conv.id ? ' active' : ''}`}
-                                onClick={() => selectConversation(conv.id)}
-                            >
-                                <span className="conversation-title">{conv.title || '未命名对话'}</span>
-                            </button>
-                        ))}
-                    </div>
-                    <nav className="web-nav" aria-label="主导航">
-                        {WEB_NAV.map((item) => (
-                            <button
-                                key={item.key}
-                                type="button"
-                                className={`web-nav-item${activeView === item.key ? ' active' : ''}`}
-                                onClick={() => setActiveView(item.key)}
-                            >
-                                <span className="web-nav-icon">{item.icon}</span>
-                                <span>{item.label}</span>
-                            </button>
-                        ))}
-                    </nav>
-                    <div className="web-sidebar-foot">
-                        <span className={`pill agent-${agentStatus}`}>{agentStatus} · {agentProvider}</span>
-                        <button type="button" className="ghost-button" onClick={() => setIsPetMode(true)}>🐾 桌宠模式</button>
-                        <small className="web-version">Yuyu-Mind2 · v0.1</small>
-                    </div>
-                </aside>
+                <WebSidebar
+                    conversations={conversations}
+                    activeConversationId={activeConversationId}
+                    activeView={activeView}
+                    agentStatus={agentStatus}
+                    agentProvider={agentProvider}
+                    onNewConversation={() => void newConversation()}
+                    onSelectConversation={selectConversation}
+                    onSelectView={setActiveView}
+                    onPetMode={() => setIsPetMode(true)}
+                />
 
                 <section className="web-content" aria-label="列表内容">
                     {activeView === 'chat' && (
-                        <section className="chat-panel" aria-label={`${DESKTOP_PET_NAME} chat`}>
-                            <header>
-                                <div className="header-title">
-                                    <h1>{DESKTOP_PET_NAME}</h1>
-                                    <p className="eyebrow">DeepSeek-style · {voiceStatus === 'speaking' ? '朗读中' : voiceStatus === 'listening' ? '聆听中' : '待机'}</p>
-                                </div>
-                                <div className="header-actions">
-                                    <span className={`pill agent-${agentStatus}`}>{agentStatus} · {agentProvider}</span>
-                                    <button type="button" className="window-button" onClick={WindowMinimise} aria-label="最小化">−</button>
-                                    <button type="button" className="window-button window-close" onClick={Quit} aria-label="关闭">×</button>
-                                </div>
-                            </header>
-                            <div className="message-feed" ref={feedRef}>
-                                {displayedMessages.length === 0 && (
-                                    <div className="empty-state">
-                                        <strong>开始新的对话吧。</strong>
-                                        <span>输入一句话，和 {DESKTOP_PET_NAME} 聊起来～</span>
-                                    </div>
-                                )}
-                                {displayedMessages.map((message) => (
-                                    <article className={`message ${message.role}`} key={message.id}>
-                                        <span className="message-role">{message.role === 'user' ? '你' : DESKTOP_PET_NAME}</span>
-                                        <p>{message.content}</p>
-                                    </article>
-                                ))}
-                            </div>
-                            {providerError && <div className="error">模型状态：{providerError}</div>}
-                            {error && <div className="error">{error}</div>}
-                            {voiceError && <div className="error">{voiceError}</div>}
-                            {composer}
-                        </section>
+                        <ChatView
+                            messages={displayedMessages}
+                            feedRef={feedRef}
+                            voiceStatus={voiceStatus}
+                            agentStatus={agentStatus}
+                            agentProvider={agentProvider}
+                            providerError={providerError}
+                            error={error}
+                            voiceError={voiceError}
+                            composer={composer}
+                        />
                     )}
 
                     {activeView === 'skins' && (
-                        <section className="web-view skins-view">
-                            <h2 className="web-view-title">外观 / Live2D 皮肤</h2>
-                            <div className="skin-preview">
-                                <Live2DStage
-                                    emotion={emotion}
-                                    isSpeaking={voiceStatus === 'speaking'}
-                                    mouthLevel={mouthLevel}
-                                    petScale={petScale}
-                                    performance={avatarPerformance}
-                                />
-                            </div>
-                            <div className="empty-state">皮肤体系待接入——切换不同 Cubism 模型源后，可在此选择形象。</div>
-                        </section>
+                        <SkinsView
+                            emotion={emotion}
+                            voiceStatus={voiceStatus}
+                            mouthLevel={mouthLevel}
+                            petScale={petScale}
+                            performance={avatarPerformance}
+                        />
                     )}
 
                     {activeView === 'model' && (
-                        <section className="web-view">
-                            <h2 className="web-view-title">模型信息</h2>
-                            <div className="info-card"><b>对话模型（LLM）</b><span>{agentProvider} · {agentStatus}</span></div>
-                            <div className="info-card"><b>语音合成（TTS）</b><span>GPT-SoVITS · 本地 · 音色复刻</span></div>
-                            <div className="info-card"><b>语音识别（ASR）</b><span>SenseVoice · 本地</span></div>
-                            <div className="info-card"><b>视觉</b><span>未接入</span></div>
-                            {providerError && <div className="error">模型状态：{providerError}</div>}
-                        </section>
+                        <ModelView agentProvider={agentProvider} agentStatus={agentStatus} providerError={providerError} />
                     )}
 
                     {activeView === 'plugins' && (
@@ -3241,54 +2848,85 @@ function App() {
                             <h2 className="web-view-title">插件管理</h2>
                             {pluginDetail ? (
                                 <div className="plugin-detail">
-                                    <button type="button" className="ghost-button" onClick={() => setPluginDetail(null)}>← 返回插件列表</button>
+                                    <button type="button" className="ghost-button back-button" onClick={() => setPluginDetail(null)}>← 返回插件列表</button>
                                     <div className="plugin-detail-card">
-                                        <div className="plugin-card-main">
-                                            <b>{pluginDetail.displayName || pluginDetail.name}</b>
-                                            <small>v{pluginDetail.version} · {pluginDetail.author || '内置'} · {pluginDetail.enabled ? '已启用' : '未启用'}</small>
-                                            <p>{pluginDetail.description}</p>
-                                            {pluginDetail.permissions && pluginDetail.permissions.length > 0 && <span className="plugin-perms">权限：{pluginDetail.permissions.join(', ')}</span>}
+                                        <div className="plugin-detail-hero">
+                                            <div className="plugin-icon">{(pluginDetail.displayName || pluginDetail.name || 'P').slice(0, 1)}</div>
+                                            <div className="plugin-card-main">
+                                                <b>{pluginDetail.displayName || pluginDetail.name}</b>
+                                                <small>v{pluginDetail.version} · {pluginDetail.author || '内置'} · {pluginDetail.enabled ? '已启用' : '未启用'}</small>
+                                                <p>{pluginDetail.description}</p>
+                                            </div>
+                                            <button type="button" className={pluginDetail.enabled ? 'danger-soft-button' : 'primary-soft-button'} onClick={() => void togglePlugin(pluginDetail)}>{pluginDetail.enabled ? '停用' : '启用'}</button>
                                         </div>
-                                        <h3 className="web-view-sub">使用方法</h3>
-                                        <div className="plugin-card-actions">
-                                            <button type="button" onClick={() => void togglePlugin(pluginDetail)}>{pluginDetail.enabled ? '停用' : '启用'}</button>
-                                            {(pluginDetail.actions ?? []).map((action) => (
-                                                <button type="button" key={String(action.name)} onClick={() => void invokePluginAction(pluginDetail.name, String(action.name))}>{action.name}</button>
-                                            ))}
-                                            <button type="button" onClick={() => void showPluginConfig(pluginDetail.name)}>配置</button>
-                                            <button type="button" onClick={() => void savePluginConfig(pluginDetail.name)}>保存配置</button>
+
+                                        <div className="plugin-meta-grid">
+                                            <div><span>入口</span><b>{pluginDetail.entry || '内置'}</b></div>
+                                            <div><span>动作</span><b>{(pluginDetail.actions ?? []).length}</b></div>
+                                            <div><span>模型工具</span><b>{(pluginDetail.tools ?? []).length}</b></div>
+                                            <div><span>状态</span><b>{pluginDetail.enabled ? '运行中' : '已停用'}</b></div>
                                         </div>
+
+                                        {(pluginDetail.permissions ?? []).length > 0 && (
+                                            <div className="plugin-permission-list">
+                                                {(pluginDetail.permissions ?? []).map((permission) => <span key={permission}>{permission}</span>)}
+                                            </div>
+                                        )}
+
                                         {(pluginDetail.tools ?? []).length > 0 && (
-                                            <>
-                                                <h3 className="web-view-sub">模型工具</h3>
-                                                <div className="plugin-tool-tags">
+                                            <section className="plugin-section">
+                                                <div className="plugin-section-head">
+                                                    <h3>模型工具</h3>
+                                                    <span>由对话模型按需调用</span>
+                                                </div>
+                                                <div className="plugin-tool-list">
                                                     {(pluginDetail.tools ?? []).map((tool) => (
-                                                        <span className="plugin-tool-tag" key={String(tool.name)} title={String(tool.description ?? '')}>{String(tool.name)}</span>
+                                                        <div className="plugin-tool-item" key={String(tool.name)}>
+                                                            <b>{String(tool.name)}</b>
+                                                            <span>{String(tool.description ?? '已注册给 Planner / Worker')}</span>
+                                                        </div>
                                                     ))}
                                                 </div>
-                                                <p className="plugin-hint">这些能力已注册给对话模型，可在聊天里用自然语言触发（如「调用 {String(pluginDetail.tools?.[0]?.name ?? '')}」）。</p>
-                                            </>
+                                            </section>
                                         )}
-                                        {hasReviewActions(pluginDetail) && (
-                                            <>
-                                                <h3 className="web-view-sub">代码评审</h3>
-                                                <p className="plugin-hint">codex 的改动在 <b>{reviewBranch || 'feature 分支'}</b> 上。核对增删后选择接受新代码，或保留旧代码。</p>
-                                                <div className="plugin-card-actions">
-                                                    <button type="button" onClick={() => void loadReviewDiff(pluginDetail.name)}>{reviewLoading ? '加载中…' : '查看改动'}</button>
-                                                    <button type="button" className="rev-accept" onClick={() => void reviewDecision(pluginDetail.name, 'accept_changes')}>接受新代码</button>
-                                                    <button type="button" className="rev-reject" onClick={() => void reviewDecision(pluginDetail.name, 'reject_changes')}>保留旧代码</button>
+
+                                        {manualActions(pluginDetail).length > 0 && (
+                                            <section className="plugin-section">
+                                                <div className="plugin-section-head">
+                                                    <h3>手动动作</h3>
+                                                    <span>适合从插件页直接执行</span>
                                                 </div>
-                                                {reviewDiff && (
-                                                    <div className="review-diff">
-                                                        {reviewDiff.split('\n').map((line, i) => (
-                                                            <div key={i} className={`diff-line ${line.startsWith('+') && !line.startsWith('+++') ? 'add' : line.startsWith('-') && !line.startsWith('---') ? 'del' : (line.startsWith('@@') || line.startsWith('diff ') || line.startsWith('index ')) ? 'meta' : ''}`}>{line || ' '}</div>
-                                                        ))}
-                                                    </div>
-                                                )}
-                                            </>
+                                                <div className="manual-action-grid">
+                                                    {manualActions(pluginDetail).map((action) => (
+                                                        <button type="button" key={String(action.name)} onClick={() => void invokePluginAction(pluginDetail.name, String(action.name))}>
+                                                            <b>{String(action.name)}</b>
+                                                            <span>{actionDescription(action)}</span>
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </section>
                                         )}
-                                        <p className="plugin-hint">启用后，在聊天里用自然语言触发「{pluginDetail.displayName || pluginDetail.name}」的动作即可（如「{pluginDetail.actions?.[0]?.name || 'list'}」）。</p>
-                                        {pluginResult && <pre className="plugin-result">{pluginResult}</pre>}
+
+                                        <section className="plugin-section">
+                                            <div className="plugin-section-head">
+                                                <h3>配置</h3>
+                                                <span>保存后重新拉起 sidecar 生效</span>
+                                            </div>
+                                            <div className="review-toolbar">
+                                                <button type="button" className="ghost-button" onClick={() => void showPluginConfig(pluginDetail.name)}>{pluginConfigOpen ? '重新加载配置' : '编辑配置'}</button>
+                                                {pluginConfigOpen && <button type="button" className="primary-soft-button" onClick={() => void savePluginConfig(pluginDetail.name)}>保存配置</button>}
+                                            </div>
+                                            {pluginConfigOpen && (
+                                                <textarea
+                                                    className="plugin-config-textarea resize-none"
+                                                    value={pluginConfigText}
+                                                    onChange={(event) => setPluginConfigText(event.target.value)}
+                                                    spellCheck={false}
+                                                />
+                                            )}
+                                        </section>
+
+                                        {pluginResult && <div className="plugin-result-box">{pluginResult}</div>}
                                     </div>
                                 </div>
                             ) : (
@@ -3305,16 +2943,25 @@ function App() {
                                     )}
                                     <div className="plugin-grid">
                                         {plugins.map((plugin) => (
-                                            <div className={`plugin-card clickable${plugin.enabled ? '' : ' disabled'}`} key={plugin.name} onClick={() => setPluginDetail(plugin)}>
+                                            <div className={`plugin-card clickable${plugin.enabled ? '' : ' disabled'}`} key={plugin.name} onClick={() => openPluginDetail(plugin)}>
                                                 <div className="plugin-card-main">
-                                                    <b>{plugin.displayName || plugin.name}</b>
-                                                    <small>v{plugin.version} · {plugin.author || '内置'}</small>
+                                                    <div className="plugin-card-title">
+                                                        <span className="plugin-icon small">{(plugin.displayName || plugin.name || 'P').slice(0, 1)}</span>
+                                                        <div>
+                                                            <b>{plugin.displayName || plugin.name}</b>
+                                                            <small>v{plugin.version} · {plugin.author || '内置'}</small>
+                                                        </div>
+                                                    </div>
                                                     <p>{plugin.description}</p>
-                                                    {plugin.permissions && plugin.permissions.length > 0 && <span className="plugin-perms">{plugin.permissions.join(', ')}</span>}
+                                                    <div className="plugin-card-stats">
+                                                        <span>{(plugin.actions ?? []).length} 动作</span>
+                                                        <span>{(plugin.tools ?? []).length} 工具</span>
+                                                        <span>{plugin.enabled ? '已启用' : '已停用'}</span>
+                                                    </div>
                                                 </div>
                                                 <div className="plugin-card-actions">
                                                     <button type="button" onClick={(e) => { e.stopPropagation(); void togglePlugin(plugin); }}>{plugin.enabled ? '停用' : '启用'}</button>
-                                                    <button type="button" onClick={(e) => { e.stopPropagation(); setPluginDetail(plugin); }}>详情</button>
+                                                    <button type="button" onClick={(e) => { e.stopPropagation(); openPluginDetail(plugin); }}>详情</button>
                                                 </div>
                                             </div>
                                         ))}
@@ -3335,32 +2982,78 @@ function App() {
                             {tasks.length === 0 && (
                                 <div className="empty-state"><span>暂无后台任务。在聊天里让我「写代码 / 做 PPT / 创建文件」会在这里显示。</span></div>
                             )}
-                            {tasks.map((task) => (
-                                <div className="plugin-card" key={task.id}>
-                                    <div className="plugin-card-main">
-                                        <b>{task.title || task.goal}</b>
-                                        <small>{taskStatusLabel[task.status] ?? task.status}</small>
-                                        {task.error && <p className="task-error">{task.error}</p>}
+                            {tasks.map((task) => {
+                                const codeReview = taskCodeReview(task);
+                                const files = taskReviewFiles(task);
+                                const diff = taskReviewDiff(task);
+                                const diffOpen = Boolean(taskReviewDiffOpen[task.id]);
+                                return (
+                                    <div className="task-card" key={task.id}>
+                                        <div className="task-card-top">
+                                            <div className="plugin-card-main">
+                                                <b>{task.title || task.goal}</b>
+                                                <small>{taskStatusLabel[task.status] ?? task.status}</small>
+                                                {task.error && <p className="task-error">{task.error}</p>}
+                                            </div>
+                                            <div className="plugin-card-actions">
+                                                {task.status === 'waiting_for_input' && (
+                                                    <>
+                                                        <input value={taskAnswer[task.id] || ''} onChange={(event) => setTaskAnswer((prev) => ({...prev, [task.id]: event.target.value}))} placeholder="补充信息..." />
+                                                        <button type="button" onClick={() => void answerTask(task.id)}>回答</button>
+                                                    </>
+                                                )}
+                                                {task.status === 'waiting_for_approval' && (
+                                                    <>
+                                                        <button type="button" onClick={() => void approveTask(task.id, true)}>批准</button>
+                                                        <button type="button" onClick={() => void approveTask(task.id, false)}>拒绝</button>
+                                                    </>
+                                                )}
+                                                {['queued', 'running', 'waiting_for_input', 'waiting_for_approval'].includes(task.status) && (
+                                                    <button type="button" onClick={() => void cancelTask(task.id)}>取消</button>
+                                                )}
+                                            </div>
+                                        </div>
+
+                                        {codeReview && (
+                                            <section className="task-review-panel">
+                                                <div className="plugin-section-head">
+                                                    <h3>代码变更</h3>
+                                                    <span>{String(codeReview.branch || '待评审')} · {files.length} 个条目</span>
+                                                </div>
+                                                {Array.isArray(codeReview.absorbedNestedRepos) && codeReview.absorbedNestedRepos.length > 0 && (
+                                                    <p className="plugin-hint">检测到新建子项目自带 git 仓库，已临时按普通目录纳入本轮评审，所以 VS Code 能显示内部文件增删。</p>
+                                                )}
+                                                {files.length > 0 && (
+                                                    <div className="change-list compact">
+                                                        {files.map((change, index) => (
+                                                            <div className="change-row" key={`${task.id}-${change.path}-${index}`}>
+                                                                <span className={`change-kind kind-${String(change.kind || 'changed').toLowerCase()}`}>{formatChangeKind(change)}</span>
+                                                                <span className="change-path">{change.path}</span>
+                                                                {change.oldPath && <span className="change-old">← {change.oldPath}</span>}
+                                                                {change.nestedRepo && <span className="change-note">{change.nestedCount || 0} 个内部变更</span>}
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                <div className="review-toolbar task-review-actions">
+                                                    <button type="button" className="primary-soft-button" onClick={() => void openTaskReviewInVSCode(task)}>在 VS Code 查看</button>
+                                                    {diff && <button type="button" className="ghost-button" onClick={() => setTaskReviewDiffOpen((prev) => ({...prev, [task.id]: !diffOpen}))}>{diffOpen ? '收起补丁' : '查看补丁'}</button>}
+                                                    <button type="button" className="rev-accept" onClick={() => void reviewTaskDecision(task, 'accept_changes')}>接受</button>
+                                                    <button type="button" className="rev-reject" onClick={() => void reviewTaskDecision(task, 'reject_changes')}>拒绝</button>
+                                                </div>
+                                                {diff && diffOpen && (
+                                                    <div className="review-diff">
+                                                        {diff.split('\n').map((line, i) => (
+                                                            <div key={i} className={`diff-line ${line.startsWith('+') && !line.startsWith('+++') ? 'add' : line.startsWith('-') && !line.startsWith('---') ? 'del' : (line.startsWith('@@') || line.startsWith('diff ') || line.startsWith('index ')) ? 'meta' : ''}`}>{line || ' '}</div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </section>
+                                        )}
                                     </div>
-                                    <div className="plugin-card-actions">
-                                        {task.status === 'waiting_for_input' && (
-                                            <>
-                                                <input value={taskAnswer[task.id] || ''} onChange={(event) => setTaskAnswer((prev) => ({...prev, [task.id]: event.target.value}))} placeholder="补充信息..." />
-                                                <button type="button" onClick={() => void answerTask(task.id)}>回答</button>
-                                            </>
-                                        )}
-                                        {task.status === 'waiting_for_approval' && (
-                                            <>
-                                                <button type="button" onClick={() => void approveTask(task.id, true)}>批准</button>
-                                                <button type="button" onClick={() => void approveTask(task.id, false)}>拒绝</button>
-                                            </>
-                                        )}
-                                        {['queued', 'running', 'waiting_for_input', 'waiting_for_approval'].includes(task.status) && (
-                                            <button type="button" onClick={() => void cancelTask(task.id)}>取消</button>
-                                        )}
-                                    </div>
-                                </div>
-                            ))}
+                                );
+                            })}
+                            {pluginResult && <div className="plugin-result-box">{pluginResult}</div>}
                         </section>
                     )}
 
@@ -3428,7 +3121,7 @@ function App() {
                             <h3 className="web-view-sub">配置文件（可编辑任意配置项）</h3>
                             <div className="config-editor">
                                 <textarea
-                                    className="config-editor-textarea"
+                                    className="config-editor-textarea resize-none"
                                     value={configText}
                                     onChange={(event) => setConfigText(event.target.value)}
                                     spellCheck={false}

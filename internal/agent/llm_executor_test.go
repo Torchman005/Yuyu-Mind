@@ -45,6 +45,24 @@ func (m *fakeToolCallingModel) WithTools(tools []*schema.ToolInfo) (ToolCallingM
 	return m, nil
 }
 
+type scriptedToolCallingModel struct {
+	calls   int
+	replies []*schema.Message
+}
+
+func (m *scriptedToolCallingModel) Generate(ctx context.Context, input []*schema.Message, opts ...model.Option) (*schema.Message, error) {
+	if m.calls >= len(m.replies) {
+		return &schema.Message{Role: schema.Assistant, Content: "done"}, nil
+	}
+	reply := m.replies[m.calls]
+	m.calls++
+	return reply, nil
+}
+
+func (m *scriptedToolCallingModel) WithTools(tools []*schema.ToolInfo) (ToolCallingModel, error) {
+	return m, nil
+}
+
 type fakeRuntime struct {
 	events []string
 }
@@ -141,6 +159,62 @@ func TestExecuteWorkerToolCalls(t *testing.T) {
 	}
 	if !strings.Contains(msgs[2].Content, "not allowed") {
 		t.Fatalf("expected not-allowed error, got %q", msgs[2].Content)
+	}
+}
+
+func TestExtractCodeReviewFromRunAgentResult(t *testing.T) {
+	reply := &schema.Message{
+		Role: schema.Assistant,
+		ToolCalls: []schema.ToolCall{
+			{ID: "call-1", Type: "function", Function: schema.FunctionCall{Name: "run_agent", Arguments: `{"task":"edit"}`}},
+		},
+	}
+	toolMessages := []*schema.Message{
+		{Role: schema.Tool, ToolCallID: "call-1", Content: `{"ok":true,"cwd":"C:\\repo","branch":"yuyu/agent-1","files":[{"path":"src/App.tsx","kind":"modified"}],"diff":"diff --git a/src/App.tsx b/src/App.tsx"}`},
+	}
+
+	review := extractCodeReviewFromToolMessages(reply, toolMessages)
+	if review == nil {
+		t.Fatalf("expected review metadata")
+	}
+	if review["plugin"] != "code-assistant" || review["branch"] != "yuyu/agent-1" {
+		t.Fatalf("unexpected review metadata: %#v", review)
+	}
+	files, ok := review["files"].([]any)
+	if !ok || len(files) != 1 {
+		t.Fatalf("expected files metadata, got %#v", review["files"])
+	}
+}
+
+func TestLLMExecutorMarksCodeReviewTaskResult(t *testing.T) {
+	tools := []tool.BaseTool{&fakeTool{name: "run_agent", out: `{"ok":true,"cwd":"C:\\repo","branch":"yuyu/agent-2","files":[{"path":"main.go","kind":"modified"}],"diff":"diff --git a/main.go b/main.go"}`}}
+	model := &scriptedToolCallingModel{
+		replies: []*schema.Message{
+			{
+				Role: schema.Assistant,
+				ToolCalls: []schema.ToolCall{
+					{ID: "call-1", Type: "function", Function: schema.FunctionCall{Name: "run_agent", Arguments: `{"task":"edit"}`}},
+				},
+			},
+			{Role: schema.Assistant, Content: "代码已生成，等待评审。"},
+		},
+	}
+	exec := NewLLMExecutor(func(ctx context.Context) (ToolCallingModel, error) { return model, nil }, func() []tool.BaseTool { return tools })
+	result, err := exec.Execute(context.Background(), TaskSpec{
+		Goal:           "edit",
+		Instructions:   "edit",
+		Workspace:      "C:\\repo",
+		AllowedActions: []string{"run_agent"},
+	}, &fakeRuntime{})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !result.NeedReview {
+		t.Fatalf("expected NeedReview")
+	}
+	review, ok := result.Metadata["code_review"].(map[string]any)
+	if !ok || review["branch"] != "yuyu/agent-2" {
+		t.Fatalf("unexpected metadata: %#v", result.Metadata)
 	}
 }
 

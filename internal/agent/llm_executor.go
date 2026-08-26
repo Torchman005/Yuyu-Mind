@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -88,6 +89,7 @@ func (e *LLMExecutor) Execute(ctx context.Context, task TaskSpec, runtime Runtim
 	}
 
 	messages := buildTaskMessages(task, instructions)
+	var codeReview map[string]any
 
 	approvedForRun := false
 	for i := 0; i < e.maxIterations; i++ {
@@ -105,13 +107,20 @@ func (e *LLMExecutor) Execute(ctx context.Context, task TaskSpec, runtime Runtim
 			if summary == "" {
 				summary = "任务已执行完成。"
 			}
+			metadata := map[string]any{"executor": "llm", "iterations": i + 1}
+			needReview := false
+			if len(codeReview) > 0 {
+				metadata["code_review"] = codeReview
+				needReview = true
+			}
 			if err := runtime.LogOperation(ctx, "llm_executor", task.Workspace, "Worker 完成任务。", "completed", task); err != nil {
 				return nil, err
 			}
 			return &TaskResult{
-				Summary:   summary,
-				Artifacts: nil,
-				Metadata:  map[string]any{"executor": "llm", "iterations": i + 1},
+				Summary:    summary,
+				Artifacts:  nil,
+				NeedReview: needReview,
+				Metadata:   metadata,
 			}, nil
 		}
 
@@ -125,6 +134,10 @@ func (e *LLMExecutor) Execute(ctx context.Context, task TaskSpec, runtime Runtim
 		toolMessages, err := executeWorkerToolCalls(ctx, runtime, reply, allowedTools)
 		if err != nil {
 			return nil, err
+		}
+		if review := extractCodeReviewFromToolMessages(reply, toolMessages); len(review) > 0 {
+			codeReview = review
+			_ = runtime.Emit(ctx, EventTypeResult, "info", "编码改动已生成，等待用户评审。", review)
 		}
 		for _, tm := range toolMessages {
 			if tm.Role == schema.Tool {
@@ -316,6 +329,60 @@ func executeWorkerToolCalls(ctx context.Context, runtime Runtime, msg *schema.Me
 		})
 	}
 	return results, nil
+}
+
+func extractCodeReviewFromToolMessages(reply *schema.Message, toolMessages []*schema.Message) map[string]any {
+	if reply == nil || len(reply.ToolCalls) == 0 || len(toolMessages) == 0 {
+		return nil
+	}
+	callNames := make(map[string]string, len(reply.ToolCalls))
+	for _, tc := range reply.ToolCalls {
+		callNames[tc.ID] = tc.Function.Name
+	}
+	for _, tm := range toolMessages {
+		if tm == nil || tm.Role != schema.Tool || callNames[tm.ToolCallID] != "run_agent" {
+			continue
+		}
+		review := parseRunAgentReview(tm.Content)
+		if len(review) > 0 {
+			return review
+		}
+	}
+	return nil
+}
+
+func parseRunAgentReview(raw string) map[string]any {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		var nested string
+		if err2 := json.Unmarshal([]byte(raw), &nested); err2 != nil {
+			return nil
+		}
+		if err3 := json.Unmarshal([]byte(strings.TrimSpace(nested)), &payload); err3 != nil {
+			return nil
+		}
+	}
+	if payload == nil {
+		return nil
+	}
+	if ok, hasOK := payload["ok"].(bool); hasOK && !ok {
+		return nil
+	}
+	review := map[string]any{}
+	for _, key := range []string{"cwd", "baseBranch", "branch", "diff", "files", "summary", "steps"} {
+		if value, ok := payload[key]; ok {
+			review[key] = value
+		}
+	}
+	if len(review) == 0 {
+		return nil
+	}
+	review["plugin"] = "code-assistant"
+	return review
 }
 
 func sortToolsByName(ctx context.Context, tools []tool.BaseTool) {

@@ -1,17 +1,29 @@
-/* ===== Yuyu Mind 前端样式（简洁现代版） ===== */
+/* ===== Yuyu Mind 前端样式（Soft Glass 版） ===== */
 
 :root {
-    --bg: #f5f8fb;
-    --surface: #ffffff;
-    --surface-2: #eef3f9;
-    --text: #1a2b3c;
-    --text-2: #64748b;
-    --accent: #2b6cb0;
-    --accent-soft: #e3eefc;
-    --border: #e2e8f0;
-    --danger: #dc2626;
-    --shadow: 0 8px 24px rgba(26, 43, 60, 0.08);
-    --radius: 14px;
+    --bg: #fbf7fb;
+    --bg-2: #f3f7fb;
+    --surface: rgba(255, 255, 255, 0.72);
+    --surface-2: #f8edf4;
+    --surface-3: #edf6fa;
+    --text: #33283d;
+    --text-2: #756d7e;
+    --accent: #c978ad;
+    --accent-2: #78a9d6;
+    --accent-3: #82bfa9;
+    --accent-soft: rgba(201, 120, 173, 0.13);
+    --border: rgba(217, 200, 214, 0.76);
+    --danger: #c65c74;
+    --warning: #c99254;
+    --shadow: 0 24px 56px rgba(77, 64, 82, 0.14);
+    --shadow-soft: 0 12px 30px rgba(77, 64, 82, 0.1);
+    --glass: rgba(255, 255, 255, 0.56);
+    --glass-strong: rgba(255, 255, 255, 0.72);
+    --glass-border: rgba(255, 255, 255, 0.82);
+    --radius: 18px;
+    --scrollbar-thumb: #d9b8cc;
+    --scrollbar-thumb-hover: #c978ad;
+    --scrollbar-track: rgba(248, 237, 244, 0.62);
 }
 
 * {
@@ -24,8 +36,48 @@ body {
     height: 100%;
     font-family: "Nunito", "Segoe UI", system-ui, -apple-system, sans-serif;
     color: var(--text);
-    background: var(--bg);
+    background:
+        linear-gradient(135deg, rgba(201, 120, 173, 0.08), rgba(120, 169, 214, 0.09) 44%, rgba(130, 191, 169, 0.06)),
+        var(--bg);
     -webkit-font-smoothing: antialiased;
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+}
+
+*::-webkit-scrollbar-thumb {
+    background: linear-gradient(180deg, var(--scrollbar-thumb), var(--accent-2));
+    border: 2px solid var(--scrollbar-track);
+    border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+    background: linear-gradient(180deg, var(--scrollbar-thumb-hover), var(--accent-2));
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+    outline: 3px solid rgba(67, 183, 255, 0.38);
+    outline-offset: 2px;
+}
+
+.resize-none {
+    resize: none;
 }
 
 .app-shell {
@@ -58,7 +110,10 @@ body.pet-window {
     grid-template-rows: auto 1fr auto;
     padding: 20px 24px;
     overflow: hidden;
-    background: linear-gradient(180deg, #e8f1fb 0%, #f7fafd 100%);
+    background:
+        linear-gradient(135deg, rgba(255, 240, 247, 0.82), rgba(238, 249, 255, 0.92)),
+        repeating-linear-gradient(90deg, rgba(255, 94, 168, 0.08) 0 1px, transparent 1px 42px),
+        repeating-linear-gradient(0deg, rgba(67, 183, 255, 0.08) 0 1px, transparent 1px 42px);
 }
 
 .pet-mode .stage {
@@ -96,7 +151,7 @@ body.pet-window {
 .stage-tag,
 .pill {
     border: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.8);
+    background: rgba(255, 255, 255, 0.86);
     border-radius: 999px;
     padding: 6px 12px;
     color: var(--text-2);
@@ -105,21 +160,21 @@ body.pet-window {
 }
 
 .agent-online {
-    background: #e4f5ec;
-    color: #1c6b53;
-    border-color: #c2e6d6;
+    background: #e7fff4;
+    color: #147a59;
+    border-color: #bdf2db;
 }
 
 .agent-starting {
-    background: #fff3d6;
-    color: #8a6a1f;
-    border-color: #f0dcae;
+    background: #fff5d9;
+    color: #97670e;
+    border-color: #ffe0a2;
 }
 
 .agent-offline {
-    background: #ffe9e6;
-    color: #a44335;
-    border-color: #f3c7c0;
+    background: #ffe8f0;
+    color: #ac294f;
+    border-color: #ffc4d5;
 }
 
 .stage-tools {
@@ -538,7 +593,7 @@ h1 {
     padding: 0 12px;
     border: 1px solid var(--border);
     border-radius: 999px;
-    background: var(--surface);
+    background: rgba(255, 255, 255, 0.84);
     color: var(--accent);
     font-size: 12px;
     font-weight: 600;
@@ -549,7 +604,7 @@ h1 {
 
 .ghost-button:hover {
     background: var(--accent-soft);
-    border-color: #b7d7ce;
+    border-color: rgba(255, 94, 168, 0.42);
 }
 
 .ghost-button:disabled {
@@ -558,9 +613,9 @@ h1 {
 }
 
 .ghost-button[aria-pressed="true"] {
-    background: var(--accent);
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
     color: #ffffff;
-    border-color: var(--accent);
+    border-color: transparent;
 }
 
 .window-button {
@@ -643,15 +698,16 @@ h1 {
 
 .message.user {
     align-self: flex-end;
-    background: var(--accent);
+    background: linear-gradient(135deg, var(--accent), #ff8cc7);
     color: #ffffff;
     border-bottom-right-radius: 6px;
 }
 
 .message.assistant {
     align-self: flex-start;
-    background: var(--surface-2);
+    background: linear-gradient(135deg, #ffffff, var(--surface-3));
     color: var(--text);
+    border: 1px solid rgba(67, 183, 255, 0.18);
     border-bottom-left-radius: 6px;
 }
 
@@ -707,7 +763,7 @@ h1 {
 
 .composer button {
     padding: 0 16px;
-    background: var(--accent);
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
     color: #ffffff;
     font-weight: 600;
     cursor: pointer;
@@ -715,7 +771,7 @@ h1 {
 
 .composer .text-button,
 .composer .voice-button {
-    background: var(--surface);
+    background: rgba(255, 255, 255, 0.9);
     color: var(--accent);
     border-color: var(--border);
 }
@@ -726,16 +782,16 @@ h1 {
 }
 
 .composer .voice-listening {
-    background: #fbe1e7;
-    color: #9c3350;
-    border-color: #eec3cd;
+    background: #ffe5f1;
+    color: #b91f6b;
+    border-color: #ffb9d7;
 }
 
 .composer .voice-thinking,
 .composer .voice-speaking {
-    background: #fff3d6;
-    color: #8a6a1f;
-    border-color: #f0dcae;
+    background: #fff5d9;
+    color: #97670e;
+    border-color: #ffe0a2;
 }
 
 .composer button:disabled {
@@ -978,44 +1034,75 @@ h1 {
     }
 }
 
-/* ===== Web 版桌面详情页（DeepSeek 风格深色）===== */
+/* ===== Web 版桌面详情页（Soft Glass）===== */
 .app-shell.web {
-    --bg: #0f1115;
-    --bg-2: #171b22;
-    --surface: #171b22;
-    --surface-2: #1e242e;
-    --border: rgba(255, 255, 255, 0.09);
-    --text: #e6edf3;
-    --text-2: #8b98a5;
-    --accent: #4d8de8;
-    --accent-soft: rgba(77, 141, 232, 0.16);
+    --bg: #fbf7fb;
+    --bg-2: rgba(255, 255, 255, 0.58);
+    --surface: rgba(255, 255, 255, 0.7);
+    --surface-2: rgba(248, 237, 244, 0.62);
+    --surface-3: rgba(237, 246, 250, 0.64);
+    --border: rgba(217, 200, 214, 0.74);
+    --text: #33283d;
+    --text-2: #756d7e;
+    --accent: #c978ad;
+    --accent-2: #78a9d6;
+    --accent-3: #82bfa9;
+    --accent-soft: rgba(201, 120, 173, 0.13);
     display: block;
-    background: var(--bg);
+    background:
+        linear-gradient(135deg, rgba(201, 120, 173, 0.07), rgba(120, 169, 214, 0.08) 48%, rgba(130, 191, 169, 0.06)),
+        var(--bg);
     color: var(--text);
 }
 .app-shell.web .web-shell {
     display: grid;
-    grid-template-columns: 244px minmax(0, 1fr);
+    grid-template-columns: 260px minmax(0, 1fr);
     height: 100vh;
     width: 100vw;
-    background: var(--bg);
+    background:
+        linear-gradient(90deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.35)),
+        transparent;
 }
 .app-shell.web .web-sidebar {
-    background: var(--bg-2);
-    border-right: 1px solid rgba(255, 255, 255, 0.06);
-    padding: 14px 10px;
+    position: relative;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(255, 240, 247, 0.9)),
+        repeating-linear-gradient(135deg, rgba(255, 94, 168, 0.07) 0 1px, transparent 1px 22px);
+    border-right: 1px solid rgba(244, 207, 224, 0.9);
+    padding: 16px 12px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
+    box-shadow: 18px 0 40px rgba(255, 94, 168, 0.1);
+}
+.app-shell.web .web-sidebar::before {
+    position: absolute;
+    top: 18px;
+    right: 16px;
+    color: rgba(255, 94, 168, 0.32);
+    content: "✦";
+    font-size: 28px;
+    pointer-events: none;
 }
 .app-shell.web .web-brand {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 8px 10px 14px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    padding: 10px 10px 16px;
+    border-bottom: 1px dashed rgba(255, 94, 168, 0.28);
 }
-.app-shell.web .web-brand-logo { font-size: 22px; }
+.app-shell.web .web-brand-logo {
+    display: inline-grid;
+    place-items: center;
+    width: 42px;
+    height: 42px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #ff7eba, #43b7ff);
+    color: #ffffff;
+    font-size: 20px;
+    font-weight: 900;
+    box-shadow: 0 10px 22px rgba(255, 94, 168, 0.25);
+}
 .app-shell.web .web-brand-text strong { display: block; color: var(--text); }
 .app-shell.web .web-brand-text small { color: var(--text-2); }
 .app-shell.web .web-nav { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
@@ -1026,26 +1113,43 @@ h1 {
     width: 100%;
     padding: 10px 12px;
     border: none;
-    border-radius: 10px;
+    border-radius: 12px;
     background: transparent;
     color: var(--text-2);
     font-size: 14px;
     text-align: left;
     cursor: pointer;
 }
-.app-shell.web .web-nav-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--text); }
-.app-shell.web .web-nav-item.active { background: var(--accent-soft); color: var(--accent); }
+.app-shell.web .web-nav-item:hover { background: rgba(255, 255, 255, 0.74); color: var(--text); }
+.app-shell.web .web-nav-item.active {
+    background: linear-gradient(90deg, rgba(255, 94, 168, 0.18), rgba(67, 183, 255, 0.12));
+    color: #c92875;
+    box-shadow: inset 3px 0 0 var(--accent);
+}
 .app-shell.web .web-nav-icon { font-size: 16px; }
 .app-shell.web .web-sidebar-foot { margin-top: auto; display: flex; flex-direction: column; gap: 8px; padding: 10px; }
 .app-shell.web .web-content { overflow: hidden; display: flex; min-width: 0; }
 .app-shell.web .web-content > * { min-width: 0; }
-.app-shell.web .web-view { overflow-y: auto; padding: 22px 26px; flex: 1; }
-.app-shell.web .web-view-title { font-size: 20px; color: var(--text); margin: 0 0 18px; }
+.app-shell.web .web-view { overflow-y: auto; padding: 24px 28px; flex: 1; }
+.app-shell.web .web-view-title {
+    color: var(--text);
+    margin: 0 0 18px;
+    font-size: 22px;
+}
+.app-shell.web .web-view-title::after {
+    display: block;
+    width: 54px;
+    height: 4px;
+    margin-top: 8px;
+    border-radius: 999px;
+    background: linear-gradient(90deg, var(--accent), var(--accent-2));
+    content: "";
+}
 .app-shell.web .info-card {
-    background: var(--bg-2);
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 12px;
-    padding: 14px 16px;
+    background: rgba(255, 255, 255, 0.82);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 15px 16px;
     margin-bottom: 12px;
     display: flex;
     justify-content: space-between;
@@ -1071,14 +1175,14 @@ h1 {
     justify-content: center;
     width: 100%;
     padding: 9px 12px;
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 10px;
-    background: transparent;
-    color: var(--text);
+    border: 1px solid rgba(255, 94, 168, 0.28);
+    border-radius: 999px;
+    background: linear-gradient(90deg, rgba(255, 94, 168, 0.16), rgba(67, 183, 255, 0.12));
+    color: #b91f6b;
     font-size: 14px;
     cursor: pointer;
 }
-.app-shell.web .new-conversation:hover { background: rgba(255, 255, 255, 0.05); }
+.app-shell.web .new-conversation:hover { background: linear-gradient(90deg, rgba(255, 94, 168, 0.24), rgba(67, 183, 255, 0.2)); }
 .app-shell.web .conversation-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; max-height: 32vh; }
 .app-shell.web .conversation-item {
     display: block;
@@ -1091,8 +1195,8 @@ h1 {
     text-align: left;
     cursor: pointer;
 }
-.app-shell.web .conversation-item:hover { background: rgba(255, 255, 255, 0.05); color: var(--text); }
-.app-shell.web .conversation-item.active { background: var(--accent-soft); color: var(--accent); }
+.app-shell.web .conversation-item:hover { background: rgba(255, 255, 255, 0.72); color: var(--text); }
+.app-shell.web .conversation-item.active { background: rgba(67, 183, 255, 0.13); color: #1377b2; }
 .app-shell.web .conversation-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .app-shell.web .empty-state.small { font-size: 12px; color: var(--text-2); }
 .app-shell.web .skins-view { display: flex; flex-direction: column; gap: 16px; }
@@ -1101,7 +1205,9 @@ h1 {
     height: 70vh;
     border-radius: 14px;
     overflow: hidden;
-    background: #0b0e13;
+    background:
+        linear-gradient(145deg, rgba(255, 240, 247, 0.8), rgba(237, 249, 255, 0.9)),
+        repeating-linear-gradient(90deg, rgba(255, 94, 168, 0.08) 0 1px, transparent 1px 44px);
 }
 .app-shell.web .skin-preview .speech-bubble { position: absolute; left: 16px; right: 16px; bottom: 56px; }
 .app-shell.web .skin-preview .stage-tools { position: absolute; left: 16px; right: 16px; bottom: 14px; }
@@ -1215,3 +1321,1391 @@ h1 {
 .app-shell.web .review-diff .diff-line.add { color: #34d399; background: rgba(52,211,153,.10); }
 .app-shell.web .review-diff .diff-line.del { color: #f87171; background: rgba(248,113,113,.10); }
 .app-shell.web .review-diff .diff-line.meta { color: var(--text-2); }
+
+/* 插件管理：更像工具目录与评审工作台 */
+.app-shell.web .plugin-grid {
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+}
+
+.app-shell.web .plugin-card {
+    min-height: 164px;
+    padding: 16px;
+    border-radius: 10px;
+    background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0)), var(--surface);
+    border: 1px solid rgba(148, 163, 184, .18);
+    box-shadow: 0 14px 34px rgba(0, 0, 0, .16);
+}
+
+.app-shell.web .plugin-card.clickable:hover {
+    border-color: rgba(77, 141, 232, .72);
+    background: linear-gradient(180deg, rgba(77,141,232,.08), rgba(77,141,232,.02)), var(--surface);
+}
+
+.app-shell.web .plugin-card-main {
+    gap: 10px;
+    width: 100%;
+}
+
+.app-shell.web .plugin-card-title,
+.app-shell.web .plugin-detail-hero {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.app-shell.web .plugin-card-title > div,
+.app-shell.web .plugin-detail-hero .plugin-card-main {
+    min-width: 0;
+}
+
+.app-shell.web .plugin-icon {
+    width: 46px;
+    height: 46px;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    color: #dbeafe;
+    background: linear-gradient(135deg, rgba(77, 141, 232, .42), rgba(20, 184, 166, .22));
+    border: 1px solid rgba(147, 197, 253, .28);
+    font-weight: 800;
+    font-size: 20px;
+}
+
+.app-shell.web .plugin-icon.small {
+    width: 38px;
+    height: 38px;
+    font-size: 16px;
+}
+
+.app-shell.web .plugin-card b,
+.app-shell.web .plugin-detail-card b {
+    color: var(--text);
+}
+
+.app-shell.web .plugin-card-main p {
+    min-height: 38px;
+    margin: 0;
+    line-height: 1.5;
+}
+
+.app-shell.web .plugin-card-stats,
+.app-shell.web .plugin-permission-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.app-shell.web .plugin-card-stats span,
+.app-shell.web .plugin-permission-list span {
+    padding: 4px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    color: #bfdbfe;
+    background: rgba(77, 141, 232, .12);
+    border: 1px solid rgba(77, 141, 232, .24);
+}
+
+.app-shell.web .plugin-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.app-shell.web .back-button {
+    align-self: flex-start;
+}
+
+.app-shell.web .plugin-detail-card {
+    gap: 18px;
+    padding: 22px;
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,0)), var(--surface);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, .2);
+}
+
+.app-shell.web .plugin-detail-hero {
+    align-items: flex-start;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border);
+}
+
+.app-shell.web .plugin-detail-hero .plugin-card-main p {
+    min-height: 0;
+    max-width: 760px;
+}
+
+.app-shell.web .plugin-detail-hero > button {
+    margin-left: auto;
+}
+
+.app-shell.web .plugin-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.app-shell.web .plugin-meta-grid > div {
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-2);
+}
+
+.app-shell.web .plugin-meta-grid span,
+.app-shell.web .plugin-section-head span {
+    display: block;
+    color: var(--text-2);
+    font-size: 12px;
+}
+
+.app-shell.web .plugin-meta-grid b {
+    display: block;
+    margin-top: 5px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.app-shell.web .plugin-section {
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-2);
+}
+
+.app-shell.web .plugin-section-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.app-shell.web .plugin-section-head h3 {
+    margin: 0;
+    color: var(--text);
+    font-size: 15px;
+}
+
+.app-shell.web .plugin-tool-list,
+.app-shell.web .manual-action-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 10px;
+}
+
+.app-shell.web .plugin-tool-item,
+.app-shell.web .manual-action-grid button {
+    min-height: 74px;
+    padding: 12px;
+    text-align: left;
+    border-radius: 10px;
+    border: 1px solid rgba(148, 163, 184, .18);
+    background: var(--surface);
+    color: var(--text);
+}
+
+.app-shell.web .plugin-tool-item {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.app-shell.web .plugin-tool-item span,
+.app-shell.web .manual-action-grid span {
+    display: block;
+    margin-top: 5px;
+    color: var(--text-2);
+    font-size: 12px;
+    line-height: 1.45;
+}
+
+.app-shell.web .manual-action-grid button {
+    cursor: pointer;
+}
+
+.app-shell.web .manual-action-grid button:hover {
+    border-color: var(--accent);
+    background: rgba(77, 141, 232, .08);
+}
+
+.app-shell.web .review-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.app-shell.web .primary-soft-button,
+.app-shell.web .danger-soft-button,
+.app-shell.web .review-toolbar button {
+    min-height: 34px;
+    padding: 7px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    cursor: pointer;
+}
+
+.app-shell.web .primary-soft-button {
+    color: #bfdbfe;
+    background: rgba(77, 141, 232, .16);
+    border-color: rgba(77, 141, 232, .36);
+}
+
+.app-shell.web .danger-soft-button {
+    color: #fecaca;
+    background: rgba(248, 113, 113, .12);
+    border-color: rgba(248, 113, 113, .3);
+}
+
+.app-shell.web .review-toolbar button:disabled {
+    cursor: not-allowed;
+    opacity: .55;
+}
+
+.app-shell.web .change-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 12px;
+}
+
+.app-shell.web .change-row {
+    display: grid;
+    grid-template-columns: 82px minmax(0, 1fr) auto;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+}
+
+.app-shell.web .change-kind {
+    justify-self: start;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    color: #cbd5e1;
+    background: rgba(148, 163, 184, .14);
+}
+
+.app-shell.web .change-kind.kind-added { color: #86efac; background: rgba(34, 197, 94, .12); }
+.app-shell.web .change-kind.kind-modified { color: #93c5fd; background: rgba(59, 130, 246, .14); }
+.app-shell.web .change-kind.kind-deleted { color: #fca5a5; background: rgba(239, 68, 68, .14); }
+.app-shell.web .change-kind.kind-renamed { color: #fde68a; background: rgba(245, 158, 11, .14); }
+
+.app-shell.web .change-path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    font-size: 12px;
+}
+
+.app-shell.web .change-old,
+.app-shell.web .change-note {
+    color: var(--text-2);
+    font-size: 12px;
+}
+
+.app-shell.web .plugin-config-textarea {
+    width: 100%;
+    min-height: 220px;
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: #101722;
+    color: var(--text);
+    font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    font-size: 12.5px;
+    line-height: 1.5;
+    resize: vertical;
+}
+
+.app-shell.web .plugin-result-box {
+    padding: 10px 12px;
+    border-radius: 8px;
+    color: #bfdbfe;
+    background: rgba(59, 130, 246, .12);
+    border: 1px solid rgba(59, 130, 246, .22);
+    font-size: 13px;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.app-shell.web .task-card {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 16px;
+    margin-bottom: 12px;
+    border-radius: 10px;
+    background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,0)), var(--surface);
+    border: 1px solid rgba(148, 163, 184, .18);
+    box-shadow: 0 14px 34px rgba(0, 0, 0, .14);
+}
+
+.app-shell.web .task-card-top {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+}
+
+.app-shell.web .task-review-panel {
+    padding: 14px;
+    border: 1px solid rgba(77, 141, 232, .22);
+    border-radius: 10px;
+    background: rgba(77, 141, 232, .07);
+}
+
+.app-shell.web .change-list.compact {
+    max-height: 240px;
+    overflow-y: auto;
+}
+
+.app-shell.web .task-review-actions {
+    margin-top: 12px;
+}
+
+@media (max-width: 860px) {
+    .app-shell.web .plugin-meta-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .app-shell.web .plugin-detail-hero {
+        flex-wrap: wrap;
+    }
+
+    .app-shell.web .plugin-detail-hero > button {
+        margin-left: 0;
+    }
+
+    .app-shell.web .change-row {
+        grid-template-columns: 72px minmax(0, 1fr);
+    }
+
+    .app-shell.web .change-note,
+    .app-shell.web .change-old {
+        grid-column: 2;
+    }
+}
+
+/* ===== Final theme overrides: soft glass companion ===== */
+.app-shell.web .chat-panel,
+.app-shell.web .web-view {
+    background:
+        linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(255, 247, 251, 0.78)),
+        repeating-linear-gradient(90deg, rgba(255, 94, 168, .055) 0 1px, transparent 1px 44px),
+        repeating-linear-gradient(0deg, rgba(67, 183, 255, .05) 0 1px, transparent 1px 44px),
+        transparent;
+}
+
+.app-shell.web .web-sidebar {
+    position: relative;
+    width: 260px;
+    padding: 18px 12px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 240, 247, .9)),
+        repeating-linear-gradient(135deg, rgba(255, 94, 168, .08) 0 1px, transparent 1px 18px);
+    border-right: 1px solid rgba(244, 207, 224, .95);
+    box-shadow: 18px 0 44px rgba(255, 94, 168, .08);
+}
+
+.app-shell.web .web-brand {
+    padding: 12px;
+    border: 1px solid rgba(244, 207, 224, .9);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, .72);
+    box-shadow: var(--shadow-soft);
+}
+
+.app-shell.web .web-brand-logo {
+    width: 42px;
+    height: 42px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 14px;
+    color: white;
+    font-weight: 900;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    box-shadow: 0 12px 22px rgba(255, 94, 168, .18);
+}
+
+.app-shell.web .web-brand-text strong {
+    font-size: 17px;
+}
+
+.app-shell.web .web-brand-text small,
+.app-shell.web .web-version {
+    color: var(--text-2);
+}
+
+.app-shell.web .new-conversation {
+    min-height: 42px;
+    gap: 8px;
+    border: 0;
+    border-radius: 14px;
+    color: #fff;
+    font-weight: 800;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    box-shadow: 0 14px 28px rgba(255, 94, 168, .2);
+}
+
+.app-shell.web .new-conversation:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 18px 32px rgba(255, 94, 168, .24);
+}
+
+.app-shell.web .sidebar-current {
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: rgba(237, 249, 255, .82);
+    border: 1px solid rgba(67, 183, 255, .18);
+}
+
+.app-shell.web .sidebar-current span {
+    display: block;
+    color: var(--text-2);
+    font-size: 12px;
+}
+
+.app-shell.web .sidebar-current strong {
+    display: block;
+    margin-top: 4px;
+    color: var(--text);
+}
+
+.app-shell.web .conversation-list {
+    padding: 4px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, .48);
+    border: 1px solid rgba(244, 207, 224, .58);
+}
+
+.app-shell.web .conversation-item {
+    min-height: 36px;
+    border-radius: 10px;
+}
+
+.app-shell.web .conversation-item:hover,
+.app-shell.web .conversation-item.active {
+    color: #b91f6b;
+    background: rgba(255, 94, 168, .12);
+}
+
+.app-shell.web .web-nav {
+    gap: 8px;
+}
+
+.app-shell.web .web-nav-item {
+    min-height: 42px;
+    padding: 10px 12px;
+    border: 1px solid transparent;
+    border-radius: 14px;
+    color: var(--text-2);
+    transition: transform .16s ease, background .16s ease, border-color .16s ease;
+}
+
+.app-shell.web .web-nav-item:hover {
+    transform: translateX(2px);
+    color: var(--text);
+    background: rgba(255, 255, 255, .68);
+    border-color: rgba(244, 207, 224, .72);
+}
+
+.app-shell.web .web-nav-item.active {
+    color: #b91f6b;
+    background: linear-gradient(135deg, rgba(255, 94, 168, .16), rgba(67, 183, 255, .12));
+    border-color: rgba(255, 94, 168, .28);
+    box-shadow: inset 4px 0 0 rgba(255, 94, 168, .62), 0 10px 20px rgba(255, 94, 168, .08);
+}
+
+.app-shell.web .web-nav-icon {
+    width: 24px;
+    height: 24px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 9px;
+    background: rgba(255, 255, 255, .64);
+}
+
+.app-shell.web .web-sidebar-foot {
+    padding: 12px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, .66);
+    border: 1px solid rgba(244, 207, 224, .72);
+}
+
+.app-shell.web .chat-panel {
+    display: grid;
+    grid-template-rows: auto auto minmax(0, 1fr);
+    gap: 14px;
+    padding: 22px 26px;
+}
+
+.app-shell.web .chat-panel header {
+    padding: 0 0 14px;
+    border-bottom: 1px solid rgba(244, 207, 224, .8);
+}
+
+.app-shell.web .chat-panel header h1,
+.app-shell.web .web-view-title {
+    font-size: 24px;
+}
+
+.app-shell.web .header-actions {
+    gap: 8px;
+}
+
+.app-shell.web .window-button {
+    border-radius: 50%;
+    background: rgba(255, 255, 255, .76);
+    border-color: rgba(244, 207, 224, .85);
+    color: var(--text);
+}
+
+.app-shell.web .window-close {
+    color: #d92f5d;
+}
+
+.app-shell.web .plugin-card,
+.app-shell.web .task-card {
+    position: relative;
+    overflow: hidden;
+    border-radius: 18px;
+    background: linear-gradient(135deg, rgba(255,255,255,.96), rgba(237,249,255,.84));
+    border: 1px solid rgba(244, 207, 224, .92);
+    box-shadow: var(--shadow-soft);
+}
+
+.app-shell.web .plugin-card::before,
+.app-shell.web .task-card::before,
+.app-shell.web .info-card::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 5px;
+    height: 100%;
+    background: linear-gradient(180deg, var(--accent), var(--accent-2), var(--accent-3));
+}
+
+.app-shell.web .plugin-card.clickable:hover {
+    transform: translateY(-3px);
+    border-color: rgba(255, 94, 168, .62);
+    background: linear-gradient(135deg, rgba(255,240,247,.98), rgba(237,249,255,.94));
+}
+
+.app-shell.web .info-card {
+    position: relative;
+    overflow: hidden;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, .78);
+    border-color: rgba(244, 207, 224, .8);
+    box-shadow: var(--shadow-soft);
+}
+
+.app-shell.web .chat-workbench {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 286px;
+    gap: 16px;
+}
+
+.app-shell.web .chat-stream-card {
+    min-height: 0;
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) auto auto auto auto;
+    padding: 14px;
+    border-radius: 22px;
+    background: rgba(255, 255, 255, .72);
+    border: 1px solid rgba(244, 207, 224, .86);
+    box-shadow: var(--shadow-soft);
+}
+
+.app-shell.web .message-feed {
+    padding: 14px;
+    border-radius: 18px;
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, .78), rgba(255, 250, 253, .72)),
+        repeating-linear-gradient(90deg, rgba(67, 183, 255, .05) 0 1px, transparent 1px 32px);
+}
+
+.app-shell.web .message {
+    position: relative;
+    max-width: min(680px, 74%);
+    padding: 14px 16px;
+    border: 1px solid rgba(244, 207, 224, .82);
+    border-radius: 18px;
+    background: rgba(255, 255, 255, .9);
+    box-shadow: 0 10px 22px rgba(113, 86, 103, .08);
+}
+
+.app-shell.web .message.assistant {
+    border-top-left-radius: 6px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, .96), rgba(237, 249, 255, .84));
+}
+
+.app-shell.web .message.user {
+    margin-left: auto;
+    border-top-right-radius: 6px;
+    background: linear-gradient(135deg, rgba(255, 94, 168, .92), rgba(123, 95, 255, .9));
+    color: #fff;
+}
+
+.app-shell.web .message.user .message-role,
+.app-shell.web .message.user p {
+    color: #fff;
+}
+
+.app-shell.web .message-role {
+    display: inline-flex;
+    min-height: 20px;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(255, 94, 168, .1);
+    color: #b91f6b;
+}
+
+.app-shell.web .message.user .message-role {
+    background: rgba(255, 255, 255, .22);
+}
+
+.app-shell.web .chat-empty {
+    min-height: 180px;
+    border: 1px dashed rgba(255, 94, 168, .34);
+    background: linear-gradient(135deg, rgba(255, 240, 247, .92), rgba(237, 249, 255, .86));
+}
+
+.app-shell.web .companion-side-panel {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.app-shell.web .mini-profile,
+.app-shell.web .side-card,
+.app-shell.web .quick-prompts,
+.app-shell.web .side-metrics {
+    border-radius: 18px;
+    background: rgba(255, 255, 255, .74);
+    border: 1px solid rgba(244, 207, 224, .82);
+    box-shadow: var(--shadow-soft);
+}
+
+.app-shell.web .mini-profile {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px;
+}
+
+.app-shell.web .mini-avatar {
+    width: 46px;
+    height: 46px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 16px;
+    color: #fff;
+    font-weight: 900;
+    background: linear-gradient(135deg, var(--accent-2), var(--accent-3));
+}
+
+.app-shell.web .mini-profile strong,
+.app-shell.web .mini-profile span,
+.app-shell.web .side-card span,
+.app-shell.web .quick-prompts > span {
+    display: block;
+}
+
+.app-shell.web .mini-profile span,
+.app-shell.web .side-card span,
+.app-shell.web .quick-prompts > span,
+.app-shell.web .side-metrics span {
+    color: var(--text-2);
+    font-size: 12px;
+}
+
+.app-shell.web .side-metrics {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1px;
+    overflow: hidden;
+}
+
+.app-shell.web .side-metrics div {
+    padding: 12px 10px;
+    background: rgba(255, 250, 253, .58);
+}
+
+.app-shell.web .side-metrics strong {
+    display: block;
+    margin-top: 4px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text);
+    font-size: 13px;
+}
+
+.app-shell.web .side-card,
+.app-shell.web .quick-prompts {
+    padding: 14px;
+}
+
+.app-shell.web .side-card p {
+    display: -webkit-box;
+    margin: 8px 0 0;
+    overflow: hidden;
+    color: var(--text);
+    font-size: 13px;
+    line-height: 1.55;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 6;
+}
+
+.app-shell.web .quick-prompts {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.app-shell.web .quick-prompt-chip {
+    display: block;
+    min-height: 34px;
+    padding: 8px 10px;
+    border: 1px solid rgba(67, 183, 255, .22);
+    border-radius: 12px;
+    color: #1377b2;
+    background: rgba(237, 249, 255, .78);
+}
+
+.app-shell.web .composer {
+    align-items: center;
+    padding: 10px;
+    margin-top: 12px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, .82);
+    border: 1px solid rgba(244, 207, 224, .86);
+    box-shadow: 0 12px 26px rgba(255, 94, 168, .08);
+}
+
+.app-shell.web .composer input {
+    min-height: 40px;
+    border-radius: 14px;
+    background: rgba(255, 250, 253, .96);
+    border-color: rgba(244, 207, 224, .9);
+}
+
+.app-shell.web .composer button,
+.app-shell.web .ghost-button,
+.app-shell.web .primary-soft-button,
+.app-shell.web .danger-soft-button,
+.app-shell.web .review-toolbar button,
+.app-shell.web .plugin-card-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 36px;
+    border-radius: 12px;
+    font-weight: 700;
+}
+
+.app-shell.web .composer button[type="submit"] {
+    color: #fff;
+    background: linear-gradient(135deg, var(--accent), #7b5fff);
+    border-color: transparent;
+}
+
+.app-shell.web .text-button[aria-pressed="true"],
+.app-shell.web .voice-listening {
+    color: #b91f6b;
+    background: rgba(255, 94, 168, .14);
+    border-color: rgba(255, 94, 168, .34);
+}
+
+.app-shell.web .plugin-detail-card {
+    border-radius: 18px;
+    background: linear-gradient(135deg, rgba(255,255,255,.98), rgba(255,240,247,.86));
+    border: 1px solid rgba(244, 207, 224, .95);
+    box-shadow: var(--shadow);
+}
+
+.app-shell.web .plugin-icon {
+    border-radius: 14px;
+    color: #ffffff;
+    background: linear-gradient(135deg, var(--accent), var(--accent-2));
+    border: 1px solid rgba(255, 255, 255, .78);
+    box-shadow: 0 10px 20px rgba(255, 94, 168, .18);
+}
+
+.app-shell.web .plugin-card-stats span,
+.app-shell.web .plugin-permission-list span {
+    color: #b91f6b;
+    background: rgba(255, 94, 168, .12);
+    border: 1px solid rgba(255, 94, 168, .24);
+}
+
+.app-shell.web .plugin-section,
+.app-shell.web .plugin-meta-grid > div,
+.app-shell.web .plugin-tool-item,
+.app-shell.web .manual-action-grid button,
+.app-shell.web .change-row,
+.app-shell.web .log-entry {
+    background: rgba(255, 255, 255, .78);
+    border-color: rgba(244, 207, 224, .88);
+}
+
+.app-shell.web .plugin-section-head {
+    padding-bottom: 10px;
+    border-bottom: 1px solid rgba(244, 207, 224, .72);
+}
+
+.app-shell.web .plugin-section-head h3::before {
+    content: "◆";
+    margin-right: 7px;
+    color: var(--accent);
+    font-size: 11px;
+}
+
+.app-shell.web .plugin-meta-grid > div {
+    min-height: 76px;
+}
+
+.app-shell.web .manual-action-grid button {
+    transition: transform .16s ease, border-color .16s ease, background .16s ease;
+}
+
+.app-shell.web .manual-action-grid button:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent);
+    background: rgba(255, 94, 168, .1);
+}
+
+.app-shell.web .primary-soft-button {
+    color: #b91f6b;
+    background: rgba(255, 94, 168, .14);
+    border-color: rgba(255, 94, 168, .34);
+}
+
+.app-shell.web .danger-soft-button,
+.app-shell.web .plugin-card-actions .rev-reject {
+    color: #b4234e;
+    background: rgba(239, 78, 114, .12);
+    border-color: rgba(239, 78, 114, .3);
+}
+
+.app-shell.web .plugin-card-actions .rev-accept {
+    color: #147a59;
+    background: rgba(80, 215, 161, .16);
+    border-color: rgba(80, 215, 161, .42);
+}
+
+.app-shell.web .task-review-panel {
+    border-color: rgba(67, 183, 255, .28);
+    border-radius: 14px;
+    background: rgba(237, 249, 255, .74);
+}
+
+.app-shell.web .log-entry {
+    border-radius: 10px;
+}
+
+.app-shell.web .log-level {
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(255, 94, 168, .1);
+    text-align: center;
+}
+
+.app-shell.web .plugin-result-box {
+    color: #1377b2;
+    background: rgba(67, 183, 255, .12);
+    border-color: rgba(67, 183, 255, .26);
+}
+
+.app-shell.web .config-editor-textarea,
+.app-shell.web .plugin-config-textarea {
+    resize: none;
+    overflow: auto;
+    background: #fffafd;
+    color: var(--text);
+}
+
+.app-shell.web .review-diff,
+.app-shell.web .plugin-result {
+    background: #21182b;
+    color: #fff7fb;
+    border-color: rgba(255, 94, 168, .24);
+}
+
+.app-shell.web .review-diff .diff-line.add { color: #95f5c7; background: rgba(80, 215, 161, .12); }
+.app-shell.web .review-diff .diff-line.del { color: #ffb3c7; background: rgba(239, 78, 114, .14); }
+.app-shell.web .review-diff .diff-line.meta { color: #dab8ff; }
+
+@media (max-width: 1120px) {
+    .app-shell.web .chat-workbench {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .app-shell.web .companion-side-panel {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .app-shell.web .quick-prompts {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 760px) {
+    .app-shell.web .web-shell {
+        grid-template-columns: 1fr;
+    }
+
+    .app-shell.web .web-sidebar {
+        width: auto;
+        max-height: 42vh;
+        overflow-y: auto;
+        border-right: 0;
+        border-bottom: 1px solid rgba(244, 207, 224, .95);
+    }
+
+    .app-shell.web .chat-panel,
+    .app-shell.web .web-view {
+        padding: 16px;
+    }
+
+    .app-shell.web .chat-panel header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .app-shell.web .companion-side-panel {
+        grid-template-columns: 1fr;
+    }
+
+    .app-shell.web .message {
+        max-width: 92%;
+    }
+}
+
+/* ===== Soft glass correction: calmer color, complete buttons ===== */
+.app-shell.web {
+    background:
+        linear-gradient(145deg, rgba(201, 120, 173, .055), rgba(120, 169, 214, .075) 52%, rgba(130, 191, 169, .045)),
+        #fbf7fb;
+}
+
+.app-shell.web .web-shell {
+    background:
+        linear-gradient(120deg, rgba(255, 255, 255, .52), rgba(246, 241, 248, .38)),
+        repeating-linear-gradient(90deg, rgba(120, 169, 214, .035) 0 1px, transparent 1px 56px);
+}
+
+.app-shell.web .web-sidebar,
+.app-shell.web .web-brand,
+.app-shell.web .sidebar-current,
+.app-shell.web .conversation-list,
+.app-shell.web .web-sidebar-foot,
+.app-shell.web .chat-stream-card,
+.app-shell.web .message-feed,
+.app-shell.web .plugin-card,
+.app-shell.web .task-card,
+.app-shell.web .info-card,
+.app-shell.web .plugin-detail-card,
+.app-shell.web .plugin-section,
+.app-shell.web .plugin-meta-grid > div,
+.app-shell.web .plugin-tool-item,
+.app-shell.web .manual-action-grid button,
+.app-shell.web .mini-profile,
+.app-shell.web .side-card,
+.app-shell.web .quick-prompts,
+.app-shell.web .side-metrics,
+.app-shell.web .log-entry {
+    background: linear-gradient(145deg, rgba(255, 255, 255, .72), rgba(255, 255, 255, .42));
+    border-color: rgba(255, 255, 255, .72);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, .92),
+        0 16px 38px rgba(77, 64, 82, .1);
+    -webkit-backdrop-filter: blur(18px) saturate(1.18);
+    backdrop-filter: blur(18px) saturate(1.18);
+}
+
+.app-shell.web .web-sidebar {
+    background:
+        linear-gradient(180deg, rgba(255, 255, 255, .68), rgba(248, 244, 249, .54)),
+        repeating-linear-gradient(135deg, rgba(201, 120, 173, .045) 0 1px, transparent 1px 22px);
+    border-right-color: rgba(220, 207, 219, .72);
+    box-shadow: 16px 0 44px rgba(77, 64, 82, .08);
+}
+
+.app-shell.web .web-brand,
+.app-shell.web .plugin-card,
+.app-shell.web .task-card,
+.app-shell.web .info-card,
+.app-shell.web .chat-stream-card,
+.app-shell.web .plugin-detail-card {
+    position: relative;
+}
+
+.app-shell.web .web-brand::after,
+.app-shell.web .plugin-card::after,
+.app-shell.web .task-card::after,
+.app-shell.web .info-card::after,
+.app-shell.web .chat-stream-card::after,
+.app-shell.web .plugin-detail-card::after {
+    content: "";
+    position: absolute;
+    inset: 1px auto auto 12px;
+    width: min(46%, 220px);
+    height: 1px;
+    background: linear-gradient(90deg, rgba(255, 255, 255, .95), rgba(255, 255, 255, 0));
+    pointer-events: none;
+}
+
+.app-shell.web .chat-panel,
+.app-shell.web .web-view {
+    background:
+        linear-gradient(135deg, rgba(255, 255, 255, .62), rgba(248, 244, 249, .48)),
+        repeating-linear-gradient(90deg, rgba(120, 169, 214, .035) 0 1px, transparent 1px 52px),
+        transparent;
+}
+
+.app-shell.web .chat-panel {
+    grid-template-rows: auto minmax(0, 1fr);
+}
+
+.app-shell.web .new-conversation,
+.app-shell.web .composer button[type="submit"] {
+    color: #fff;
+    background: linear-gradient(135deg, #c978ad, #78a9d6);
+    box-shadow: 0 12px 24px rgba(120, 93, 128, .16);
+}
+
+.app-shell.web .web-brand-logo,
+.app-shell.web .plugin-icon,
+.app-shell.web .mini-avatar {
+    background: linear-gradient(135deg, #b987c7, #78a9d6);
+    box-shadow: 0 10px 22px rgba(120, 93, 128, .15);
+}
+
+.app-shell.web .web-nav-item.active {
+    color: #875177;
+    background: linear-gradient(135deg, rgba(201, 120, 173, .13), rgba(120, 169, 214, .12));
+    border-color: rgba(201, 120, 173, .22);
+    box-shadow: inset 4px 0 0 rgba(201, 120, 173, .42), 0 10px 20px rgba(77, 64, 82, .06);
+}
+
+.app-shell.web .conversation-item:hover,
+.app-shell.web .conversation-item.active,
+.app-shell.web .text-button[aria-pressed="true"],
+.app-shell.web .voice-listening,
+.app-shell.web .log-levels .ghost-button.active {
+    color: #875177;
+    background: rgba(201, 120, 173, .12);
+    border-color: rgba(201, 120, 173, .24);
+}
+
+.app-shell.web .plugin-card::before,
+.app-shell.web .task-card::before,
+.app-shell.web .info-card::before {
+    background: linear-gradient(180deg, #c978ad, #78a9d6);
+    opacity: .62;
+}
+
+.app-shell.web .message {
+    background: rgba(255, 255, 255, .62);
+    border-color: rgba(255, 255, 255, .76);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, .9),
+        0 12px 26px rgba(77, 64, 82, .08);
+    -webkit-backdrop-filter: blur(14px);
+    backdrop-filter: blur(14px);
+}
+
+.app-shell.web .message.assistant {
+    background: linear-gradient(145deg, rgba(255, 255, 255, .7), rgba(237, 246, 250, .48));
+}
+
+.app-shell.web .message.user {
+    background: linear-gradient(135deg, rgba(201, 120, 173, .86), rgba(120, 169, 214, .86));
+}
+
+.app-shell.web .message-role,
+.app-shell.web .plugin-card-stats span,
+.app-shell.web .plugin-permission-list span,
+.app-shell.web .log-level {
+    color: #875177;
+    background: rgba(201, 120, 173, .1);
+    border-color: rgba(201, 120, 173, .16);
+}
+
+.app-shell.web .quick-prompt-chip,
+.app-shell.web .task-review-panel,
+.app-shell.web .plugin-result-box {
+    color: #4f7190;
+    background: rgba(237, 246, 250, .56);
+    border-color: rgba(120, 169, 214, .2);
+}
+
+.app-shell.web .ghost-button,
+.app-shell.web .primary-soft-button,
+.app-shell.web .danger-soft-button,
+.app-shell.web .review-toolbar button,
+.app-shell.web .plugin-card-actions button,
+.app-shell.web .composer button,
+.app-shell.web .log-toolbar select {
+    flex: 0 0 auto;
+    min-width: max-content;
+    max-width: 100%;
+    white-space: nowrap;
+    line-height: 1.15;
+    overflow: visible;
+}
+
+.app-shell.web .ghost-button,
+.app-shell.web .primary-soft-button,
+.app-shell.web .review-toolbar button,
+.app-shell.web .plugin-card-actions button {
+    color: #6f5f73;
+    background: rgba(255, 255, 255, .54);
+    border-color: rgba(217, 200, 214, .66);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .78);
+}
+
+.app-shell.web .primary-soft-button {
+    color: #875177;
+    background: rgba(201, 120, 173, .12);
+}
+
+.app-shell.web .danger-soft-button,
+.app-shell.web .plugin-card-actions .rev-reject {
+    color: #9c5665;
+    background: rgba(198, 92, 116, .1);
+    border-color: rgba(198, 92, 116, .2);
+}
+
+.app-shell.web .plugin-card-actions .rev-accept {
+    color: #527f6f;
+    background: rgba(130, 191, 169, .12);
+    border-color: rgba(130, 191, 169, .24);
+}
+
+.app-shell.web .log-toolbar {
+    justify-content: flex-end;
+}
+
+.app-shell.web .log-toolbar select {
+    width: clamp(190px, 26vw, 260px);
+}
+
+.app-shell.web .log-levels {
+    min-width: 0;
+    flex-wrap: wrap;
+}
+
+.app-shell.web .web-sidebar-foot .ghost-button,
+.app-shell.web .new-conversation {
+    width: 100%;
+}
+
+.app-shell.web .web-sidebar-foot .pill {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ===== Window radius and bounded web layout ===== */
+html,
+body,
+#root {
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: transparent;
+}
+
+.app-shell.web {
+    width: 100vw;
+    height: 100vh;
+    padding: 4px;
+    overflow: hidden;
+    border-radius: 26px;
+    background: transparent;
+}
+
+.app-shell.web .web-shell {
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    border: 1px solid rgba(255, 255, 255, .76);
+    border-radius: 24px;
+    box-shadow: 0 18px 50px rgba(54, 45, 60, .18);
+}
+
+.app-shell.web .web-sidebar {
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+    padding: 14px 12px;
+}
+
+.app-shell.web .web-brand,
+.app-shell.web .new-conversation,
+.app-shell.web .sidebar-current,
+.app-shell.web .web-nav,
+.app-shell.web .web-sidebar-foot {
+    flex: 0 0 auto;
+}
+
+.app-shell.web .conversation-list {
+    flex: 1 1 auto;
+    min-height: 56px;
+    max-height: none;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+.app-shell.web .web-sidebar-foot {
+    margin-top: 0;
+    padding: 8px;
+}
+
+.app-shell.web .web-content {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.app-shell.web .chat-panel,
+.app-shell.web .web-view {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.app-shell.web .web-view {
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+.app-shell.web .chat-panel {
+    padding: 18px 16px 16px;
+}
+
+.app-shell.web .chat-panel header {
+    flex: 0 0 auto;
+}
+
+.app-shell.web .chat-workbench {
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
+    overflow: hidden;
+    align-items: stretch;
+}
+
+.app-shell.web .chat-stream-card {
+    min-height: 0;
+    overflow: hidden;
+    gap: 8px;
+}
+
+.app-shell.web .message-feed {
+    min-height: 0;
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+.app-shell.web .companion-side-panel {
+    min-height: 0;
+    height: 100%;
+    overflow-y: auto;
+    padding: 0 2px 4px 0;
+    scrollbar-gutter: stable;
+}
+
+.app-shell.web .side-card p {
+    -webkit-line-clamp: 4;
+}
+
+@media (max-height: 760px) {
+    .app-shell.web .web-sidebar {
+        gap: 8px;
+        padding: 12px 10px;
+    }
+
+    .app-shell.web .web-brand,
+    .app-shell.web .sidebar-current,
+    .app-shell.web .web-sidebar-foot,
+    .app-shell.web .mini-profile,
+    .app-shell.web .side-card,
+    .app-shell.web .quick-prompts {
+        padding: 10px;
+    }
+
+    .app-shell.web .web-nav-item,
+    .app-shell.web .new-conversation {
+        min-height: 38px;
+    }
+
+    .app-shell.web .chat-panel {
+        gap: 10px;
+        padding: 14px 12px 12px;
+    }
+
+    .app-shell.web .chat-stream-card {
+        padding: 10px;
+    }
+
+    .app-shell.web .message-feed {
+        padding: 10px;
+    }
+
+    .app-shell.web .quick-prompt-chip {
+        min-height: 32px;
+        padding: 7px 9px;
+    }
+}
+
+@media (max-width: 760px) {
+    .app-shell.web .web-shell {
+        grid-template-rows: auto minmax(0, 1fr);
+        height: 100%;
+    }
+
+    .app-shell.web .web-sidebar {
+        max-height: 40vh;
+        overflow-y: auto;
+    }
+
+    .app-shell.web .web-content {
+        min-height: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        scroll-behavior: auto !important;
+        transition-duration: 0.001ms !important;
+    }
+}

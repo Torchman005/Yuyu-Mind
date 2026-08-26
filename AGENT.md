@@ -93,6 +93,7 @@
 - [x] 无边框窗口（去系统边框/标题栏）：`main.go` 加 `Frameless: true` + `DisableFramelessWindowDecorations: true`，完整模式用前端自定义 header（拖拽区 + 最小化/关闭按钮），桌宠模式天然无边框无标题栏。`App.css` 补强 `.chat-panel .header-title`/`.status-bar` 拖拽区（去掉 `status-bar *` 的 no-drag）。`go build ./...` 通过，需本地 `wails dev` 验证。
 - [x] 语音：Fish Audio TTS（buffered + 流式事件）、系统 TTS 兜底、浏览器 ASR、语音门控、打断（barge-in）、连续/自由对话、主动发言与追问。
 - [x] UI 美化：重写 `App.css`（现代简洁配色 + 圆角卡片 + 聊天气泡）；头部精简为标题+状态+窗口按钮，功能按钮下沉为独立工具栏；`.chat-panel` 改 flexbox 布局彻底修复消息区滚动（header/toolbar/composer 固定、`message-feed` 独立滚动 + 细滚动条）；窗口默认尺寸提升到 1200×800。
+- [x] 前端二次元浅色重构（frontend-design-premium）：新增 `DESIGN.md`/`UX-CONTRACT.md`/`premium-ui.json` 记录 Yuyu candy studio 设计与 UX ownership；`App.css` 从 web 工具页暗黑风改为浅色缤纷主题（莓粉/汽水蓝/薄荷绿 + 全局滚动条/focus/reduced-motion）；`App.tsx` 拆出 `appConfig.ts`、`appTypes.ts`、`utils.ts`、`components/AppShell.tsx`，先迁移聊天组合器、桌宠模式、侧边栏、聊天页、皮肤页、模型页等纯展示壳，保留语音/TTS 状态机在主组件内避免播放链路风险。验证：`tsc --noEmit`、`npm run build`、premium strict audit 通过，`designmd lint DESIGN.md` 0 errors（仅 orphan token warnings）。
 
 ### 情绪管线（M1）
 
@@ -143,6 +144,7 @@
 - [x] 插件配置持久化（`plugin.ConfigStore` 接口 + `Host.Config` + `Manager.GetConfig/SetConfig` + 宿主 settings 键值表 + Wails `GetPluginConfig`/`SetPluginConfig` + 前端配置按钮；`config_test.go`）。
 - [x] wailsjs 绑定补全（`App.js`/`App.d.ts` 新增 `EnablePlugin`/`DisablePlugin`/`InvokePluginAction`/`GetPluginConfig`/`SetPluginConfig`，`models.ts` 新增情绪表演字段）。
 - [x] 子进程 sidecar（阶段 2）：`internal/plugin/sidecar.go` 通过 stdio JSON-RPC 驱动外部插件进程（`SidecarSpec`/`SidecarPlugin`/`sidecarClient`），`Manager.Register` 在 Init 后重新读取协商的 manifest；`sidecar_test.go` 用 re-exec 模式验证全链路。第三方插件无需重编译宿主即可挂载。
+- [x] code-assistant VS Code 评审体验增强：`run_agent` 结束后保留相对基线的标准 git 工作区改动，并把 `cwd/baseCommit/branch/files/diff` 原样写入后台任务 `result_json.metadata.code_review`；后台任务页直接显示代码变更清单、VS Code 查看、补丁、接受/拒绝。修复目录/嵌套 git 仓库（如生成的 React 子项目）被当作普通文件 diff 导致 VS Code “打开但没内容”的问题；本轮新建的嵌套 `.git` 会临时移到系统 temp，让父仓库按普通目录显示内部文件级增删，已有嵌套仓库不动。插件管理页同步美化为插件目录 + 详情工作台，只保留插件说明、模型工具、手动动作与配置。
 
 ### 电脑工具（M3 地基）
 

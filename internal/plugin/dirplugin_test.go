@@ -24,7 +24,7 @@ func (f *fakeHost) RegisterAction(name string, h ActionHandler) error {
 	f.actions = append(f.actions, name)
 	return nil
 }
-func (f *fakeHost) Config() map[string]any { return map[string]any{} }
+func (f *fakeHost) Config() map[string]any          { return map[string]any{} }
 func (f *fakeHost) Logf(format string, args ...any) {}
 
 func writeManifest(t *testing.T, dir, content string) {
@@ -118,10 +118,10 @@ func TestDiscoverShipPlugins(t *testing.T) {
 			t.Fatalf("ship plugin %q not discovered; got %v", want, got)
 		}
 	}
-	// code-assistant 应声明 1 个工具 + 5 个动作（show_diff/accept/reject/open_in_ide/open_workspace）。
+	// code-assistant 应声明 1 个工具 + 6 个动作（show/list/open diff、accept/reject、open_workspace）。
 	for _, p := range plugins {
 		if p.Manifest().Name == "code-assistant" {
-			if len(p.Manifest().Tools) != 1 || len(p.Manifest().Actions) != 5 {
+			if len(p.Manifest().Tools) != 1 || len(p.Manifest().Actions) != 6 {
 				t.Fatalf("code-assistant manifest wrong: tools=%d actions=%d", len(p.Manifest().Tools), len(p.Manifest().Actions))
 			}
 		}

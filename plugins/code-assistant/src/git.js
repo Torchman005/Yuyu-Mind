@@ -4,6 +4,7 @@
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 // 解析 git 可执行文件完整路径：GUI 桌宠进程的 PATH 常不含 git，直接 spawn 'git' 会 ENOENT。
@@ -47,10 +48,100 @@ function runSync(cwd, args) {
   }
 }
 
+function runBufferSync(cwd, args) {
+  try {
+    return { ok: true, stdout: execFileSync(GIT, args, { cwd, windowsHide: true }) };
+  } catch (e) {
+    return { ok: false, stdout: e.stdout || Buffer.alloc(0), stderr: (e.stderr || e.message || '').toString().trim() };
+  }
+}
+
 // 当前待评审状态：{ cwd, baseBranch, branch }
 let review = null;
 
+const scanSkipDirs = new Set(['.git', 'node_modules', 'dist', 'build', '.gocache', '.gotmp', '.gomodcache', '.next', '.vite']);
+
+function normalizePath(p) {
+  return path.resolve(p).toLowerCase();
+}
+
+function scanNestedGitRoots(root, maxDirs = 12000) {
+  const result = [];
+  const rootAbs = path.resolve(root);
+  let seen = 0;
+  function walk(dir) {
+    if (++seen > maxDirs) return;
+    let entries = [];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return; }
+    const hasGit = entries.some((entry) => entry.name === '.git');
+    if (hasGit && normalizePath(dir) !== normalizePath(rootAbs)) {
+      result.push(path.resolve(dir));
+      return;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || scanSkipDirs.has(entry.name)) continue;
+      walk(path.join(dir, entry.name));
+    }
+  }
+  walk(rootAbs);
+  return result;
+}
+
+function absorbNewNestedGitRepos(cwd) {
+  if (!review) return [];
+  const baseline = new Set((review.baselineNestedRepos || []).map(normalizePath));
+  const nested = scanNestedGitRoots(cwd);
+  return absorbNestedGitRepos(cwd, nested.filter((repoRoot) => !baseline.has(normalizePath(repoRoot))));
+}
+
+function relForGit(cwd, absPath) {
+  return path.relative(cwd, absPath).replace(/\\/g, '/');
+}
+
+function isAbsentFromHead(cwd, absPath) {
+  const rel = relForGit(cwd, absPath);
+  if (!rel || rel.startsWith('..')) return false;
+  const out = runSync(cwd, ['ls-tree', 'HEAD', '--', rel]);
+  return out.ok && !out.stdout.trim();
+}
+
+function absorbReviewNestedGitRepos(cwd) {
+  const nested = scanNestedGitRoots(cwd).filter((repoRoot) => isAbsentFromHead(cwd, repoRoot));
+  const absorbed = absorbNestedGitRepos(cwd, nested);
+  if (absorbed.length > 0) runSync(cwd, ['add', '-A']);
+  return absorbed;
+}
+
+function absorbNestedGitRepos(cwd, nested) {
+  const absorbed = [];
+  for (const repoRoot of nested) {
+    const gitDir = path.join(repoRoot, '.git');
+    try {
+      if (!fs.statSync(gitDir).isDirectory()) continue;
+      const backupRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'yuyu-nested-git-'));
+      const target = path.join(backupRoot, path.basename(repoRoot) + '.git');
+      fs.renameSync(gitDir, target);
+      absorbed.push({ repoRoot, gitBackup: target });
+    } catch (_) { /* keep the nested repo if it cannot be safely moved */ }
+  }
+  if (review) review.absorbedNestedRepos = absorbed;
+  return absorbed;
+}
+
 function currentReview() { return review; }
+
+function restoreReview(input) {
+  if (!input || typeof input !== 'object') return review;
+  const cwd = String(input.cwd || '').trim();
+  if (!cwd) return review;
+  review = {
+    cwd,
+    baseBranch: String(input.baseBranch || input.base_branch || 'master'),
+    baseCommit: String(input.baseCommit || input.base_commit || ''),
+    branch: String(input.branch || ''),
+  };
+  return review;
+}
 
 function ensureRepo(cwd) {
   if (runSync(cwd, ['rev-parse', '--is-inside-work-tree']).ok) return;
@@ -72,42 +163,190 @@ function beginReview(cwd) {
   ensureRepo(cwd);
   ensureCommit(cwd);
   const baseBranch = runSync(cwd, ['branch', '--show-current']).stdout || 'master';
+  const baseCommit = runSync(cwd, ['rev-parse', 'HEAD']).stdout || '';
+  const baselineNestedRepos = scanNestedGitRoots(cwd);
   const branch = 'yuyu/agent-' + Date.now();
   const co = runSync(cwd, ['checkout', '-b', branch]);
   if (!co.ok) throw new Error('git checkout -b 失败：' + co.stderr);
-  review = { cwd, baseBranch, branch };
+  review = { cwd, baseBranch, baseCommit, branch, baselineNestedRepos };
   return review;
 }
 
-function commitAll(cwd, msg) {
+// 让 codex 的改动保留为「相对基线的未提交改动」，并 stage，
+// 这样 VS Code Source Control 会直接展示 +/− 增删，便于评审。
+function stageReview(cwd) {
+  if (!review) return;
+  const absorbed = absorbNewNestedGitRepos(cwd);
+  if (review.baseCommit) runSync(cwd, ['reset', '--soft', review.baseCommit]);
   runSync(cwd, ['add', '-A']);
-  const c = runSync(cwd, ['commit', '--allow-empty', '-m', msg]);
-  return c.ok;
+  return absorbed;
+}
+
+function statusLabel(code) {
+  const c = String(code || '').charAt(0);
+  if (c === 'A') return 'added';
+  if (c === 'D') return 'deleted';
+  if (c === 'R') return 'renamed';
+  if (c === 'C') return 'copied';
+  if (c === 'M') return 'modified';
+  if (c === 'T') return 'typechanged';
+  if (c === 'U') return 'unmerged';
+  if (c === '?') return 'untracked';
+  return 'changed';
+}
+
+function changedFiles(cwd) {
+  const out = runBufferSync(cwd, ['diff', '--name-status', '-M', '-z', 'HEAD']);
+  if (!out.ok || !out.stdout.length) return [];
+  const parts = out.stdout.toString('utf8').split('\0').filter(Boolean);
+  const files = [];
+  for (let i = 0; i < parts.length;) {
+    const status = parts[i++];
+    if (!status) continue;
+    if (/^[RC]/.test(status)) {
+      const oldPath = parts[i++] || '';
+      const filePath = parts[i++] || oldPath;
+      files.push({ status, kind: statusLabel(status), path: filePath, oldPath });
+    } else {
+      const filePath = parts[i++] || '';
+      files.push({ status, kind: statusLabel(status), path: filePath });
+    }
+  }
+  return files;
+}
+
+function isDirectory(cwd, filePath) {
+  try { return fs.statSync(path.resolve(cwd, filePath)).isDirectory(); } catch (_) { return false; }
+}
+
+function isGitRepo(cwd) {
+  return runSync(cwd, ['rev-parse', '--is-inside-work-tree']).ok;
+}
+
+function workTreeStatusFiles(cwd) {
+  const out = runBufferSync(cwd, ['status', '--short', '-z']);
+  if (!out.ok || !out.stdout.length) return [];
+  const parts = out.stdout.toString('utf8').split('\0').filter(Boolean);
+  const files = [];
+  for (let i = 0; i < parts.length; i += 1) {
+    const row = parts[i];
+    const status = row.slice(0, 2).trim() || 'M';
+    const rawPath = row.slice(3);
+    if (!rawPath) continue;
+    const arrow = rawPath.indexOf(' -> ');
+    if (arrow >= 0) {
+      files.push({ status, kind: statusLabel(status), oldPath: rawPath.slice(0, arrow), path: rawPath.slice(arrow + 4) });
+    } else {
+      files.push({ status, kind: statusLabel(status), path: rawPath });
+    }
+  }
+  return files;
+}
+
+function enrichFile(cwd, file) {
+  const abs = path.resolve(cwd, file.path);
+  const directory = isDirectory(cwd, file.path);
+  const nestedRepo = directory && isGitRepo(abs);
+  const nestedFiles = nestedRepo ? workTreeStatusFiles(abs).slice(0, 200) : [];
+  return {
+    ...file,
+    absolutePath: abs,
+    directory,
+    nestedRepo,
+    nestedCount: nestedFiles.length,
+    nestedFiles,
+  };
+}
+
+function reviewFiles(cwd) {
+  return changedFiles(cwd).map((file) => enrichFile(cwd, file));
+}
+
+function sanitizeTempName(filePath) {
+  return String(filePath || 'file').replace(/^[a-zA-Z]:/, '').replace(/[\\/:*?"<>|]+/g, '__');
+}
+
+function writeTempFile(dir, filePath, content) {
+  const tempPath = path.join(dir, sanitizeTempName(filePath));
+  fs.mkdirSync(path.dirname(tempPath), { recursive: true });
+  fs.writeFileSync(tempPath, content);
+  return tempPath;
+}
+
+function baseBlob(cwd, file) {
+  return runBufferSync(cwd, ['show', 'HEAD:' + file]);
+}
+
+function diffPairs(cwd, selectedPaths) {
+  const selected = new Set((selectedPaths || []).map((p) => {
+    if (p && typeof p === 'object') return String(p.path || '').replace(/\\/g, '/');
+    return String(p || '').replace(/\\/g, '/');
+  }).filter(Boolean));
+  const all = reviewFiles(cwd);
+  const files = selected.size ? all.filter((f) => selected.has(String(f.path).replace(/\\/g, '/'))) : all;
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'yuyu-code-diff-'));
+  return files.flatMap((f) => {
+    if (f.nestedRepo) {
+      const nestedPairs = diffPairs(path.resolve(cwd, f.path), []);
+      if (nestedPairs.length) {
+        return nestedPairs.map((pair) => ({
+          ...pair,
+          path: path.join(f.path, pair.path).replace(/\\/g, '/'),
+          oldPath: pair.oldPath ? path.join(f.path, pair.oldPath).replace(/\\/g, '/') : pair.oldPath,
+          repoPath: path.resolve(cwd, f.path),
+          nestedRepo: true,
+        }));
+      }
+      return [{ ...f, openOnly: true, repoPath: path.resolve(cwd, f.path), left: '', right: path.resolve(cwd, f.path), workPath: path.resolve(cwd, f.path) }];
+    }
+    if (f.directory) {
+      return [{ ...f, openOnly: true, repoPath: cwd, left: '', right: path.resolve(cwd, f.path), workPath: path.resolve(cwd, f.path) }];
+    }
+    const oldFile = f.oldPath || f.path;
+    const workPath = path.resolve(cwd, f.path);
+    let left = '';
+    let right = workPath;
+    if (f.kind === 'added') {
+      left = writeTempFile(tempDir, f.path + '.base', Buffer.alloc(0));
+    } else {
+      const blob = baseBlob(cwd, oldFile);
+      left = writeTempFile(tempDir, oldFile + '.base', blob.ok ? blob.stdout : Buffer.alloc(0));
+    }
+    if (f.kind === 'deleted') {
+      right = writeTempFile(tempDir, f.path + '.deleted', Buffer.alloc(0));
+    }
+    return { ...f, left, right, workPath };
+  });
 }
 
 function diff(cwd, baseBranch, branch) {
-  const d = runSync(cwd, ['diff', baseBranch + '...' + branch]);
-  return d.ok ? d.stdout : (d.stderr || '');
+  // 改动已 stage（HEAD 在 baseCommit），`git diff --cached HEAD` 即相对基线的全部改动。
+  const d = runSync(cwd, ['diff', '--cached', 'HEAD']);
+  if (d.ok && d.stdout) return d.stdout;
+  const d2 = runSync(cwd, ['diff', baseBranch + '...' + branch]);
+  return d2.ok ? d2.stdout : (d2.stderr || '');
 }
 
 function acceptChanges() {
   if (!review) throw new Error('暂无待评审的改动');
   const { cwd, baseBranch, branch } = review;
+  const commit = runSync(cwd, ['commit', '--allow-empty', '-m', 'agent changes（评审通过）']);
   const co = runSync(cwd, ['checkout', baseBranch]);
-  if (!co.ok) throw new Error('checkout 基线失败：' + co.stderr);
   const m = runSync(cwd, ['merge', '--no-ff', branch, '-m', 'accept agent changes']);
   runSync(cwd, ['branch', '-d', branch]); // 已合并则删除
   review = null;
-  return { ok: m.ok, baseBranch, merged: m.ok, output: m.stdout || m.stderr };
+  return { ok: commit.ok && co.ok && m.ok, baseBranch, merged: m.ok, output: m.stdout || m.stderr || commit.stderr };
 }
 
 function rejectChanges() {
   if (!review) throw new Error('暂无待评审的改动');
-  const { cwd, baseBranch, branch } = review;
+  const { cwd, baseBranch, branch, baseCommit } = review;
+  if (baseCommit) runSync(cwd, ['reset', '--hard', baseCommit]); // 丢弃改动
+  runSync(cwd, ['clean', '-fd']);
   runSync(cwd, ['checkout', baseBranch]);
   runSync(cwd, ['branch', '-D', branch]);
   review = null;
   return { ok: true, baseBranch, rejected: true };
 }
 
-module.exports = { currentReview, beginReview, commitAll, diff, acceptChanges, rejectChanges };
+module.exports = { currentReview, restoreReview, beginReview, stageReview, absorbReviewNestedGitRepos, changedFiles, reviewFiles, diffPairs, diff, acceptChanges, rejectChanges };
