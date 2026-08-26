@@ -118,10 +118,10 @@ func TestDiscoverShipPlugins(t *testing.T) {
 			t.Fatalf("ship plugin %q not discovered; got %v", want, got)
 		}
 	}
-	// code-assistant 应声明 1 个工具 + 2 个动作。
+	// code-assistant 应声明 1 个工具 + 5 个动作（show_diff/accept/reject/open_in_ide/open_workspace）。
 	for _, p := range plugins {
 		if p.Manifest().Name == "code-assistant" {
-			if len(p.Manifest().Tools) != 1 || len(p.Manifest().Actions) != 2 {
+			if len(p.Manifest().Tools) != 1 || len(p.Manifest().Actions) != 5 {
 				t.Fatalf("code-assistant manifest wrong: tools=%d actions=%d", len(p.Manifest().Tools), len(p.Manifest().Actions))
 			}
 		}

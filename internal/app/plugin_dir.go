@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"github.com/yuyu-mind/backend/internal/plugin"
 )
 
@@ -63,11 +64,19 @@ func (a *App) loadDirPlugins(ctx context.Context) {
 	}
 }
 
-// tagDirPlugin 把宿主工作区根目录注入目录插件，使其默认在项目目录里工作。
+// tagDirPlugin 把宿主工作区根目录注入目录插件，并设置 sidecar 进度事件转发：
+// 写入日志 + 以 Wails 事件 plugin:progress 推给前端（供中途播报/实时 diff）。
 func (a *App) tagDirPlugin(dp *plugin.DirPlugin) {
 	if a.workspace != nil {
 		dp.SetBaseDir(a.workspace.Root())
 	}
+	name := dp.Manifest().Name
+	dp.SetProgressHandler(func(event string, data map[string]any) {
+		slog.Info("plugin progress", "plugin", name, "event", event, "data", data)
+		if a.ctx != nil {
+			runtime.EventsEmit(a.ctx, "plugin:progress", map[string]any{"plugin": name, "event": event, "data": data})
+		}
+	})
 }
 
 // ReloadPlugins 重新扫描插件根目录：新增的插件即时注册，已删除目录的插件即时卸载。

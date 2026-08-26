@@ -106,12 +106,17 @@ func decodeManifest(raw map[string]any) (Manifest, error) {
 }
 
 // sidecarClient 是与 sidecar 进程通信的 JSON-RPC 客户端。
+// 由一个常驻读协程统一消费 stdout：带 id 的行作为响应派发给等待者，
+// 带 "event" 字段的行作为进度事件交给 onEvent 回调（用于中途播报/实时 diff）。
 type sidecarClient struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	mu     sync.Mutex
-	nextID int64
+	cmd     *exec.Cmd
+	stdin   io.WriteCloser
+	mu      sync.Mutex
+	nextID  int64
+	pending map[int64]chan sidecarResponse
+	onEvent func(event string, data map[string]any)
+	done    chan struct{}
+	once    sync.Once
 }
 
 func newSidecarClient(spec SidecarSpec) (*sidecarClient, error) {
@@ -131,7 +136,67 @@ func newSidecarClient(spec SidecarSpec) (*sidecarClient, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	return &sidecarClient{cmd: cmd, stdin: stdin, stdout: bufio.NewReader(stdout)}, nil
+	c := &sidecarClient{
+		cmd:     cmd,
+		stdin:   stdin,
+		pending: make(map[int64]chan sidecarResponse),
+		done:    make(chan struct{}),
+	}
+	go c.readLoop(bufio.NewReader(stdout))
+	return c, nil
+}
+
+// readLoop 持续读取 sidecar 的 stdout，路由响应与事件。
+func (c *sidecarClient) readLoop(r *bufio.Reader) {
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			c.failPending(fmt.Sprintf("sidecar stdout closed: %v", err))
+			return
+		}
+		line = strings.TrimSpace(line)
+		if line == "" || !strings.HasPrefix(line, "{") {
+			continue
+		}
+		// 事件行：{"event": "...", "data": {...}}（无 id）
+		var raw map[string]any
+		if json.Unmarshal([]byte(line), &raw) == nil {
+			if ev, ok := raw["event"].(string); ok {
+				if c.onEvent != nil {
+					data, _ := raw["data"].(map[string]any)
+					if data == nil {
+						data = map[string]any{}
+					}
+					c.onEvent(ev, data)
+				}
+				continue
+			}
+		}
+		var resp sidecarResponse
+		if json.Unmarshal([]byte(line), &resp) != nil {
+			continue
+		}
+		c.mu.Lock()
+		if ch, ok := c.pending[resp.ID]; ok {
+			delete(c.pending, resp.ID)
+			ch <- resp
+		}
+		c.mu.Unlock()
+	}
+}
+
+// failPending 在 sidecar 进程异常退出时，让所有等待中的调用返回错误。
+func (c *sidecarClient) failPending(msg string) {
+	c.mu.Lock()
+	for id, ch := range c.pending {
+		delete(c.pending, id)
+		select {
+		case ch <- sidecarResponse{Error: &struct{ Message string `json:"message"` }{Message: msg}}:
+		default:
+		}
+	}
+	c.mu.Unlock()
+	c.once.Do(func() { close(c.done) })
 }
 
 type sidecarResponse struct {
@@ -144,10 +209,12 @@ type sidecarResponse struct {
 
 func (c *sidecarClient) call(method string, params map[string]any) (map[string]any, error) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	c.nextID++
 	id := c.nextID
+	ch := make(chan sidecarResponse, 1)
+	c.pending[id] = ch
+	c.mu.Unlock()
+
 	req, err := json.Marshal(map[string]any{"id": id, "method": method, "params": params})
 	if err != nil {
 		return nil, err
@@ -156,33 +223,22 @@ func (c *sidecarClient) call(method string, params map[string]any) (map[string]a
 		return nil, fmt.Errorf("write sidecar request: %w", err)
 	}
 
-	// 逐行读取直到拿到匹配 id 的 JSON 响应（跳过非 JSON 行，如测试框架输出）。
-	for {
-		line, err := c.stdout.ReadString('\n')
-		if err != nil {
-			return nil, fmt.Errorf("read sidecar response: %w", err)
-		}
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "{") {
-			continue
-		}
-		var resp sidecarResponse
-		if err := json.Unmarshal([]byte(line), &resp); err != nil {
-			continue
-		}
+	select {
+	case resp := <-ch:
 		if resp.Error != nil {
 			return nil, fmt.Errorf("sidecar error: %s", resp.Error.Message)
 		}
-		if resp.ID == id {
-			if resp.Result == nil {
-				resp.Result = map[string]any{}
-			}
-			return resp.Result, nil
+		if resp.Result == nil {
+			resp.Result = map[string]any{}
 		}
+		return resp.Result, nil
+	case <-c.done:
+		return nil, fmt.Errorf("sidecar process closed")
 	}
 }
 
 func (c *sidecarClient) close() {
+	c.once.Do(func() { close(c.done) })
 	if c.stdin != nil {
 		_ = c.stdin.Close()
 	}

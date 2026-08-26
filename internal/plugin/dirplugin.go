@@ -24,6 +24,7 @@ type DirPlugin struct {
 	client   *sidecarClient
 	baseDir  string // 可选：宿主工作区根目录，注入为 YUYU_WORKSPACE 供侧车默认落位
 	logf     func(format string, args ...any)
+	progress func(event string, data map[string]any)
 }
 
 // NewDirPlugin 从目录读取元数据并创建目录插件。目录必须含 plugin.json/.yaml/.yml/.toml 之一。
@@ -37,6 +38,9 @@ func NewDirPlugin(dir string) (*DirPlugin, error) {
 
 // SetBaseDir 设置宿主工作区根目录，注入给 sidecar 作为默认工作目录（YUYU_WORKSPACE）。
 func (p *DirPlugin) SetBaseDir(dir string) { p.baseDir = dir }
+
+// SetProgressHandler 设置 sidecar 进度事件（{"event":...,"data":...}）回调，用于中途播报/实时 diff。
+func (p *DirPlugin) SetProgressHandler(f func(event string, data map[string]any)) { p.progress = f }
 
 // DiscoverPluginDirs 扫描 root 下每个子目录，把含元数据文件的目录解析为目录插件。
 // 不含元数据文件（或解析失败）的目录被跳过，错误收集到返回值第二项供调用方记录。
@@ -164,6 +168,13 @@ func (p *DirPlugin) ensureClient(ctx context.Context) (*sidecarClient, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("start plugin %q entry %q: %w", p.manifest.Name, entryPath, err)
+	}
+	client.onEvent = func(event string, data map[string]any) {
+		if p.progress != nil {
+			p.progress(event, data)
+		} else if p.logf != nil {
+			p.logf("plugin event: %s %v", event, data)
+		}
 	}
 	p.client = client
 	return client, nil

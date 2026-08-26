@@ -1,0 +1,8 @@
+{
+  "name": "yuyu-plugin-code-assistant",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Yuyu Mind 代码助手插件（模块化 sidecar）",
+  "main": "src/index.js",
+  "type": "commonjs"
+}

@@ -653,6 +653,25 @@ function App() {
     }, []);
 
     useEffect(() => {
+        if (!canUseWailsRuntime()) {
+            return;
+        }
+        // 插件进度事件（如 codex 编码 agent 的中途步骤）→ 桌宠简要说一句在干什么。
+        const unsubscribe = EventsOn('plugin:progress', (payload: any) => {
+            if (!payload || payload.event !== 'agent_progress') {
+                return;
+            }
+            const message = payload?.data?.message;
+            if (typeof message === 'string' && message.trim()) {
+                void speakText(message.trim().slice(0, 120));
+            }
+        });
+        return () => {
+            unsubscribe();
+        };
+    }, []);
+
+    useEffect(() => {
         const markActivity = () => {
             lastUserActivityRef.current = Date.now();
         };

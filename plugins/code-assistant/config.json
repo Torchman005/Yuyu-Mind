@@ -1,0 +1,11 @@
+{
+  "agent_command": "codex",
+  "model": "",
+  "sandbox": "workspace-write",
+  "full_auto": true,
+  "dangerous": false,
+  "timeout_ms": 600000,
+  "cwd": "",
+  "ide_command": "code",
+  "extra_args": []
+}

@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "1.0",
+  "name": "code-assistant",
+  "displayName": "代码助手",
+  "description": "用 Codex CLI 在项目里写代码；在 feature 分支上改动，生成 diff 供评审（接受/拒绝），并可一键打开 IDE。",
+  "version": "0.2.0",
+  "author": "Yuyu Mind",
+  "entry": "src/index.js",
+  "runtime": "node",
+  "permissions": ["agent.code", "workspace.read", "workspace.write"],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "agent_command": { "type": "string", "description": "Codex 可执行名，默认 codex" },
+      "model": { "type": "string", "description": "可选：--model，需账号支持；留空用 codex 默认模型" },
+      "sandbox": { "type": "string", "description": "--sandbox：read-only | workspace-write | danger-full-access。仅当 full_auto=false 且 dangerous=false 时生效" },
+      "full_auto": { "type": "boolean", "description": "--approve-for-me 自动批准（隐含 workspace-write 沙箱），默认 true" },
+      "dangerous": { "type": "boolean", "description": "--dangerously-bypass-approvals-and-sandbox 完全绕过审批与沙箱（极危险，默认 false）" },
+      "timeout_ms": { "type": "integer", "description": "单次运行超时毫秒，默认 600000" },
+      "cwd": { "type": "string", "description": "运行目录（也是 -C 工作区根与沙箱作用域）。留空=桌宠工作区；建议设为要改的项目绝对路径" },
+      "ide_command": { "type": "string", "description": "IDE 命令，默认 code" },
+      "extra_args": { "type": "array", "items": { "type": "string" }, "description": "追加到 codex exec 的参数" }
+    }
+  },
+  "actions": [
+    { "name": "show_diff", "description": "查看待评审的代码改动（diff）", "inputSchema": { "type": "object", "properties": {} } },
+    { "name": "accept_changes", "description": "接受 agent 的新代码（合并进基线分支）", "inputSchema": { "type": "object", "properties": {} } },
+    { "name": "reject_changes", "description": "拒绝 agent 的新代码（保留旧代码，丢弃改动分支）", "inputSchema": { "type": "object", "properties": {} } },
+    { "name": "open_in_ide", "description": "在 IDE 中打开文件（input: path）", "inputSchema": { "type": "object", "properties": { "path": { "type": "string" } }, "required": ["path"] } },
+    { "name": "open_workspace", "description": "在 IDE 中打开目录作为工作区（input: dir）", "inputSchema": { "type": "object", "properties": { "dir": { "type": "string" } } } }
+  ],
+  "tools": [
+    {
+      "name": "run_agent",
+      "description": "在项目目录里运行 Codex CLI 写/改代码，改动在 feature 分支上，返回 diff 供用户评审（accept/reject）。当用户想修改或生成代码时使用。",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "task": { "type": "string", "description": "要交给 Codex 的编码任务，如 '在 ./test 下用 create-react-app 初始化项目'" },
+          "cwd": { "type": "string", "description": "Codex 的工作目录（也是沙箱作用域）。通常传任务的工作区目录；留空用插件配置的 cwd" }
+        },
+        "required": ["task"]
+      }
+    }
+  ]
+}

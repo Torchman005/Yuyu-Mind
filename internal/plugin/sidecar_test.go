@@ -81,3 +81,54 @@ func TestSidecarPluginLifecycle(t *testing.T) {
 		t.Fatalf("unexpected result %v", out)
 	}
 }
+
+// runEventSidecar 在被 re-exec 的子进程中扮演 sidecar：收到 invoke_action 时，
+// 先发一个进度事件行，再回正常响应，用于验证事件路由。
+func runEventSidecar() {
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		var req struct {
+			ID     int64  `json:"id"`
+			Method string `json:"method"`
+		}
+		if err := json.Unmarshal(scanner.Bytes(), &req); err != nil {
+			continue
+		}
+		if req.Method == "invoke_action" {
+			fmt.Fprintln(os.Stdout, `{"event":"progress","data":{"message":"working"}}`)
+			fmt.Fprintln(os.Stdout, fmt.Sprintf(`{"id":%d,"result":{"ok":true}}`, req.ID))
+		}
+	}
+	os.Exit(0)
+}
+
+func TestSidecarClientEvents(t *testing.T) {
+	if os.Getenv("YUYU_SIDECAR_EVT") == "1" {
+		runEventSidecar()
+		return
+	}
+	client, err := newSidecarClient(SidecarSpec{
+		Name:    "evt",
+		Command: os.Args[0],
+		Args:    []string{"-test.run=TestSidecarClientEvents"},
+		Env:     []string{"YUYU_SIDECAR_EVT=1"},
+	})
+	if err != nil {
+		t.Fatalf("new client: %v", err)
+	}
+	defer client.close()
+
+	var got []string
+	client.onEvent = func(event string, data map[string]any) { got = append(got, event) }
+
+	res, err := client.call("invoke_action", map[string]any{})
+	if err != nil {
+		t.Fatalf("call: %v", err)
+	}
+	if res["ok"] != true {
+		t.Fatalf("unexpected result %v", res)
+	}
+	if len(got) != 1 || got[0] != "progress" {
+		t.Fatalf("expected one progress event, got %v", got)
+	}
+}

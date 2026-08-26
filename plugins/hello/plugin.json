@@ -1,0 +1,31 @@
+{
+  "schemaVersion": "1.0",
+  "name": "hello",
+  "displayName": "你好插件",
+  "description": "演示目录插件的即插即用：一个动作 + 一个工具。",
+  "version": "0.1.0",
+  "author": "Yuyu Mind",
+  "entry": "main.js",
+  "runtime": "node",
+  "permissions": ["system.read"],
+  "configSchema": {
+    "type": "object",
+    "properties": {
+      "name": { "type": "string", "description": "插件自我介绍的称呼" }
+    }
+  },
+  "actions": [
+    { "name": "hello", "description": "返回一句问候", "inputSchema": {} }
+  ],
+  "tools": [
+    {
+      "name": "shout",
+      "description": "把文本转成大写并返回",
+      "inputSchema": {
+        "type": "object",
+        "properties": { "text": { "type": "string" } },
+        "required": ["text"]
+      }
+    }
+  ]
+}
