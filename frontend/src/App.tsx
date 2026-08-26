@@ -502,6 +502,9 @@ function App() {
     const [pluginResult, setPluginResult] = useState('');
     const [pluginActionInput, setPluginActionInput] = useState('');
     const [pluginDetail, setPluginDetail] = useState<app.PluginInfo | null>(null);
+    const [reviewDiff, setReviewDiff] = useState('');
+    const [reviewBranch, setReviewBranch] = useState('');
+    const [reviewLoading, setReviewLoading] = useState(false);
     const [tasks, setTasks] = useState<db.AgentTask[]>([]);
     const [tasksOpen, setTasksOpen] = useState(false);
     const [taskAnswer, setTaskAnswer] = useState<Record<string, string>>({});
@@ -575,6 +578,11 @@ function App() {
     const streamCheckInFlightRef = useRef<Promise<boolean> | null>(null);
     // 持有最新 handleChatEvent（避免 EventsOn 一次性注册导致的闭包过期）。
     const chatEventHandlerRef = useRef<(event: ChatStreamEvent) => void>(() => undefined);
+    // 持有最新 speakText（供 plugin:progress / 任务完成等一次性订阅调用，避免闭包过期）。
+    const speakTextRef = useRef<(text: string) => void>(() => undefined);
+    // 任务状态跟踪：用于在任务从「进行中」变为「完成/失败」时播报一句。
+    const taskStatusRef = useRef<Record<string, string>>({});
+    const tasksInitializedRef = useRef(false);
 
     const assistantLine = useMemo(() => {
         if (isSending || voiceStatus === 'thinking') {
@@ -630,6 +638,7 @@ function App() {
     // 每次渲染后把最新的 handleChatEvent 写入 ref，供一次性注册的 chat:event 订阅调用（避免闭包过期）。
     useEffect(() => {
         chatEventHandlerRef.current = handleChatEvent;
+        speakTextRef.current = speakText;
     });
 
     useEffect(() => {
@@ -656,14 +665,16 @@ function App() {
         if (!canUseWailsRuntime()) {
             return;
         }
-        // 插件进度事件（如 codex 编码 agent 的中途步骤）→ 桌宠简要说一句在干什么。
+        // 插件进度事件（如 codex 编码 agent 的中途步骤）→ 桌宠简要说一句，并显示到对话里。
         const unsubscribe = EventsOn('plugin:progress', (payload: any) => {
             if (!payload || payload.event !== 'agent_progress') {
                 return;
             }
             const message = payload?.data?.message;
             if (typeof message === 'string' && message.trim()) {
-                void speakText(message.trim().slice(0, 120));
+                const text = message.trim().slice(0, 120);
+                speakTextRef.current(text);
+                appendConversationLine(text);
             }
         });
         return () => {
@@ -2459,6 +2470,61 @@ function App() {
         }
     }
 
+    // 把一条文本作为「助手消息」追加到当前对话（供任务过程/结果在聊天里可见）。
+    function appendConversationLine(text: string) {
+        if (!text.trim()) return;
+        setMessages((prev) => [
+            ...prev,
+            {
+                id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+                role: 'assistant',
+                content: text,
+                emotion: 'neutral',
+                mood: 'calm',
+                energy: 0.5,
+                valence: 0,
+                dominance: 0,
+                gesture: 'none',
+                hand: 'none',
+                createdAt: new Date().toISOString(),
+            } as app.CompanionMessage,
+        ]);
+    }
+
+    function hasReviewActions(plugin: app.PluginInfo | null): boolean {
+        if (!plugin) return false;
+        const names = (plugin.actions ?? []).map((a) => String(a.name));
+        return names.includes('show_diff') && names.includes('accept_changes') && names.includes('reject_changes');
+    }
+
+    async function loadReviewDiff(pluginName: string) {
+        setReviewLoading(true);
+        try {
+            const result = await InvokePluginAction(pluginName, 'show_diff', {});
+            const parsed = (result && typeof result === 'object') ? result as Record<string, any> : {};
+            setReviewDiff(String(parsed.diff ?? ''));
+            setReviewBranch(String(parsed.branch ?? ''));
+        } catch (reason) {
+            setError(String(reason));
+        } finally {
+            setReviewLoading(false);
+        }
+    }
+
+    async function reviewDecision(pluginName: string, action: 'accept_changes' | 'reject_changes') {
+        try {
+            const result = await InvokePluginAction(pluginName, action, {});
+            const text = action === 'accept_changes' ? '已接受新代码，合并进基线分支。' : '已保留旧代码，丢弃改动分支。';
+            setReviewDiff('');
+            setReviewBranch('');
+            appendConversationLine(text);
+            void speakText(text);
+            setPluginResult(JSON.stringify(result, null, 2));
+        } catch (reason) {
+            setError(String(reason));
+        }
+    }
+
     async function showPluginConfig(pluginName: string) {
         setPluginResult('');
         try {
@@ -2492,7 +2558,30 @@ function App() {
 
     function refreshTasks() {
         ListAgentTasks('', 50)
-            .then((items) => setTasks(items ?? []))
+            .then((items) => {
+                const list = items ?? [];
+                if (tasksInitializedRef.current) {
+                    for (const task of list) {
+                        const prev = taskStatusRef.current[task.id];
+                        if ((task.status === 'completed' || task.status === 'failed') && prev && prev !== 'completed' && prev !== 'failed') {
+                            const text = task.status === 'completed'
+                                ? `任务完成了：${task.title || task.goal || ''}`
+                                : `任务失败了：${task.error || task.title || task.goal || ''}`;
+                            if (text.trim()) {
+                                const line = text.trim().slice(0, 120);
+                                speakTextRef.current(line);
+                                appendConversationLine(line);
+                            }
+                        }
+                    }
+                } else {
+                    tasksInitializedRef.current = true;
+                }
+                for (const task of list) {
+                    taskStatusRef.current[task.id] = task.status;
+                }
+                setTasks(list);
+            })
             .catch((reason: unknown) => setError(String(reason)));
     }
 
@@ -3178,6 +3267,24 @@ function App() {
                                                     ))}
                                                 </div>
                                                 <p className="plugin-hint">这些能力已注册给对话模型，可在聊天里用自然语言触发（如「调用 {String(pluginDetail.tools?.[0]?.name ?? '')}」）。</p>
+                                            </>
+                                        )}
+                                        {hasReviewActions(pluginDetail) && (
+                                            <>
+                                                <h3 className="web-view-sub">代码评审</h3>
+                                                <p className="plugin-hint">codex 的改动在 <b>{reviewBranch || 'feature 分支'}</b> 上。核对增删后选择接受新代码，或保留旧代码。</p>
+                                                <div className="plugin-card-actions">
+                                                    <button type="button" onClick={() => void loadReviewDiff(pluginDetail.name)}>{reviewLoading ? '加载中…' : '查看改动'}</button>
+                                                    <button type="button" className="rev-accept" onClick={() => void reviewDecision(pluginDetail.name, 'accept_changes')}>接受新代码</button>
+                                                    <button type="button" className="rev-reject" onClick={() => void reviewDecision(pluginDetail.name, 'reject_changes')}>保留旧代码</button>
+                                                </div>
+                                                {reviewDiff && (
+                                                    <div className="review-diff">
+                                                        {reviewDiff.split('\n').map((line, i) => (
+                                                            <div key={i} className={`diff-line ${line.startsWith('+') && !line.startsWith('+++') ? 'add' : line.startsWith('-') && !line.startsWith('---') ? 'del' : (line.startsWith('@@') || line.startsWith('diff ') || line.startsWith('index ')) ? 'meta' : ''}`}>{line || ' '}</div>
+                                                        ))}
+                                                    </div>
+                                                )}
                                             </>
                                         )}
                                         <p className="plugin-hint">启用后，在聊天里用自然语言触发「{pluginDetail.displayName || pluginDetail.name}」的动作即可（如「{pluginDetail.actions?.[0]?.name || 'list'}」）。</p>

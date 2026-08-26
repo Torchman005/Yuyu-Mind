@@ -154,3 +154,18 @@ func TestTurnGateEvaluate(t *testing.T) {
 		t.Fatalf("expected statement to get reply, got score=%f", statement.Score)
 	}
 }
+
+func TestParsePlannerDecisionWindowsPath(t *testing.T) {
+	// 模型常把 Windows 路径原样写进 JSON（含 \i \A 等非法转义），应被修正后仍能解析。
+	raw := `{"action":"task","task":{"goal":"init react","workspace":"D:\itJinYu_toolkit\AI-pet"}}`
+	decision, err := parsePlannerDecision(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if decision.Action != "task" || decision.Task == nil || decision.Task.Goal != "init react" {
+		t.Fatalf("unexpected decision: %+v", decision)
+	}
+	if decision.Task.Workspace != "D:\\itJinYu_toolkit\\AI-pet" {
+		t.Fatalf("workspace not fixed: %q", decision.Task.Workspace)
+	}
+}

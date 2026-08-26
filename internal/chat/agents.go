@@ -110,6 +110,7 @@ Rules:
 - Use memory only when the reply clearly depends on past facts, preferences, shared experiences, commitments, task progress, or profile information.
 - Never include final reply text. The Replyer will write the visible message.
 - target_message_id must be the user message you are responding to.
+- In JSON string values, write Windows file paths with FORWARD slashes (e.g. "D:/foo/bar"), never raw backslashes — backslash is a JSON escape character and will break parsing.
 - To call a tool, use action "tool" and include exactly one "tool_calls" entry per call: {"name": "<tool_name>", "arguments": {<args>}}. Use only names from "Available tools".
 - "task" only when the user asks to produce or modify something concrete (files, code, documents). Otherwise prefer "reply".
 - Coding/modifying code: if a coding-agent tool among the available tools is present (%s), do NOT call it via action "tool" (that runs synchronously and can block the conversation for minutes). Instead return action "task"; set the task object's "title", "goal", "workspace" (the target project directory if the user names one; otherwise leave the default workspace), concrete "instructions" (explicitly say "Immediately use the coding agent tool to do the coding work in the workspace; do NOT create or edit files yourself, and do NOT waste turns exploring with list_files/read_file"), and set "allowed_actions" to ["%s","list_files","read_file"] — do NOT include "write_file"/"execute_command", so the coding agent must do the actual file writing. The coding-agent runs in the background; you just acknowledge in your reply.
@@ -178,7 +179,8 @@ Choose values that match the reply you are about to ask the Replyer to write, no
 // parsePlannerDecision 解析并归一化 Planner 的 JSON 输出（纯函数，便于测试）。
 func parsePlannerDecision(content string) (PlannerDecision, error) {
 	var decision PlannerDecision
-	if err := json.Unmarshal([]byte(extractJSONObject(content)), &decision); err != nil {
+	raw := fixInvalidJSONEscapes(extractJSONObject(content))
+	if err := json.Unmarshal([]byte(raw), &decision); err != nil {
 		return PlannerDecision{}, fmt.Errorf("parse planner JSON: %w", err)
 	}
 	decision.Emotion = NormalizeEmotion(decision.Emotion)
@@ -189,6 +191,35 @@ func parsePlannerDecision(content string) (PlannerDecision, error) {
 	decision.Valence = ClampValence(decision.Valence)
 	decision.Dominance = ClampDominance(decision.Dominance)
 	return decision, nil
+}
+
+// fixInvalidJSONEscapes 把不是合法 JSON 转义的反斜杠转成字面反斜杠（\\\\）。
+// 场景：模型在 JSON 字符串里写了 Windows 路径（如 D:\itJinYu\toolkit），
+// 其中 \i、\A、\p 等都是非法转义，会导致 json.Unmarshal 报 "invalid character ... in string escape code"。
+// 合法转义（\\ \" \/ \b \f \n \r \t \u）保持不变。
+func fixInvalidJSONEscapes(s string) string {
+	if !strings.Contains(s, `\`) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); i++ {
+		if s[i] == '\\' && i+1 < len(s) {
+			next := s[i+1]
+			switch next {
+			case '\\', '"', '/', 'b', 'f', 'n', 'r', 't', 'u':
+				b.WriteByte('\\')
+				b.WriteByte(next)
+				i++
+				continue
+			default:
+				b.WriteString(`\\`)
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
 }
 
 type ReplyerAgent struct {

@@ -1196,3 +1196,22 @@ h1 {
     white-space: pre-wrap;
     word-break: break-word;
 }
+
+/* 代码评审面板 */
+.app-shell.web .plugin-card-actions .rev-accept { background: rgba(52,211,153,.14); border-color: #34d399; color: #34d399; }
+.app-shell.web .plugin-card-actions .rev-reject { background: rgba(248,113,113,.14); border-color: #f87171; color: #f87171; }
+.app-shell.web .review-diff {
+    font-family: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    max-height: 46vh;
+    overflow: auto;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+.app-shell.web .review-diff .diff-line { display: block; white-space: pre; }
+.app-shell.web .review-diff .diff-line.add { color: #34d399; background: rgba(52,211,153,.10); }
+.app-shell.web .review-diff .diff-line.del { color: #f87171; background: rgba(248,113,113,.10); }
+.app-shell.web .review-diff .diff-line.meta { color: var(--text-2); }
