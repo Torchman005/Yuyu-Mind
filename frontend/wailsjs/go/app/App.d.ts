@@ -94,6 +94,8 @@ export function SetLogLevel(arg1:string):Promise<void>;
 
 export function SetPluginConfig(arg1:string,arg2:Record<string, any>):Promise<void>;
 
+export function SetWorkspaceRoot(arg1:string):Promise<void>;
+
 export function StartRealtimeSpeech(arg1:string):Promise<app.SpeechStreamStart>;
 
 export function StreamChat(arg1:chat.ChatRequest):Promise<void>;

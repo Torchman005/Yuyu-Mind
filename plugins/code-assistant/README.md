@@ -1,6 +1,6 @@
 # 代码助手插件（code-assistant）
 
-通过 **Codex CLI** 在项目里写代码，改动发生在 **git feature 分支**上，生成 diff 供评审：可**接受新代码**或**拒绝（保留旧代码）**；并支持一键在 IDE 打开文件/工作区。目录即插件，丢进 `plugins/` 点「重新加载」即可。
+通过 **Codex CLI** 在项目里写代码。默认 `live` 评审模式会把改动实时保留为 VS Code 源代码管理中的未暂存变更，你可以按文件、按块甚至按选中行接受或拒绝；桌宠后台任务在代码生成结束时即为完成，评审是完成后的后处理动作。目录即插件，丢进 `plugins/` 点「重新加载」即可。
 
 ## 目录结构（模块化）
 
@@ -13,7 +13,7 @@ plugins/code-assistant/
 └── src/
     ├── index.js    # 入口：JSON-RPC 分发（invoke_action / invoke_tool）
     ├── codex.js    # 运行 Codex，流式输出 + 发射进度事件
-    └── git.js      # git 评审：feature 分支、diff、接受/拒绝
+    └── git.js      # git 评审：live 工作区、diff、整轮接受/拒绝
 ```
 
 > 复杂插件就这样拆分：入口只做分发，逻辑放到 `src/` 下的多个模块，通过 Node `require` 相互引用，不必全写进一个 `main` 文件。
@@ -22,22 +22,22 @@ plugins/code-assistant/
 
 | 能力 | 类型 | 说明 |
 |---|---|---|
-| `run_agent` | 工具（LLM 触发） | 在 feature 分支上运行 codex 写代码，返回 diff + 进度步骤 |
+| `run_agent` | 工具（LLM 触发） | 运行 codex 写代码，默认实时写入当前工作区并返回 diff + 进度步骤 |
 | `show_diff` | 动作 | 查看待评审的 diff |
 | `list_changes` | 动作 | 返回待评审文件列表（新增/修改/删除/重命名） |
-| `open_changes` | 动作 | 在 VS Code 打开源代码管理视图，并为变更文件打开 diff 标签 |
-| `accept_changes` | 动作 | 接受新代码（合并进基线分支） |
-| `reject_changes` | 动作 | 拒绝新代码（丢弃 feature 分支，保留旧代码） |
+| `open_changes` | 动作 | 打开 VS Code 当前评审工作区与变更文件 |
+| `accept_changes` | 动作 | 接受新代码（live 模式保留未提交改动；branch 模式合并分支） |
+| `reject_changes` | 动作 | 拒绝新代码（回滚到本轮开始前的基线） |
 | `open_workspace` | 动作 | 在 IDE 打开当前评审工作区 |
 
 ## 评审式改动工作流
 
 1. 聊天里让 Yuyu「帮我改代码」→ Planner 发起后台任务 → Worker 调用 `run_agent`。
-2. 插件把项目初始化成 git 仓库（如还不是），切到 `yuyu/agent-*` 分支，跑 codex。
-3. 跑完把结果重置成「相对基线的未提交/已暂存改动」，用 `git diff --cached HEAD` 生成 diff，返回给桌宠。
+2. 插件把项目初始化成 git 仓库（如还不是），记录本轮开始时的 `HEAD` 作为基线。
+3. 默认 `live` 模式会先打开 VS Code 工作区，然后让 codex 直接在当前分支写文件；VS Code Source Control 会随着文件落盘实时刷新。
 4. 你在**桌宠日志/任务页**看进度（插件会中途发射 `agent_progress` 事件，宿主写入日志并发 `plugin:progress` Wails 事件）。
-5. 在 IDE（VS Code 等）里用 git 源管理器看每一步的增删；或点插件页的 `list_changes` / `show_diff` 看清单与 diff。
-6. 决定：点 `accept_changes`（合并新代码）或 `reject_changes`（保留旧代码）。
+5. 在 VS Code 源代码管理里点开文件，使用 VS Code 原生的“保留/还原所选范围”完成块级评审；或点任务页里的 `list_changes` / `show_diff` 看清单与 diff。
+6. 任务会在 Codex 生成结束时完成；之后可点 `accept_changes` 标记整轮接受，或点 `reject_changes` 回滚到本轮开始前。需要旧版 feature 分支合并流程时，把 `review_mode` 设为 `branch`。
 
 ## 配置项（`config.json`）
 
@@ -51,24 +51,38 @@ plugins/code-assistant/
 | `timeout_ms` | `600000` | 单次运行超时（毫秒） |
 | `cwd` | `""` | 运行目录（= `-C` 工作区根与沙箱作用域）。留空=桌宠工作区；建议设为项目目录 |
 | `ide_command` | `code` | IDE 命令 |
+| `review_mode` | `live` | `live`=当前分支未暂存实时评审；`branch`=旧版 feature 分支整轮评审 |
+| `auto_open_vscode` | `true` | `live` 模式开始运行时自动打开 VS Code 工作区 |
+| `allow_dirty_review` | `false` | 是否允许目标项目带已有未提交改动时运行。默认禁止，避免混入你的手动改动 |
+| `review_poll_ms` | `2000` | 运行中检查 git 变更并向桌宠日志/任务进度上报的间隔 |
+| `incremental_review` | `true` | 给 Codex 注入小步落盘要求，让 VS Code 尽量逐块看到未暂存变更 |
+| `codex_json` | `true` | 使用 `codex exec --json` 解析补丁/工具事件，捕捉 apply/write 时机并刷新变更状态 |
 | `extra_args` | `[]` | 追加到 `codex exec` 的参数 |
 
 > Windows 上 codex 是 npm 的 `.cmd` shim，插件会自动定位 `node .../codex.js` 直接用 node 跑（绕开 shell 引号问题）。
 
 ## 在 VS Code 中查看改动
 
-codex 的改动会保留为「相对基线的未提交/已暂存改动」，所以只要把项目打开在 **VS Code** 里就能直接看到增删：
+codex 的改动默认会保留为「相对基线的未暂存改动」，所以只要把项目打开在 **VS Code** 里就能直接看到增删：
 
-1. 点插件页的 **open_workspace**（或 `open_in_ide`）→ 在当前评审目录打开 VS Code。
-2. 在 VS Code 打开 **源代码管理**（`Ctrl+Shift+G`）——能看到改动的文件。
-3. 点某个文件→「Diff」视图显示 `+` 新增 / `-` 删除。
-4. 想更接近常用 agent 插件的直观评审体验，在后台任务里点 **在 VS Code 查看**：插件会用 VS Code CLI 为前几个变更文件打开左右对比 diff 标签。可传 `{"limit": 20}` 打开更多，或传 `{"files":["src/App.tsx"]}` 只看指定文件。若本轮新建的 React/Vite 子项目自带 `.git`，插件会临时把这个新 `.git` 移到系统临时目录，让父仓库按普通目录显示内部文件增删；已有嵌套仓库不会被处理。
-5. 决定：**接受**→在桌宠评审面板点「接受新代码」；**拒绝**→点「保留旧代码」。
-   （也可在 VS Code 里用 git 操作：暂存+提交=接受，放弃更改=拒绝。）
+1. `run_agent` 开始后会自动执行 `code --reuse-window <cwd>` 打开当前评审目录。
+2. 在 VS Code 打开 **源代码管理**（`Ctrl+Shift+G`），文件会在 codex 写入磁盘时持续出现。
+3. 点某个文件进入 diff 视图，`+`/`-` 就是本轮 agent 的改动。
+4. 对单个块或选中行，使用 VS Code diff 工具栏/右键菜单里的保留、暂存或还原所选范围。保留就是接受该块，还原就是拒绝该块。
+5. 桌宠任务页的 **在 VS Code 查看** 会重新聚焦工作区并打开前几个变更文件；它不再用临时 `code --diff` 伪造对比页，因为那种页面不能可靠执行 hunk 级接受/拒绝。
+6. 最后：任务状态不等待评审；在桌宠里点 **接受新代码** 只是结束本轮评审并保留当前未提交改动；点 **保留旧代码** 会整轮回滚到开始前。也可以完全在 VS Code 里暂存、提交或放弃更改。
 
-> 目录不是 git 仓库时会在 `run_agent` 时自动 `git init`；改动都在 `yuyu/agent-*` 分支上，开始评审前会用基线分支做 `git diff --cached` 生成 diff。
+实时显示的边界：VS Code 只能显示已经写入磁盘的文件变更，不能显示模型还在推理但尚未 apply/write 的代码。插件默认会启用 `codex exec --json` 并要求 Codex 小步落盘；如果 Codex CLI 仍选择最后一次性应用大补丁，VS Code 也只能在那次补丁落盘后显示。
 
-实现要点：不依赖 VS Code 私有扩展 API，而是复用标准 git 状态。`list_changes` 读取 `git diff --name-status -M -z HEAD`；`open_changes` 把 `HEAD:<file>` 写到临时基线文件，再执行 `code --diff <base> <worktree>`，因此新增、修改、删除、重命名都能以普通 VS Code diff 标签打开。目录型变更不会再伪装成文件 diff，避免 VS Code 打开后空白。
+如果 VS Code 打开了但没有变更，先看桌宠日志里的 `VS Code 实时评审：N 个文件有未暂存改动` 和 `Codex 正在应用代码改动`：
+
+- `cwd` 必须等于 VS Code 打开的项目根。
+- `N=0` 说明 Codex 还没把文件写到磁盘，或实际任务没有产生文件改动。
+- `N>0` 但 VS Code 没显示，通常是 VS Code 打开的不是日志里的 `cwd`，或源代码管理视图当前选中了另一个仓库。
+
+> 目录不是 git 仓库时会在 `run_agent` 时自动 `git init` 并创建一个空基线提交。为保护手动改动，默认要求目标项目在运行前没有未提交变更。
+
+实现要点：不依赖 VS Code 私有扩展 API，而是复用标准 git 工作区状态。`list_changes` 读取 `git diff --name-status -M -z HEAD`；`show_diff` 读取 `git diff HEAD`；`open_changes` 聚焦真实工作区，让 VS Code SCM 自己提供文件级、块级和选区级操作。目录型变更不会再伪装成文件 diff，避免 VS Code 打开后空白。
 
 ## 手动测试
 

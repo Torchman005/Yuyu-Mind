@@ -2,7 +2,7 @@
   "schemaVersion": "1.0",
   "name": "code-assistant",
   "displayName": "代码助手",
-  "description": "用 Codex CLI 在项目里写代码；在 feature 分支上改动，生成 diff 供评审（接受/拒绝），并可一键打开 IDE。",
+  "description": "用 Codex CLI 在项目里写代码；默认把改动实时保留在 VS Code 源代码管理里，支持按文件/块评审。",
   "version": "0.2.0",
   "author": "Yuyu Mind",
   "entry": "src/index.js",
@@ -19,6 +19,12 @@
       "timeout_ms": { "type": "integer", "description": "单次运行超时毫秒，默认 600000" },
       "cwd": { "type": "string", "description": "运行目录（也是 -C 工作区根与沙箱作用域）。留空=桌宠工作区；建议设为要改的项目绝对路径" },
       "ide_command": { "type": "string", "description": "IDE 命令，默认 code" },
+      "review_mode": { "type": "string", "description": "评审模式：live=当前分支未暂存实时评审（默认）；branch=旧版 feature 分支整轮评审" },
+      "auto_open_vscode": { "type": "boolean", "description": "live 模式开始运行时自动打开 VS Code 工作区，默认 true" },
+      "allow_dirty_review": { "type": "boolean", "description": "允许目标项目带已有未提交改动时运行。默认 false，避免混入手动改动" },
+      "review_poll_ms": { "type": "integer", "description": "运行中检查 git 变更并上报进度的间隔毫秒，默认 2000" },
+      "incremental_review": { "type": "boolean", "description": "给 Codex 注入小步落盘要求，让 VS Code 尽量逐块看到未暂存变更，默认 true" },
+      "codex_json": { "type": "boolean", "description": "使用 codex exec --json 解析补丁/工具事件并刷新变更状态，默认 true" },
       "extra_args": { "type": "array", "items": { "type": "string" }, "description": "追加到 codex exec 的参数" }
     }
   },
@@ -27,7 +33,7 @@
     { "name": "list_changes", "description": "列出待评审的变更文件及状态", "inputSchema": { "type": "object", "properties": {} } },
     {
       "name": "open_changes",
-      "description": "在 VS Code 打开源代码管理视图，并为变更文件打开 diff 标签",
+      "description": "在 VS Code 打开当前评审工作区与变更文件；live 模式下请在源代码管理里逐块评审",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -36,14 +42,14 @@
         }
       }
     },
-    { "name": "accept_changes", "description": "接受 agent 的新代码（合并进基线分支）", "inputSchema": { "type": "object", "properties": {} } },
-    { "name": "reject_changes", "description": "拒绝 agent 的新代码（保留旧代码，丢弃改动分支）", "inputSchema": { "type": "object", "properties": {} } },
+    { "name": "accept_changes", "description": "接受 agent 的新代码（live 模式保留当前未提交改动；branch 模式合并分支）", "inputSchema": { "type": "object", "properties": {} } },
+    { "name": "reject_changes", "description": "拒绝 agent 的新代码（回滚到本轮开始前的基线）", "inputSchema": { "type": "object", "properties": {} } },
     { "name": "open_workspace", "description": "在 IDE 中打开目录作为工作区（input: dir）", "inputSchema": { "type": "object", "properties": { "dir": { "type": "string" } } } }
   ],
   "tools": [
     {
       "name": "run_agent",
-      "description": "在项目目录里运行 Codex CLI 写/改代码，改动在 feature 分支上，返回 diff 供用户评审（accept/reject）。当用户想修改或生成代码时使用。",
+      "description": "在项目目录里运行 Codex CLI 写/改代码。默认 live 模式：改动实时出现在 VS Code 源代码管理里，用户可按文件/块接受或拒绝；当用户想修改或生成代码时使用。",
       "inputSchema": {
         "type": "object",
         "properties": {

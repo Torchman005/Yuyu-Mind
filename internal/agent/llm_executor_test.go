@@ -147,7 +147,7 @@ func TestExecuteWorkerToolCalls(t *testing.T) {
 		},
 	}
 
-	msgs, err := executeWorkerToolCalls(context.Background(), &fakeRuntime{}, msg, tools)
+	msgs, err := executeWorkerToolCalls(context.Background(), &fakeRuntime{}, msg, tools, "")
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -159,6 +159,23 @@ func TestExecuteWorkerToolCalls(t *testing.T) {
 	}
 	if !strings.Contains(msgs[2].Content, "not allowed") {
 		t.Fatalf("expected not-allowed error, got %q", msgs[2].Content)
+	}
+}
+
+func TestArgumentsWithWorkspaceInjectsRunAgentCWD(t *testing.T) {
+	got := argumentsWithWorkspace("run_agent", `{"task":"edit"}`, `D:\repo`)
+	if !strings.Contains(got, `"cwd":"D:\\repo"`) {
+		t.Fatalf("expected workspace cwd injection, got %s", got)
+	}
+
+	kept := argumentsWithWorkspace("run_agent", `{"task":"edit","cwd":"D:\\other"}`, `D:\repo`)
+	if !strings.Contains(kept, `"cwd":"D:\\other"`) {
+		t.Fatalf("expected explicit cwd to be preserved, got %s", kept)
+	}
+
+	otherTool := argumentsWithWorkspace("read_file", `{"path":"a.txt"}`, `D:\repo`)
+	if otherTool != `{"path":"a.txt"}` {
+		t.Fatalf("expected non-run_agent args untouched, got %s", otherTool)
 	}
 }
 
@@ -186,7 +203,7 @@ func TestExtractCodeReviewFromRunAgentResult(t *testing.T) {
 	}
 }
 
-func TestLLMExecutorMarksCodeReviewTaskResult(t *testing.T) {
+func TestLLMExecutorCompletesCodeReviewTaskResult(t *testing.T) {
 	tools := []tool.BaseTool{&fakeTool{name: "run_agent", out: `{"ok":true,"cwd":"C:\\repo","branch":"yuyu/agent-2","files":[{"path":"main.go","kind":"modified"}],"diff":"diff --git a/main.go b/main.go"}`}}
 	model := &scriptedToolCallingModel{
 		replies: []*schema.Message{
@@ -209,12 +226,15 @@ func TestLLMExecutorMarksCodeReviewTaskResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !result.NeedReview {
-		t.Fatalf("expected NeedReview")
+	if result.NeedReview {
+		t.Fatalf("review should not block task completion")
 	}
 	review, ok := result.Metadata["code_review"].(map[string]any)
 	if !ok || review["branch"] != "yuyu/agent-2" {
 		t.Fatalf("unexpected metadata: %#v", result.Metadata)
+	}
+	if result.Metadata["review_pending"] != true {
+		t.Fatalf("expected review_pending metadata, got %#v", result.Metadata)
 	}
 }
 

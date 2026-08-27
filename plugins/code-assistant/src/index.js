@@ -70,15 +70,36 @@ function reviewFromInput(input) {
   return git.currentReview() || git.restoreReview(input);
 }
 
+function reviewMode() {
+  const raw = String(config.review_mode || config.reviewMode || 'live').trim().toLowerCase();
+  return raw === 'branch' ? 'branch' : 'live';
+}
+
+function selectedFileSet(files) {
+  return new Set((Array.isArray(files) ? files : []).map((file) => {
+    if (file && typeof file === 'object') return String(file.path || '').replace(/\\/g, '/');
+    return String(file || '').replace(/\\/g, '/');
+  }).filter(Boolean));
+}
+
 async function handleTool(name, args) {
   if (name !== 'run_agent') throw new Error('unknown tool ' + name);
   const task = args.task || args.prompt || '';
   if (!task) throw new Error('task is required');
   const cwd = String(args.cwd || config.cwd || workspace);
 
-  // 在 feature 分支上跑 codex，改完生成 diff 供评审。
-  const review = git.beginReview(cwd);
-  const res = await codex.runCodex(task, cwd, config);
+  // live 模式直接在当前工作区保留未暂存改动，VS Code 可实时显示并支持 hunk 级还原。
+  // branch 模式保留旧的 feature 分支整轮评审流程。
+  const review = git.beginReview(cwd, { mode: reviewMode(), allowDirty: Boolean(config.allow_dirty_review) });
+  if (review.mode === 'live' && config.auto_open_vscode !== false) {
+    spawnIde(['--reuse-window', cwd]);
+  }
+  const res = await codex.runCodex(task, cwd, config, {
+    reviewStatus: () => {
+      const files = git.reviewFiles(cwd).map(compactChange);
+      return { cwd, mode: review.mode, count: files.length, files: files.slice(0, 20) };
+    },
+  });
   if (res.err) {
     return JSON.stringify({
       ok: false,
@@ -87,14 +108,16 @@ async function handleTool(name, args) {
       note: res.err.code === 'ETIMEOUT' ? 'codex 运行超时' : String(res.err.message || res.err),
       output: truncate((res.stdout || '') + '\n' + (res.stderr || ''), 8000),
       steps: res.steps,
+      mode: review.mode,
     });
   }
-  const absorbedNestedRepos = git.stageReview(cwd) || [];
+  const absorbedNestedRepos = git.prepareReviewChanges(cwd) || [];
   const diff = git.diff(cwd, review.baseBranch, review.branch);
   const files = git.reviewFiles(cwd).map(compactChange);
   return JSON.stringify({
     ok: true,
     cwd,
+    mode: review.mode,
     baseBranch: review.baseBranch,
     baseCommit: review.baseCommit,
     branch: review.branch,
@@ -136,6 +159,31 @@ async function handleAction(name, input) {
     const rev = reviewFromInput(input);
     if (!rev) return { ok: false, error: '暂无待评审的改动' };
     const absorbedNestedRepos = git.absorbReviewNestedGitRepos(rev.cwd) || [];
+    if (rev.mode !== 'branch') {
+      const files = git.reviewFiles(rev.cwd);
+      const limit = Math.max(1, Math.min(Number(input.limit || 8), 20));
+      const selectedPaths = selectedFileSet(input.files);
+      const selected = selectedPaths.size
+        ? files.filter((file) => selectedPaths.has(String(file.path).replace(/\\/g, '/')))
+        : files.slice(0, limit);
+      const commands = [runIde(['--reuse-window', rev.cwd], rev.cwd)];
+      for (const file of selected) {
+        if (!file.directory) commands.push(runIde(['--reuse-window', path.resolve(rev.cwd, file.path)], rev.cwd));
+      }
+      return {
+        ok: true,
+        cwd: rev.cwd,
+        mode: rev.mode,
+        opened: selected.filter((file) => !file.directory).length,
+        openedDirectories: selected.filter((file) => file.directory).length,
+        total: files.length,
+        files: selected.map(compactChange),
+        absorbedNestedRepos,
+        note: '已打开 VS Code 工作区。请在源代码管理视图中点开变更文件，使用 VS Code 的保留/还原所选范围来逐块评审。',
+        command: config.ide_command || 'code',
+        commands,
+      };
+    }
     const files = Array.isArray(input.files) ? input.files : [];
     const limit = Math.max(1, Math.min(Number(input.limit || 8), 20));
     let pairs = git.diffPairs(rev.cwd, files).slice(0, limit);

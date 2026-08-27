@@ -202,3 +202,5 @@
 - [ ] 音色复刻训练（用户本机，GPT-SoVITS）：按 `docs/GPT-SOVITS-GUIDE.md` 训练并启动 API 后，在 `config.json` 设 `speech.provider=gpt_sovits` + 参考音频路径。
 - [ ] 情绪系统 v2.1（可选）：语音 VAD 实时推断（音频连续情绪，而非仅文本/LLM）；直接接入 `@soullink-emotion/live2d-pixi` SDK 替换自研合成层。
 - [ ] 本地端到端验证（`wails dev`）：Planner 稳定性、Live2D 情绪、任务执行、审批流、无边框拖拽、逐句 TTS、GPT-SoVITS 音色。
+
+- [x] Settings workspace root editor: added a dedicated settings control for app.workspace_root. Saving validates and persists the path, refreshes file tools, updates background task defaults, refreshes workspace plugin, and reloads directory plugins so later sidecars receive YUYU_WORKSPACE.

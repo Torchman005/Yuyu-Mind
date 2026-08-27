@@ -1,11 +1,17 @@
 {
   "agent_command": "codex",
-  "model": "",
-  "sandbox": "workspace-write",
-  "full_auto": true,
-  "dangerous": false,
-  "timeout_ms": 600000,
+  "allow_dirty_review": true,
+  "auto_open_vscode": true,
   "cwd": "",
+  "dangerous": false,
+  "extra_args": [],
+  "full_auto": true,
   "ide_command": "code",
-  "extra_args": []
+  "incremental_review": true,
+  "model": "",
+  "codex_json": true,
+  "review_mode": "live",
+  "review_poll_ms": 2000,
+  "sandbox": "workspace-write",
+  "timeout_ms": 600000
 }

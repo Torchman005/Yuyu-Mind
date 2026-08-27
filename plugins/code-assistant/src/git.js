@@ -1,6 +1,6 @@
 'use strict';
-// git.js —— 管理「评审式改动」的 git 状态：基线分支、feature 分支、diff、接受/拒绝。
-// 用法：run_agent 在 feature 分支上让 codex 改代码，之后用户可 show_diff / accept / reject。
+// git.js —— 管理「评审式改动」的 git 状态：基线、live 工作区、diff、接受/拒绝。
+// 用法：run_agent 默认让 codex 直接写当前工作区，之后用户可在 VS Code 逐块评审。
 
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -56,7 +56,7 @@ function runBufferSync(cwd, args) {
   }
 }
 
-// 当前待评审状态：{ cwd, baseBranch, branch }
+// 当前待评审状态：{ cwd, baseBranch, baseCommit, branch, mode }
 let review = null;
 
 const scanSkipDirs = new Set(['.git', 'node_modules', 'dist', 'build', '.gocache', '.gotmp', '.gomodcache', '.next', '.vite']);
@@ -108,7 +108,7 @@ function isAbsentFromHead(cwd, absPath) {
 function absorbReviewNestedGitRepos(cwd) {
   const nested = scanNestedGitRoots(cwd).filter((repoRoot) => isAbsentFromHead(cwd, repoRoot));
   const absorbed = absorbNestedGitRepos(cwd, nested);
-  if (absorbed.length > 0) runSync(cwd, ['add', '-A']);
+  if (absorbed.length > 0 && review && review.mode === 'branch') runSync(cwd, ['add', '-A']);
   return absorbed;
 }
 
@@ -139,6 +139,7 @@ function restoreReview(input) {
     baseBranch: String(input.baseBranch || input.base_branch || 'master'),
     baseCommit: String(input.baseCommit || input.base_commit || ''),
     branch: String(input.branch || ''),
+    mode: String(input.mode || input.reviewMode || input.review_mode || 'live'),
   };
   return review;
 }
@@ -158,27 +159,40 @@ function ensureCommit(cwd) {
   void c;
 }
 
-function beginReview(cwd) {
+function hasWorkingChanges(cwd) {
+  return workTreeStatusFiles(cwd).length > 0;
+}
+
+function beginReview(cwd, options = {}) {
   ensureDir(cwd);
   ensureRepo(cwd);
   ensureCommit(cwd);
+  const mode = String(options.mode || 'live');
+  const allowDirty = Boolean(options.allowDirty);
+  if (!allowDirty && hasWorkingChanges(cwd)) {
+    throw new Error('目标项目已有未提交改动。为避免把你的手动改动和 agent 改动混在一起，请先提交、暂存或清理后再运行；确实要混合评审时可在插件配置里启用 allow_dirty_review。');
+  }
   const baseBranch = runSync(cwd, ['branch', '--show-current']).stdout || 'master';
   const baseCommit = runSync(cwd, ['rev-parse', 'HEAD']).stdout || '';
   const baselineNestedRepos = scanNestedGitRoots(cwd);
-  const branch = 'yuyu/agent-' + Date.now();
-  const co = runSync(cwd, ['checkout', '-b', branch]);
-  if (!co.ok) throw new Error('git checkout -b 失败：' + co.stderr);
-  review = { cwd, baseBranch, baseCommit, branch, baselineNestedRepos };
+  const branch = mode === 'branch' ? 'yuyu/agent-' + Date.now() : baseBranch;
+  if (mode === 'branch') {
+    const co = runSync(cwd, ['checkout', '-b', branch]);
+    if (!co.ok) throw new Error('git checkout -b 失败：' + co.stderr);
+  }
+  review = { cwd, baseBranch, baseCommit, branch, mode, baselineNestedRepos };
   return review;
 }
 
-// 让 codex 的改动保留为「相对基线的未提交改动」，并 stage，
-// 这样 VS Code Source Control 会直接展示 +/− 增删，便于评审。
-function stageReview(cwd) {
+// 评审结束前整理嵌套仓库。live 模式保留未暂存改动，VS Code 可对单个 hunk 执行还原；
+// branch 模式保持旧行为：reset --soft 到基线并 stage 全量改动，供整轮合并。
+function prepareReviewChanges(cwd) {
   if (!review) return;
   const absorbed = absorbNewNestedGitRepos(cwd);
-  if (review.baseCommit) runSync(cwd, ['reset', '--soft', review.baseCommit]);
-  runSync(cwd, ['add', '-A']);
+  if (review.mode === 'branch') {
+    if (review.baseCommit) runSync(cwd, ['reset', '--soft', review.baseCommit]);
+    runSync(cwd, ['add', '-A']);
+  }
   return absorbed;
 }
 
@@ -191,13 +205,19 @@ function statusLabel(code) {
   if (c === 'M') return 'modified';
   if (c === 'T') return 'typechanged';
   if (c === 'U') return 'unmerged';
-  if (c === '?') return 'untracked';
+  if (c === '?') return 'added';
   return 'changed';
 }
 
 function changedFiles(cwd) {
   const out = runBufferSync(cwd, ['diff', '--name-status', '-M', '-z', 'HEAD']);
-  if (!out.ok || !out.stdout.length) return [];
+  const byPath = new Map();
+  if (!out.ok || !out.stdout.length) {
+    for (const file of workTreeStatusFiles(cwd).filter((f) => String(f.status || '').includes('?'))) {
+      byPath.set(file.path, file);
+    }
+    return Array.from(byPath.values());
+  }
   const parts = out.stdout.toString('utf8').split('\0').filter(Boolean);
   const files = [];
   for (let i = 0; i < parts.length;) {
@@ -212,7 +232,11 @@ function changedFiles(cwd) {
       files.push({ status, kind: statusLabel(status), path: filePath });
     }
   }
-  return files;
+  for (const file of files) byPath.set(file.path, file);
+  for (const file of workTreeStatusFiles(cwd).filter((f) => String(f.status || '').includes('?'))) {
+    if (!byPath.has(file.path)) byPath.set(file.path, file);
+  }
+  return Array.from(byPath.values());
 }
 
 function isDirectory(cwd, filePath) {
@@ -224,7 +248,7 @@ function isGitRepo(cwd) {
 }
 
 function workTreeStatusFiles(cwd) {
-  const out = runBufferSync(cwd, ['status', '--short', '-z']);
+  const out = runBufferSync(cwd, ['status', '--short', '--untracked-files=all', '-z']);
   if (!out.ok || !out.stdout.length) return [];
   const parts = out.stdout.toString('utf8').split('\0').filter(Boolean);
   const files = [];
@@ -320,16 +344,29 @@ function diffPairs(cwd, selectedPaths) {
 }
 
 function diff(cwd, baseBranch, branch) {
-  // 改动已 stage（HEAD 在 baseCommit），`git diff --cached HEAD` 即相对基线的全部改动。
-  const d = runSync(cwd, ['diff', '--cached', 'HEAD']);
+  const d = runSync(cwd, ['diff', 'HEAD']);
   if (d.ok && d.stdout) return d.stdout;
+  const staged = runSync(cwd, ['diff', '--cached', 'HEAD']);
+  if (staged.ok && staged.stdout) return staged.stdout;
   const d2 = runSync(cwd, ['diff', baseBranch + '...' + branch]);
   return d2.ok ? d2.stdout : (d2.stderr || '');
 }
 
 function acceptChanges() {
   if (!review) throw new Error('暂无待评审的改动');
-  const { cwd, baseBranch, branch } = review;
+  const { cwd, baseBranch, branch, mode } = review;
+  if (mode !== 'branch') {
+    const files = reviewFiles(cwd);
+    review = null;
+    return {
+      ok: true,
+      baseBranch,
+      accepted: true,
+      mode,
+      files: files.length,
+      output: '已接受当前工作区中的 agent 改动；改动保持为未提交状态，可继续由你在 VS Code 中提交。',
+    };
+  }
   const commit = runSync(cwd, ['commit', '--allow-empty', '-m', 'agent changes（评审通过）']);
   const co = runSync(cwd, ['checkout', baseBranch]);
   const m = runSync(cwd, ['merge', '--no-ff', branch, '-m', 'accept agent changes']);
@@ -340,13 +377,15 @@ function acceptChanges() {
 
 function rejectChanges() {
   if (!review) throw new Error('暂无待评审的改动');
-  const { cwd, baseBranch, branch, baseCommit } = review;
+  const { cwd, baseBranch, branch, baseCommit, mode } = review;
   if (baseCommit) runSync(cwd, ['reset', '--hard', baseCommit]); // 丢弃改动
   runSync(cwd, ['clean', '-fd']);
-  runSync(cwd, ['checkout', baseBranch]);
-  runSync(cwd, ['branch', '-D', branch]);
+  if (mode === 'branch') {
+    runSync(cwd, ['checkout', baseBranch]);
+    runSync(cwd, ['branch', '-D', branch]);
+  }
   review = null;
-  return { ok: true, baseBranch, rejected: true };
+  return { ok: true, baseBranch, rejected: true, mode };
 }
 
-module.exports = { currentReview, restoreReview, beginReview, stageReview, absorbReviewNestedGitRepos, changedFiles, reviewFiles, diffPairs, diff, acceptChanges, rejectChanges };
+module.exports = { currentReview, restoreReview, beginReview, prepareReviewChanges, absorbReviewNestedGitRepos, changedFiles, reviewFiles, diffPairs, diff, acceptChanges, rejectChanges };

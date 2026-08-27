@@ -108,10 +108,9 @@ func (e *LLMExecutor) Execute(ctx context.Context, task TaskSpec, runtime Runtim
 				summary = "任务已执行完成。"
 			}
 			metadata := map[string]any{"executor": "llm", "iterations": i + 1}
-			needReview := false
 			if len(codeReview) > 0 {
 				metadata["code_review"] = codeReview
-				needReview = true
+				metadata["review_pending"] = true
 			}
 			if err := runtime.LogOperation(ctx, "llm_executor", task.Workspace, "Worker 完成任务。", "completed", task); err != nil {
 				return nil, err
@@ -119,7 +118,7 @@ func (e *LLMExecutor) Execute(ctx context.Context, task TaskSpec, runtime Runtim
 			return &TaskResult{
 				Summary:    summary,
 				Artifacts:  nil,
-				NeedReview: needReview,
+				NeedReview: false,
 				Metadata:   metadata,
 			}, nil
 		}
@@ -131,13 +130,13 @@ func (e *LLMExecutor) Execute(ctx context.Context, task TaskSpec, runtime Runtim
 			approvedForRun = true
 		}
 
-		toolMessages, err := executeWorkerToolCalls(ctx, runtime, reply, allowedTools)
+		toolMessages, err := executeWorkerToolCalls(ctx, runtime, reply, allowedTools, task.Workspace)
 		if err != nil {
 			return nil, err
 		}
 		if review := extractCodeReviewFromToolMessages(reply, toolMessages); len(review) > 0 {
 			codeReview = review
-			_ = runtime.Emit(ctx, EventTypeResult, "info", "编码改动已生成，等待用户评审。", review)
+			_ = runtime.Emit(ctx, EventTypeResult, "info", "编码改动已生成；任务可完成，评审可稍后处理。", review)
 		}
 		for _, tm := range toolMessages {
 			if tm.Role == schema.Tool {
@@ -274,7 +273,7 @@ func collectToolInfos(ctx context.Context, tools []tool.BaseTool) ([]*schema.Too
 }
 
 // executeWorkerToolCalls 执行模型返回的工具调用，返回追加到会话的工具消息。
-func executeWorkerToolCalls(ctx context.Context, runtime Runtime, msg *schema.Message, tools []tool.BaseTool) ([]*schema.Message, error) {
+func executeWorkerToolCalls(ctx context.Context, runtime Runtime, msg *schema.Message, tools []tool.BaseTool, workspace string) ([]*schema.Message, error) {
 	toolMap := make(map[string]tool.BaseTool, len(tools))
 	for _, t := range tools {
 		info, err := t.Info(ctx)
@@ -286,15 +285,16 @@ func executeWorkerToolCalls(ctx context.Context, runtime Runtime, msg *schema.Me
 
 	results := []*schema.Message{msg}
 	for _, tc := range msg.ToolCalls {
+		arguments := argumentsWithWorkspace(tc.Function.Name, tc.Function.Arguments, workspace)
 		// 立刻在日志/任务页里展示「正在调用哪个工具」，避免长工具(如 run_agent)静默无进展。
 		_ = runtime.Emit(ctx, EventTypeProgress, "info", "Worker 调用工具。", map[string]any{
 			"tool_call_id": tc.ID,
 			"tool":         tc.Function.Name,
-			"arguments":    truncateForLog(tc.Function.Arguments, 2000),
+			"arguments":    truncateForLog(arguments, 2000),
 		})
 		slog.Info("worker tool call",
 			"tool", tc.Function.Name,
-			"arguments", truncateForLog(tc.Function.Arguments, 2000),
+			"arguments", truncateForLog(arguments, 2000),
 		)
 		t, ok := toolMap[tc.Function.Name]
 		if !ok {
@@ -314,7 +314,7 @@ func executeWorkerToolCalls(ctx context.Context, runtime Runtime, msg *schema.Me
 			})
 			continue
 		}
-		result, err := invokable.InvokableRun(ctx, tc.Function.Arguments)
+		result, err := invokable.InvokableRun(ctx, arguments)
 		if err != nil {
 			result = fmt.Sprintf("Error executing tool %q: %v", tc.Function.Name, err)
 		}
@@ -329,6 +329,23 @@ func executeWorkerToolCalls(ctx context.Context, runtime Runtime, msg *schema.Me
 		})
 	}
 	return results, nil
+}
+
+func argumentsWithWorkspace(toolName, argumentsJSON, workspace string) string {
+	if toolName != "run_agent" || strings.TrimSpace(workspace) == "" {
+		return argumentsJSON
+	}
+	args, err := decodeJSON[map[string]any](argumentsJSON)
+	if err != nil {
+		return argumentsJSON
+	}
+	if args == nil {
+		args = map[string]any{}
+	}
+	if cwd, ok := args["cwd"].(string); !ok || strings.TrimSpace(cwd) == "" {
+		args["cwd"] = strings.TrimSpace(workspace)
+	}
+	return encodeJSON(args)
 }
 
 func extractCodeReviewFromToolMessages(reply *schema.Message, toolMessages []*schema.Message) map[string]any {
@@ -373,7 +390,7 @@ func parseRunAgentReview(raw string) map[string]any {
 		return nil
 	}
 	review := map[string]any{}
-	for _, key := range []string{"cwd", "baseBranch", "branch", "diff", "files", "summary", "steps"} {
+	for _, key := range []string{"cwd", "mode", "baseBranch", "baseCommit", "branch", "diff", "files", "summary", "steps"} {
 		if value, ok := payload[key]; ok {
 			review[key] = value
 		}

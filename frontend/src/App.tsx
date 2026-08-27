@@ -26,6 +26,7 @@ import {
     SendAgentTaskControl,
     SetLogLevel,
     SetPluginConfig,
+    SetWorkspaceRoot,
     StreamChat,
     SynthesizeSpeech,
     SynthesizeSpeechStream,
@@ -174,6 +175,9 @@ function App() {
     const [configText, setConfigText] = useState('');
     const [configEditorState, setConfigEditorState] = useState<'idle' | 'loading' | 'saved' | 'error'>('idle');
     const [configEditorMessage, setConfigEditorMessage] = useState('');
+    const [workspaceRoot, setWorkspaceRoot] = useState('');
+    const [workspaceState, setWorkspaceState] = useState<'idle' | 'loading' | 'saved' | 'error'>('idle');
+    const [workspaceMessage, setWorkspaceMessage] = useState('');
     const [isTextInputOpen, setIsTextInputOpen] = useState(false);
     const [continuousVoiceMode, setContinuousVoiceMode] = useState(() => (localStorage.getItem(CONTINUOUS_VOICE_KEY) ?? localStorage.getItem(LEGACY_CONTINUOUS_VOICE_KEY)) === 'true');
     const [conversationMode, setConversationMode] = useState(() => localStorage.getItem(CONVERSATION_MODE_KEY) === 'free' ? 'free' : DEFAULT_CONVERSATION_MODE);
@@ -635,6 +639,14 @@ function App() {
     }, [speechLanguage]);
 
     useEffect(() => {
+        if (!canUseWailsRuntime()) {
+            return;
+        }
+        void GetConfigJSON()
+            .then((cfg) => setWorkspaceRoot(String(cfg?.app?.workspace_root || '')))
+            .catch(() => undefined);
+    }, []);
+    useEffect(() => {
         voiceStatusRef.current = voiceStatus;
     }, [voiceStatus]);
 
@@ -992,6 +1004,84 @@ function App() {
             audioRef.current = null;
         }
         window.speechSynthesis?.cancel?.();
+    }
+
+    function playbackUrlFromPluginResult(result: Record<string, any>): string {
+        const metadata = result && typeof result.metadata === 'object' && result.metadata !== null ? result.metadata as Record<string, any> : {};
+        const raw = metadata.playbackUrl ?? metadata.playback_url ?? result.playbackUrl ?? result.playback_url;
+        return typeof raw === 'string' ? raw.trim() : '';
+    }
+
+    async function playPluginAudioUrl(url: string) {
+        if (!url) {
+            return;
+        }
+        stopCurrentAudio();
+        const playbackId = playbackIdRef.current;
+        const audio = new Audio(url);
+        audio.preload = 'auto';
+        audio.crossOrigin = 'anonymous';
+        audioRef.current = audio;
+        attachLipSync(audio, playbackId);
+        audio.oncanplay = () => {
+            if (playbackId === playbackIdRef.current) {
+                setVoiceStatus('speaking');
+            }
+        };
+        audio.onended = () => finishSpeaking(playbackId);
+        audio.onerror = () => {
+            if (playbackId !== playbackIdRef.current) {
+                return;
+            }
+            setVoiceError('音乐播放失败：音频地址不可用或已过期，请重新获取播放链接。');
+            finishSpeaking(playbackId);
+        };
+        try {
+            await audio.play();
+            setVoiceStatus('speaking');
+        } catch (reason) {
+            if (playbackId !== playbackIdRef.current) {
+                return;
+            }
+            setVoiceError(`音乐播放被浏览器阻止：${String((reason as Error)?.message || reason)}`);
+            finishSpeaking(playbackId);
+        }
+    }
+
+    function handlePluginPlaybackResult(result: Record<string, any>) {
+        const metadata = result && typeof result.metadata === 'object' && result.metadata !== null ? result.metadata as Record<string, any> : {};
+        const action = String(metadata.playbackAction ?? metadata.playback_action ?? result.playbackAction ?? result.playback_action ?? '').trim().toLowerCase();
+        if (action === 'pause') {
+            audioRef.current?.pause();
+            setVoiceStatus('idle');
+            setMouthLevel(0);
+            return;
+        }
+        if (action === 'resume') {
+            const audio = audioRef.current;
+            if (!audio) {
+                setVoiceError('没有可继续播放的音乐。');
+                return;
+            }
+            const playbackId = playbackIdRef.current;
+            void audio.play()
+                .then(() => setVoiceStatus('speaking'))
+                .catch((reason) => {
+                    if (playbackId === playbackIdRef.current) {
+                        setVoiceError(`音乐继续播放失败：${String((reason as Error)?.message || reason)}`);
+                    }
+                });
+            return;
+        }
+        if (action === 'stop') {
+            stopCurrentAudio();
+            setVoiceStatus('idle');
+            return;
+        }
+        const playbackUrl = playbackUrlFromPluginResult(result);
+        if (playbackUrl) {
+            void playPluginAudioUrl(playbackUrl);
+        }
     }
 
     function isBargeInCandidate(text: string, confidence = 0) {
@@ -1809,6 +1899,7 @@ function App() {
         try {
             const cfg = await GetConfigJSON();
             setConfigText(JSON.stringify(cfg, null, 2));
+            setWorkspaceRoot(String(cfg?.app?.workspace_root || ''));
             setConfigEditorState('idle');
             setConfigEditorMessage('');
         } catch (reason) {
@@ -1822,11 +1913,30 @@ function App() {
         try {
             const parsed = JSON.parse(configText);
             await SaveConfigJSON(parsed);
+            setWorkspaceRoot(String(parsed?.app?.workspace_root || ''));
             setConfigEditorState('saved');
             setConfigEditorMessage('保存成功，重启后完全生效。');
         } catch (reason) {
             setConfigEditorState('error');
             setConfigEditorMessage(String(reason));
+        }
+    }
+
+
+    async function saveWorkspaceRoot() {
+        setWorkspaceState('loading');
+        setWorkspaceMessage('Workspace updated. New tasks and plugin sidecars will use this directory.');
+        try {
+            const nextRoot = workspaceRoot.trim();
+            await SetWorkspaceRoot(nextRoot);
+            const cfg = await GetConfigJSON();
+            setWorkspaceRoot(String(cfg?.app?.workspace_root || ''));
+            setConfigText(JSON.stringify(cfg, null, 2));
+            setWorkspaceState('saved');
+            setWorkspaceMessage('Workspace updated. New tasks and plugin sidecars will use this directory.');
+        } catch (reason) {
+            setWorkspaceState('error');
+            setWorkspaceMessage(String(reason));
         }
     }
 
@@ -2108,6 +2218,10 @@ function App() {
         try {
             const result = await InvokePluginAction(pluginName, actionName, input);
             setPluginResult(JSON.stringify(result, null, 2));
+            const playbackUrl = playbackUrlFromPluginResult(result as Record<string, any>);
+            if (playbackUrl) {
+                void playPluginAudioUrl(playbackUrl);
+            }
         } catch (reason) {
             setError(String(reason));
         }
@@ -3018,7 +3132,7 @@ function App() {
                                             <section className="task-review-panel">
                                                 <div className="plugin-section-head">
                                                     <h3>代码变更</h3>
-                                                    <span>{String(codeReview.branch || '待评审')} · {files.length} 个条目</span>
+                                                    <span>{String(codeReview.branch || codeReview.cwd || '工作区变更')} · {files.length} 个条目</span>
                                                 </div>
                                                 {Array.isArray(codeReview.absorbedNestedRepos) && codeReview.absorbedNestedRepos.length > 0 && (
                                                     <p className="plugin-hint">检测到新建子项目自带 git 仓库，已临时按普通目录纳入本轮评审，所以 VS Code 能显示内部文件增删。</p>
@@ -3103,6 +3217,32 @@ function App() {
                     {activeView === 'settings' && (
                         <section className="web-view">
                             <h2 className="web-view-title">设置</h2>
+                            <section className="settings-section">
+                                <div className="plugin-section-head">
+                                    <h3>工作区</h3>
+                                    <span>影响文件工具、后台任务、截图保存和插件默认目录</span>
+                                </div>
+                                <label className="workspace-field">
+                                    <span>当前工作区</span>
+                                    <input
+                                        value={workspaceRoot}
+                                        onChange={(event) => {
+                                            setWorkspaceRoot(event.target.value);
+                                            setWorkspaceState('idle');
+                                            setWorkspaceMessage('');
+                                        }}
+                                        placeholder="留空则使用用户主目录"
+                                        autoComplete="off"
+                                    />
+                                </label>
+                                <div className="settings-action-row">
+                                    <button type="button" className="primary-soft-button" onClick={() => void saveWorkspaceRoot()} disabled={workspaceState === 'loading'}>
+                                        {workspaceState === 'loading' ? '保存中…' : '保存工作区'}
+                                    </button>
+                                    <button type="button" className="ghost-button" onClick={() => void refreshConfigEditor()}>从配置重新读取</button>
+                                    {workspaceMessage && <span className={`settings-inline-status ${workspaceState}`}>{workspaceMessage}</span>}
+                                </div>
+                            </section>
                             <div className="info-card"><b>语音语言</b>
                                 <button type="button" className="ghost-button" onClick={() => setSpeechLanguage((value) => value === 'zh' ? 'ja' : 'zh')} aria-pressed={speechLanguage === 'ja'}>
                                     {speechLanguage === 'zh' ? '中文' : '日语'}
@@ -3148,3 +3288,7 @@ function App() {
 }
 
 export default App;
+
+
+
+

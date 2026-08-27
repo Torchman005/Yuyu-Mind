@@ -24,21 +24,22 @@ import (
 
 // App 是 Wails 暴露给前端的主应用对象。
 type App struct {
-	ctx           context.Context
-	cfg           *config.Config
-	db            *db.DB
-	providerReg   *aiProvider.Registry
-	toolReg       *tools.Registry
-	workerToolReg *tools.Registry
-	workspace     *tools.Workspace
-	chatSvc       *chat.Service
-	agentSvc      *agent.Service
-	memorySvc     *memory.ServiceMemory
-	memStore      memory.Store
-	pluginMgr     *plugin.Manager
+	ctx             context.Context
+	cfg             *config.Config
+	db              *db.DB
+	providerReg     *aiProvider.Registry
+	toolReg         *tools.Registry
+	workerToolReg   *tools.Registry
+	workspace       *tools.Workspace
+	chatSvc         *chat.Service
+	agentSvc        *agent.Service
+	taskSubmitter   *taskSubmitter
+	memorySvc       *memory.ServiceMemory
+	memStore        memory.Store
+	pluginMgr       *plugin.Manager
 	pluginFileStore *plugin.FileConfigStore
-	pluginsRoot   string
-	logHub        *loghub.Hub
+	pluginsRoot     string
+	logHub          *loghub.Hub
 }
 
 // New 创建 App 实例。
@@ -139,11 +140,12 @@ func (a *App) Startup(ctx context.Context) {
 	a.agentSvc.Start(ctx)
 
 	// 聊天 → 任务闭环：Planner 识别到任务时经此提交异步任务。
-	a.chatSvc.SetTaskSubmitter(&taskSubmitter{
+	a.taskSubmitter = &taskSubmitter{
 		svc:            a.agentSvc,
 		workspace:      workspaceRoot,
 		defaultActions: []string{"list_files", "read_file"},
-	})
+	}
+	a.chatSvc.SetTaskSubmitter(a.taskSubmitter)
 
 	// 插件系统：插件注册的工具同时进入 Planner 与 Worker 工具集。
 	a.pluginMgr = plugin.NewManager(func(name string, t tool.BaseTool) error {
@@ -172,6 +174,56 @@ func (a *App) Startup(ctx context.Context) {
 		"provider", cfg.ActiveProvider.ProviderID,
 		"model", cfg.ActiveProvider.Model,
 	)
+}
+
+// SetWorkspaceRoot updates the default workspace used by file tools, background
+// tasks, screenshots, and directory-plugin sidecars started after the change.
+func (a *App) SetWorkspaceRoot(root string) error {
+	if a.cfg == nil {
+		return fmt.Errorf("config not ready")
+	}
+	root = strings.TrimSpace(root)
+	if root == "" {
+		if home, err := os.UserHomeDir(); err == nil {
+			root = home
+		}
+	}
+	ws, err := tools.NewWorkspace(root)
+	if err != nil {
+		return fmt.Errorf("set workspace root: %w", err)
+	}
+	root = ws.Root()
+
+	a.cfg.App.WorkspaceRoot = root
+	if err := a.cfg.Save(); err != nil {
+		return err
+	}
+
+	a.workspace = ws
+	if a.toolReg != nil {
+		a.toolReg.Register("list_files", tools.NewListFilesTool(ws))
+		a.toolReg.Register("read_file", tools.NewReadFileTool(ws))
+	}
+	if a.workerToolReg != nil {
+		a.workerToolReg.Register("list_files", tools.NewListFilesTool(ws))
+		a.workerToolReg.Register("read_file", tools.NewReadFileTool(ws))
+		a.workerToolReg.Register("write_file", tools.NewWriteFileTool(ws))
+		a.workerToolReg.Register("execute_command", tools.NewCommandTool(ws))
+		a.workerToolReg.Register("screen_capture", tools.NewScreenCaptureTool(ws))
+	}
+	if a.taskSubmitter != nil {
+		a.taskSubmitter.SetWorkspace(root)
+	}
+	if a.pluginMgr != nil {
+		if err := a.pluginMgr.Register(a.ctx, plugin.NewWorkspacePlugin(ws)); err != nil {
+			slog.Warn("failed to refresh workspace plugin", "error", err)
+		}
+	}
+	if _, err := a.ReloadPlugins(); err != nil {
+		slog.Warn("failed to reload plugins after workspace update", "error", err)
+	}
+	slog.Info("workspace root updated", "workspace", root)
+	return nil
 }
 
 // Shutdown 在 Wails 应用关闭时执行。
