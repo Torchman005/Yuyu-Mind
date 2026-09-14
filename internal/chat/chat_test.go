@@ -154,6 +154,116 @@ func TestTurnGateEvaluate(t *testing.T) {
 	}
 }
 
+// TestTurnGateSilenceOnBackchannel 覆盖「允许沉默」的两条边界：
+// 纯应答词应静默（真人不会每次都应声），而带疑问语气的追问必须回复。
+func TestTurnGateSilenceOnBackchannel(t *testing.T) {
+	gate := NewTurnGate(config.ChatConfig{ReplyThreshold: 0.45, ReplyFrequency: 1})
+	now := time.Now()
+	eval := func(content string) GateDecision {
+		return gate.Evaluate(TurnSnapshot{
+			Target:    NormalizedMessage{ID: "x", Content: content, CreatedAt: now},
+			LastBotAt: now,
+			Now:       now,
+		})
+	}
+
+	// 纯应答词：应静默（这正是 P0-1 的核心改动）。
+	for _, content := range []string{"好的", "嗯", "嗯嗯", "哦", "知道了", "收到", "好嘞", "OK", "好的。"} {
+		if d := eval(content); d.ShouldPlan {
+			t.Fatalf("弱回撤「%s」应静默，实际 score=%f reasons=%v", content, d.Score, d.Reasons)
+		}
+	}
+
+	// 带疑问语气：是追问，不是单纯应答，必须回复。
+	for _, content := range []string{"哦？", "嗯？", "这样吗？"} {
+		if d := eval(content); !d.ShouldPlan {
+			t.Fatalf("疑问「%s」应回复，实际 score=%f reasons=%v", content, d.Score, d.Reasons)
+		}
+	}
+
+	// 冷场后仍不应把弱回撤退回阈值之上（idle_gap 加成不足以翻盘）。
+	idle := gate.Evaluate(TurnSnapshot{
+		Target:    NormalizedMessage{ID: "y", Content: "嗯", CreatedAt: now},
+		LastBotAt: now.Add(-10 * time.Minute),
+		Now:       now,
+	})
+	if idle.ShouldPlan {
+		t.Fatalf("冷场后的弱回撤仍应静默，实际 score=%f reasons=%v", idle.Score, idle.Reasons)
+	}
+}
+
+// TestTurnGateSilenceDisabled 验证显式关闭后恢复到「必回」旧行为（可回滚性）。
+func TestTurnGateSilenceDisabled(t *testing.T) {
+	cfg := config.ChatConfig{
+		ReplyThreshold:                0.45,
+		ReplyFrequency:                1,
+		AverageMessageIntervalSeconds: 8, // 非零：表示这是显式配置，而非"未配置"
+		MinReplyIntervalSeconds:       1,
+		AllowSilenceOnBackchannel:     false,
+	}
+	gate := NewTurnGate(cfg)
+	now := time.Now()
+	d := gate.Evaluate(TurnSnapshot{
+		Target:    NormalizedMessage{ID: "z", Content: "好的", CreatedAt: now},
+		LastBotAt: now.Add(-time.Minute),
+		Now:       now,
+	})
+	if !d.ShouldPlan {
+		t.Fatalf("显式关闭沉默后，弱回撤也应回复，实际 score=%f reasons=%v", d.Score, d.Reasons)
+	}
+}
+
+// TestTurnGateBehaviorMatrix 用一组真实场景组合，锁定 P0-1 的**整体**行为预期，
+// 而不只是单点断言。它同时是"过度沉默"的防线：普通人说话必须得到回应。
+func TestTurnGateBehaviorMatrix(t *testing.T) {
+	gate := NewTurnGate(config.ChatConfig{ReplyThreshold: 0.45, ReplyFrequency: 1})
+	now := time.Now()
+
+	cases := []struct {
+		name      string
+		content   string
+		lastBotAt time.Time // 距上次回复的时间（now 减去它）
+		mentioned bool
+		wantReply bool
+		why       string
+	}{
+		// —— 必须回复：普通人说的话、提问、请求、被点名 ——
+		{"普通陈述", "今天上班好累啊", now, false, true, "真人不会对这类话装沉默"},
+		{"提问", "这个报错怎么解决？", now, false, true, "在求助，必须回应"},
+		{"请求", "帮我看看日志", now, false, true, "明确的请求"},
+		{"被点名", "在吗", now, true, true, "点名优先级最高"},
+		{"长句倾诉", "我今天遇到一件特别离谱的事情，想跟你说说", now, false, true, "有内容要接"},
+		{"冷场后开口", "在干嘛呢", now.Add(-10 * time.Minute), false, true, "冷场后更该主动"},
+
+		// —— 应当静默：纯应答词（真人听到「嗯」不会每次都接话）——
+		{"应答-嗯", "嗯", now, false, false, "纯应答，不必接话"},
+		{"应答-好的", "好的", now, false, false, "确认收到即可"},
+		{"应答-知道了", "知道了", now, false, false, "同上"},
+		{"应答-收到", "收到", now, false, false, "同上"},
+		{"应答-带句号", "好的。", now, false, false, "标点不影响判定"},
+		{"应答-英文", "OK", now, false, false, "英文应答词同样静默"},
+		{"应答-冷场后", "嗯", now.Add(-10 * time.Minute), false, false, "冷场加成不足以翻盘"},
+
+		// —— 疑问语气是追问，不算纯应答 ——
+		{"追问-哦？", "哦？", now, false, true, "带疑问是在等回应"},
+		{"追问-嗯？", "嗯？", now, false, true, "同上"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := gate.Evaluate(TurnSnapshot{
+				Target:    NormalizedMessage{ID: "m", Content: tc.content, CreatedAt: now, Mentioned: tc.mentioned},
+				LastBotAt: tc.lastBotAt,
+				Now:       now,
+			})
+			if d.ShouldPlan != tc.wantReply {
+				t.Fatalf("「%s」（%s）：期望 reply=%v，实际 reply=%v score=%.2f reasons=%v",
+					tc.content, tc.why, tc.wantReply, d.ShouldPlan, d.Score, d.Reasons)
+			}
+		})
+	}
+}
+
 func TestParsePlannerDecisionWindowsPath(t *testing.T) {
 	// 模型常把 Windows 路径原样写进 JSON（含 \i \A 等非法转义），应被修正后仍能解析。
 	raw := `{"action":"task","task":{"goal":"init react","workspace":"D:\itJinYu_toolkit\AI-pet"}}`

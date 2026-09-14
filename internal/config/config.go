@@ -85,7 +85,16 @@ type ChatConfig struct {
 	MinReplyIntervalSeconds       int     `json:"min_reply_interval_seconds"`
 	MaxReplyChars                 int     `json:"max_reply_chars"`
 	SplitMaxChars                 int     `json:"split_max_chars"`
-	AllowTypoSimulation           bool    `json:"allow_typo_simulation"`
+
+	// AllowTypoSimulation 控制「口语冗余」：按低概率给句子注入填充词（嗯…/那个…）、
+	// 轻微重复字与半截话，让语音输出不像逐字念稿（见 docs/REALISM-ANALYSIS.md P1）。
+	// 默认 true。字段名沿用历史命名以兼容既有配置——语音场景下注入的是口语停顿，而非"错别字"。
+	AllowTypoSimulation bool `json:"allow_typo_simulation"`
+
+	// AllowSilenceOnBackchannel 允许对「弱回撤」保持沉默（如「嗯」「好的」「知道了」）。
+	// 默认 true：真人听到纯应答词并不会每次都接话，而"每条必回"是最强的机器感来源之一
+	// （见 docs/REALISM-ANALYSIS.md P0-1）。设为 false 可恢复「所有直接消息都回复」的旧行为。
+	AllowSilenceOnBackchannel bool `json:"allow_silence_on_backchannel"`
 
 	// ThinkingPauseMinMs / ThinkingPauseMaxMs 控制「首句之前的反应停顿」。
 	// 真人听到问题后会有一个自然的思考间隙（约 0.3–1.2s）；零延迟会造成"终端回显"式的机器感。
@@ -157,18 +166,22 @@ func DefaultConfig() *Config {
 		LogLevel: "DEBUG",
 		Chat: ChatConfig{
 			BotName: "Yuyu",
-			Persona: "你是一个古灵精怪、俏皮的专属小恶魔，把用户称作「主人」。你活泼可爱、嘴甜，喜欢逗主人开心，但话很少——说得少而精，一句是一句，偶尔俏皮卖个萌。你关心主人，表达调皮但简练，绝不啰嗦。",
+			Persona: "你是一个古灵精怪、俏皮的专属小恶魔，把用户称作「主人」。你活泼可爱、嘴甜，喜欢逗主人开心。你说话随性、口语化，像真人聊天一样有语气词和停顿；有时一句话，有时絮絮叨叨说几句，看心情。你关心主人，调皮但不刻薄。",
 			StyleNotes: "1. 始终以「主人」称呼用户；需要指代用户时用「主人」或「您」，不要用「你」或直呼其名。\n" +
-				"2. 话要少而精：每条回复尽量一到两句，简短、干脆、口语化，别长篇大论，别铺垫。\n" +
-				"3. 语言自然口语化，纯粹是「说出来的话」——绝对不要出现任何动作、心理、神态描写（不要写「（笑）」「（歪头）」「心想」「看着主人」这类），只输出实实在在的说话内容。\n" +
-				"4. 保持真诚自然，不暴露自己是 AI，不提及内部机制或工具名。",
+				"2. 像真人说话那样自然：允许语气词（嗯、诶、啊、呀、嘛、啦）、口头禅、轻微重复，以及偶尔半截话或自我更正（「我是说…」）。不要每句都结构完整、条理分明。\n" +
+				"3. 长度看情境：日常闲聊一到三句；被问到需要解释的事可以说得稍长。别硬凑长度，也别把话说得像说明书。\n" +
+				"4. 纯粹是「说出来的话」——不要出现动作、心理、神态描写（不写「（笑）」「（歪头）」「心想」「看着主人」这类），也不要输出括号内的舞台提示。\n" +
+				"5. 保持真诚自然，不暴露自己是 AI，不提及内部机制、工具名或模型名。",
 			ReplyThreshold:                0.45,
 			ReplyFrequency:                1.0,
 			AverageMessageIntervalSeconds: 8,
 			MinReplyIntervalSeconds:       0,
 			MaxReplyChars:                 1000,
 			SplitMaxChars:                 90,
-			AllowTypoSimulation:           false,
+			// 口语冗余：默认开启（低概率注入填充词/轻微重复），让语音不像逐字念稿。
+			AllowTypoSimulation: true,
+			// 对弱回撤（「嗯」「好的」）允许沉默——真人不会每次都应声。
+			AllowSilenceOnBackchannel: true,
 			// 反应停顿：默认开启一个克制的区间。真人回答通常有 0.3–1s 的思考间隙；
 			// 设为 0 可完全关闭（此时行为与旧版一致）。
 			ThinkingPauseMinMs: 250,

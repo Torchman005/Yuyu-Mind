@@ -15,6 +15,19 @@ import (
 	"github.com/yuyu-mind/backend/internal/db"
 )
 
+// postprocessSpeech 是"下发一句台词"的统一处理入口：
+// 先清理舞台提示（postprocessReply），再按配置注入口语冗余（applyDisfluency）。
+//
+// 放在这里而不是 postprocessReply 内部，是为了让后者保持纯函数，
+// 并把"要不要口语化"这个策略开关集中在流式路径上。
+func (s *Service) postprocessSpeech(raw string) string {
+	text := postprocessReply(raw)
+	if text == "" || s == nil || !s.cfg.Chat.AllowTypoSimulation {
+		return text
+	}
+	return applyDisfluency(text, rand.Float64(), rand.Float64())
+}
+
 // streamingSentencer 增量地把流式文本切分成完整句子。
 // 每遇到句末标点（。！？.!?\n）即产出一个完整句；若单句过长（超过 maxRunes）则强制切分，
 // 使 TTS 能「逐句」并行启动，而不是等全文生成完毕。
@@ -230,7 +243,7 @@ func (s *Service) streamReply(
 
 	emitSentences := func(sentences []string) error {
 		for _, sentence := range sentences {
-			part := postprocessReply(sentence)
+			part := s.postprocessSpeech(sentence)
 			if part == "" {
 				continue
 			}
@@ -245,7 +258,7 @@ func (s *Service) streamReply(
 	// 每句前下发其自带情绪，使 Live2D 表情随台词走（对齐 Shinsekai）。
 	// 台词经 postprocessReply 去掉可能残留的动作/心理描写（如「（笑）」「心想…」）。
 	flushDialogItem := func(item DialogItem) error {
-		speech := postprocessReply(item.Speech)
+		speech := s.postprocessSpeech(item.Speech)
 		if speech == "" {
 			return nil
 		}
@@ -330,7 +343,30 @@ func (s *Service) streamReply(
 		return nil, fmt.Errorf("replyer produced empty reply")
 	}
 	rt.CompleteReply(parts, now)
+
+	// 回复已经产出：**异步**从这轮对话里抽取值得长期记住的用户信息
+	// （见 memory_extract.go）。异步是刻意的——抽取要额外调一次模型，
+	// 不能让用户为"记笔记"等待；失败也只记日志。
+	s.extractMemoriesAsync(snapshot.Target.ConversationID, snapshot.Target.Content, strings.Join(parts, ""))
 	return parts, nil
+}
+
+// extractMemoriesAsync 在后台抽取记忆，不阻塞回复。
+func (s *Service) extractMemoriesAsync(conversationID, userText, assistantText string) {
+	if s == nil || s.longMemory == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		defer func() {
+			// 后台 goroutine 必须自兜底：任何 panic 都不能影响主进程。
+			if rec := recover(); rec != nil {
+				slog.Warn("memory extract: recovered panic", "panic", rec)
+			}
+		}()
+		s.ExtractAndStoreMemories(ctx, conversationID, userText, assistantText)
+	}()
 }
 
 // errReplyTooLong 表示回复达到长度上限需优雅截断（非致命错误）。
