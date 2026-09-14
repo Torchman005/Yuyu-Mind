@@ -39,8 +39,10 @@
     "max_reply_chars": 1000,
     "split_max_chars": 90,
     "allow_typo_simulation": false,
+    "allow_silence_on_backchannel": true,
     "thinking_pause_min_ms": 250,
-    "thinking_pause_max_ms": 900
+    "thinking_pause_max_ms": 900,
+    "allow_inner_monologue": true
   },
   "memory": {
     "max_turns": 20,

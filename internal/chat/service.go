@@ -42,6 +42,9 @@ type Service struct {
 	emotions *emotionStateStore
 	// relations 保存"与用户的关系"（单用户场景，全局一份），长期累积且持久化（见 relationship.go）。
 	relations *relationshipStore
+	// monologue 是「内心独白」的节流门控（冷却 + 概率，见 thought.go）。
+	// 独白本身不落库，因此它的节流状态也不需要持久化。
+	monologue *monologueGate
 }
 
 // SetTaskSubmitter 注入异步任务提交器（可选；未注入时 "task" 动作不可用）。
@@ -67,6 +70,7 @@ func NewService(
 		runtimes:    NewRuntimeManager(memStore),
 		emotions:    newEmotionStateStore(),
 		relations:   newRelationshipStore(database.Settings),
+		monologue:   newMonologueGate(),
 	}
 }
 

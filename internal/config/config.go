@@ -102,6 +102,11 @@ type ChatConfig struct {
 	// 两者都为 0（或未配置）时表示不启用；MaxMs 小于 MinMs 时会被归一化为与 MinMs 相等。
 	ThinkingPauseMinMs int `json:"thinking_pause_min_ms"`
 	ThinkingPauseMaxMs int `json:"thinking_pause_max_ms"`
+
+	// AllowInnerMonologue 允许「内心独白」：偶发一句**没说出口**的自我独白，
+	// 只显示在画面上、不朗读、不写入对话历史（见 internal/chat/thought.go）。
+	// 默认 true。设为 false 可完全关闭该通道，此时角色只输出说出口的台词。
+	AllowInnerMonologue bool `json:"allow_inner_monologue"`
 }
 
 // MemoryConfig stores conversation memory settings.
@@ -186,6 +191,8 @@ func DefaultConfig() *Config {
 			// 设为 0 可完全关闭（此时行为与旧版一致）。
 			ThinkingPauseMinMs: 250,
 			ThinkingPauseMaxMs: 900,
+			// 内心独白：默认开启（偶发、不朗读、不落库）。
+			AllowInnerMonologue: true,
 		},
 		Memory: MemoryConfig{
 			MaxTurns:     20,

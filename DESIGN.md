@@ -116,6 +116,15 @@ No external icon set is installed. Use concise glyphs or text labels already pre
 
 Motion is small, consistent, and stateful: hover lift (`translateY(-1px)` on controls, `-2px` on cards), active press (`scale(0.985)`), and Live2D presence. Timing comes from the shared motion tokens — `--dur-fast` 120ms for press feedback, `--dur` 180ms for colour/border, `--dur-slow` 260ms for card lift — with `--ease`/`--ease-out` as the only easings. Animate only `transform`, `opacity`, `box-shadow`, and colour so motion stays GPU-friendly and never triggers layout. Respect reduced motion by disabling decorative transitions and animations outside the avatar's own rendering.
 
+### Character Expression Layers
+
+The room stage carries two independent expression channels and they must never look alike:
+
+- **Spoken line** (`room-speech-bubble`): a solid white card, bold weight, centred, with a soft shadow. High presence — it is something the character actually says, and it is also spoken aloud by TTS.
+- **Inner monologue** (`room-thought`, "心声"): a **dashed-border ghost pill**, italic, muted colour, no shadow, smaller type, with a leading `⋯` glyph. Low presence — it is deliberately *not* spoken aloud and never becomes a chat message.
+
+The contrast is the message: if the inner voice were rendered as another speech bubble, the user would read it as a second line of dialogue and the effect inverts. The two channels also sit in different places — the spoken line is anchored at the top of the stage, the inner voice in the lower middle, above the status island band — so they never compete for the same space. Inner monologue fades in, holds, then drifts upward as it fades out, as though the thought disperses by itself.
+
 ### Content And Data Visualization
 
 UI copy is friendly Simplified Chinese, direct, and task-oriented. Model/plugin/status identifiers may remain literal English for debugging accuracy.
@@ -125,6 +134,8 @@ UI copy is friendly Simplified Chinese, direct, and task-oriented. Model/plugin/
 - **Do:** Use low-saturation accents to clarify mood, status, and navigation.
 - **Do:** Preserve glass clarity with blur, reflected edges, and readable contrast.
 - **Do:** Keep task approvals, logs, and code review layouts stable while data changes.
+- **Do:** Keep the spoken line and the inner monologue as two distinct visual languages (solid vs dashed ghost).
 - **Don't:** Return the web tool pages to a mostly black theme.
 - **Don't:** Use rainbow/candy copy or overly saturated gradients for routine app chrome.
+- **Don't:** Render inner monologue as another speech bubble, or route it into TTS — it must stay unspoken.
 - **Don't:** Hide scrollbars, use browser dialogs, or make non-button elements responsible for core actions.

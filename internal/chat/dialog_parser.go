@@ -2,6 +2,7 @@ package chat
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -27,6 +28,13 @@ type dialogStreamParser struct {
 	yieldedItems int
 	parseFailure int
 	lastError    string
+
+	// thought 是本轮捕获到的「内心独白」（没说出口的一句话，见 thought.go）。
+	// 它必须与 dialog 分开存放：dialog 会进 TTS 队列被念出来，thought 不会。
+	thought string
+	// thoughtTaken 表示已从 accumulated 中读到过完整的 thought 字段（无论清洗后是否为空），
+	// 避免后续每个 chunk 都重复扫描。
+	thoughtTaken bool
 }
 
 func newDialogStreamParser() *dialogStreamParser {
@@ -39,7 +47,109 @@ func (p *dialogStreamParser) feed(chunk string) []DialogItem {
 		p.buffer += chunk
 		p.accumulated += chunk
 	}
+	// 必须在 drain 之前捕获 thought：drain 会丢弃第一个台词对象之前的包装前缀
+	// （含 {"thought":"…","dialog":[ ），此后缓冲区里就再也找不到它了。
+	p.captureThought()
 	return p.drain()
+}
+
+// captureThought 尝试从累计原文中取出 thought 字段（字符串闭合后才算完整）。
+func (p *dialogStreamParser) captureThought() {
+	if p.thoughtTaken {
+		return
+	}
+	raw, complete := extractThoughtField(p.accumulated)
+	if !complete {
+		return
+	}
+	p.thoughtTaken = true
+	p.thought = normalizeThought(raw)
+}
+
+// takeThought 返回并消费已捕获的独白（每轮回复最多一句）。
+func (p *dialogStreamParser) takeThought() string {
+	text := p.thought
+	p.thought = ""
+	return text
+}
+
+// extractThoughtField 从（可能尚未闭合的）JSON 文本中增量提取 "thought" 字段的字符串值。
+//
+// 为什么需要这样一个"手写"提取器：dialogStreamParser 为了逐句流式下发，
+// 会丢弃第一个完整台词对象之前的所有文本；而 thought 恰好在前。用 json.Unmarshal 无法
+// 处理未闭合的片段，所以这里按字节扫描值区间，遇到收尾引号才算完整。
+//
+// 返回 (值, 是否完整)。未找到该字段、或字符串尚未闭合时返回 ("", false)。
+func extractThoughtField(text string) (string, bool) {
+	const key = `"thought"`
+	idx := strings.Index(text, key)
+	if idx < 0 {
+		return "", false
+	}
+	rest := text[idx+len(key):]
+
+	// 跳过 key 与值之间的空白与冒号（容忍 `"thought" : "…"` 这类排版）。
+	i := 0
+	for i < len(rest) && (rest[i] == ' ' || rest[i] == '\t' || rest[i] == '\n' || rest[i] == '\r' || rest[i] == ':') {
+		i++
+	}
+	if i >= len(rest) || rest[i] != '"' {
+		// 值还没开始（或不是字符串）：等下一个 chunk。
+		return "", false
+	}
+	i++ // 跳过值的起始引号
+
+	var b strings.Builder
+	for ; i < len(rest); i++ {
+		ch := rest[i]
+		switch ch {
+		case '"':
+			return b.String(), true
+		case '\\':
+			if i+1 >= len(rest) {
+				return "", false // 转义序列被 chunk 切断：等后续
+			}
+			i++
+			switch rest[i] {
+			case 'n':
+				b.WriteByte('\n')
+			case 't':
+				b.WriteByte('\t')
+			case 'r':
+				b.WriteByte('\r')
+			case 'b':
+				b.WriteByte('\b')
+			case 'f':
+				b.WriteByte('\f')
+			case '"':
+				b.WriteByte('"')
+			case '\\':
+				b.WriteByte('\\')
+			case '/':
+				b.WriteByte('/')
+			case 'u':
+				// \uXXXX：四位十六进制未到齐就等下一个 chunk，避免解析出半个字符。
+				if i+4 >= len(rest) {
+					return "", false
+				}
+				code, err := strconv.ParseUint(rest[i+1:i+5], 16, 32)
+				if err != nil {
+					return "", false
+				}
+				b.WriteRune(rune(code))
+				i += 4
+			default:
+				// 非法转义（模型常在此写 Windows 路径）：按字面反斜杠处理，
+				// 与 fixInvalidJSONEscapes 的容错口径保持一致。
+				b.WriteByte('\\')
+				b.WriteByte(rest[i])
+			}
+		default:
+			b.WriteByte(ch)
+		}
+	}
+	// 扫到尾都没遇到收尾引号：字符串还没流完。
+	return "", false
 }
 
 // drain 解析缓冲区中所有已完整的 JSON 对象。

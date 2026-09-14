@@ -21,6 +21,9 @@ const (
 	EventTypeEmotion    ChatEventType = "emotion"
 	EventTypeDone       ChatEventType = "done"
 	EventTypeError      ChatEventType = "error"
+	// EventTypeThought 是「内心独白」：没有说出口、也不朗读的一句话（见 thought.go）。
+	// 它与 EventTypeToken 严格分离——token 会进 TTS 队列，thought 只进画面。
+	EventTypeThought ChatEventType = "thought"
 )
 
 type ChatEvent struct {

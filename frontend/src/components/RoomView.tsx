@@ -24,6 +24,15 @@ const STAGE_TAP_DURATION_MS = 3000;
 // 点击反馈动效（缩放脉冲）时长，需与 CSS 动画保持一致。
 const STAGE_TAP_PULSE_MS = 620;
 
+// 内心独白在画面上的停留时长。
+// ⚠️ 必须与 App.css 里 .room-thought 的 room-thought-out 动画延迟 + 时长之和一致
+// （8000ms - 640ms 的延迟，再加 640ms 的淡出），否则会出现"文字已移除但动画还没走完"
+// 或"淡出结束后还挂着一块空白"的错位。
+const THOUGHT_HOLD_MS = 8000;
+
+// 内心独白是最新一句「没说出口的话」。id 单调递增，用于识别"这是一句新的独白"。
+export type RoomThought = {id: number; text: string};
+
 export type RoomViewProps = {
     emotion: string;
     voiceStatus: string;
@@ -36,6 +45,8 @@ export type RoomViewProps = {
 
     messages: Message[];
     feedRef?: RefObject<HTMLDivElement>;
+    // 内心独白（可空）。它独立于 messages：不朗读、不入历史、不参与对话历史。
+    thought?: RoomThought | null;
     composer: React.ReactNode;
 
     // 陪伴统计来源（均为现有数据，无需后端新增接口）：
@@ -57,7 +68,7 @@ export function RoomView(props: RoomViewProps) {
     const {
         emotion, voiceStatus, mouthLevel, petScale, performance, assistantLine,
         agentStatus, agentProvider,
-        messages, composer,
+        messages, composer, thought,
         conversationCount, firstConversationAt,
         musicEnabled, musicResult, musicPlaying, onMusicCommand,
         onStageWheel, onPickEmotion, onToggleSidebar,
@@ -69,6 +80,22 @@ export function RoomView(props: RoomViewProps) {
     const [tapReaction, setTapReaction] = useState<{text: string; emotion: string} | null>(null);
     const [tapPulse, setTapPulse] = useState(false);
     const tapReactionTimerRef = useRef<number | null>(null);
+
+    // 当前正在画面上浮现的独白。它跟随 App 下发的新独白切换，并自行到点消失——
+    // 独白是"一闪而过的念头"，常驻就变成了写在脸上的旁白。
+    const [visibleThought, setVisibleThought] = useState<RoomThought | null>(null);
+
+    // 新独白到来：立即替换上一条，并安排一次自动淡出。
+    // 定时器由 effect 自管生命周期（与 tapPulse 同一套路），换新独白或卸载时自动清理，
+    // 避免上一条的定时器把新独白提前掐掉。
+    useEffect(() => {
+        if (!thought) {
+            return;
+        }
+        setVisibleThought(thought);
+        const timer = window.setTimeout(() => setVisibleThought(null), THOUGHT_HOLD_MS);
+        return () => window.clearTimeout(timer);
+    }, [thought]);
 
     // 外部情绪一旦变化（用户点表情 chip、或 LLM 情绪事件、或发言中），立即让出控制权，
     // 避免本地反应覆盖真实情绪。
@@ -201,6 +228,18 @@ export function RoomView(props: RoomViewProps) {
                         <b title="当前会话消息数">{messages.length} 条消息</b>
                     </span>
                 </aside>
+
+                {/* 心声：没说出口的那句话。
+                    位置固定在舞台底部中央——上方留给台词气泡、左侧留给状态岛，三者互不争抢。
+                    样式刻意与台词气泡做成两套语言：说出口的话是"实心白卡 + 粗体居中"，
+                    心里的话是"虚线幽灵 + 斜体弱色"。这个层级差本身就是"她没说出来"的表达。
+                    key 用独白 id：同文本连续出现时也会重新挂载，动画得以重放。 */}
+                {visibleThought && (
+                    <div className="room-thought" key={visibleThought.id} role="note" aria-live="polite">
+                        <span className="room-thought-glyph" aria-hidden="true">⋯</span>
+                        <p>{visibleThought.text}</p>
+                    </div>
+                )}
             </section>
 
             {/* 右浮岛：聊天岛（含输入）在下，音乐岛在上 */}

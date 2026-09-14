@@ -3199,6 +3199,78 @@ body,
     word-break: break-word;
 }
 
+/* —— 心声：内心独白的呈现层 ——
+   与 .room-speech-bubble 故意是两套视觉语言：
+     说出口的话 = 实心白卡、粗体、居中、有投影（存在感强）
+     心里的话   = 虚线幽灵、斜体、低对比、无投影（存在感弱）
+   这个层级差本身就是"她没有说出来"的视觉表达——如果做成同一个气泡，
+   用户会以为那是她又说了一句话，效果会反过来。
+   位置固定在舞台底部中央偏上（bottom:110px，而非贴着 footer）：
+   状态岛占据的是 footer 上方 left:16px、高约 32px 的一条带（bottom 68–100px），
+   心声若与它同高，在窄窗口下会横向压到它；抬高到状态岛之上就彻底避开了。 */
+.room-view .room-thought {
+    position: absolute;
+    left: 50%;
+    bottom: 110px;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    max-width: min(66%, 400px);
+    padding: 6px 14px;
+    border: 1px dashed rgba(120, 112, 130, 0.34);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.42);
+    color: var(--text-2);
+    font-size: 13px;
+    font-style: italic;
+    line-height: 1.4;
+    text-align: center;
+    pointer-events: none;
+    /* 基准位移写在类上（而非只写在 keyframes 里）：动画开始前与结束后的静态状态
+       也必须是居中的，否则会看到一帧"偏右半格"的跳动。 */
+    transform: translateX(-50%);
+    -webkit-backdrop-filter: blur(10px) saturate(1.05);
+    backdrop-filter: blur(10px) saturate(1.05);
+    /* 入场 → 停留 → 淡出，总时长必须与 RoomView 的 THOUGHT_HOLD_MS 一致。 */
+    animation:
+        room-thought-in var(--dur-slow) var(--ease-out),
+        room-thought-out 640ms var(--ease) calc(8000ms - 640ms) forwards;
+}
+
+.room-view .room-thought p {
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+.room-view .room-thought-glyph {
+    flex: none;
+    color: var(--accent);
+    font-style: normal;
+    letter-spacing: 0.06em;
+    opacity: 0.68;
+}
+
+@keyframes room-thought-in {
+    from {
+        opacity: 0;
+        transform: translate(-50%, 8px);
+    }
+    to {
+        opacity: 1;
+        transform: translate(-50%, 0);
+    }
+}
+
+/* 淡出时轻微上浮：像念头自己散去，而不是被"擦掉"。 */
+@keyframes room-thought-out {
+    to {
+        opacity: 0;
+        transform: translate(-50%, -6px);
+    }
+}
+
 /* —— 右浮岛列 —— */
 .room-view .room-islands {
     min-width: 0;
@@ -3702,6 +3774,13 @@ body,
     .app-shell.web .room-emotion-chip:hover {
         transform: none !important;
         filter: none !important;
+    }
+
+    /* 心声：停用入场位移与淡出动画。文字仍会正常出现、到点被移除，
+       只是不再有位移与渐隐——这比让它彻底不出现更尊重"弱动态"的本意。 */
+    .room-view .room-thought {
+        animation: none !important;
+        transform: translateX(-50%) !important;
     }
 }
 

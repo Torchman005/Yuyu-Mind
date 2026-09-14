@@ -300,6 +300,32 @@ func (s *Service) streamReply(
 	}
 
 	parser := newDialogStreamParser()
+
+	// emitThought 下发本轮的「内心独白」（见 thought.go）。
+	//
+	// 三个刻意的选择：
+	//   - **在台词之前调用**。独白在 JSON 里排在 dialog 之前，因此它先于第一句台词就绪。
+	//     用户先看到"她心里闪过一个念头"、再听到她说出口的话——这个先后顺序就是
+	//     "有内心活动"的观感来源。若放到台词之后，它只会像一句补充说明。
+	//   - **不落库**。独白一旦进入消息表，下一轮就会作为 assistant 历史喂回模型，
+	//     它会开始"回应自己的心声"，同时污染记忆抽取。它必须是即兴且无痕的。
+	//   - **不朗读**。走独立事件类型，前端不把它推入 TTS 队列。
+	emitThought := func() {
+		text := parser.takeThought()
+		if text == "" {
+			return
+		}
+		// 二次克制：模型已自评过一轮，这里再用冷却窗口 + 概率挡一次，避免变成新的口癖。
+		if !s.allowMonologue(snapshot.Target.ConversationID, replyer.cfg.AllowInnerMonologue, rand.Float64(), time.Now()) {
+			slog.Info("[chat] thought suppressed by gate", "thought", text)
+			return
+		}
+		slog.Info("[chat] inner monologue", "thought", text, "runes", len([]rune(text)))
+		if emitter != nil {
+			emitter.Emit(ChatEvent{Type: EventTypeThought, Content: text})
+		}
+	}
+
 	stopped := false
 	for {
 		chunk, recvErr := reader.Recv()
@@ -312,7 +338,10 @@ func (s *Service) streamReply(
 		if chunk == nil {
 			continue
 		}
-		for _, item := range parser.feed(chunk.Content) {
+		items := parser.feed(chunk.Content)
+		// 必须先于台词下发：thought 字段在 dialog 之前，且其包装前缀会被 parser 丢弃。
+		emitThought()
+		for _, item := range items {
 			if err := flushDialogItem(item); err != nil {
 				if errors.Is(err, errReplyTooLong) {
 					stopped = true

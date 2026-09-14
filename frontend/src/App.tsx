@@ -168,6 +168,11 @@ function App() {
     const [logFilter, setLogFilter] = useState('');
     const [logLoading, setLogLoading] = useState(false);
     const [performanceHint, setPerformanceHint] = useState<PerformanceHint | null>(null);
+    // 内心独白：后端偶发下发的「没说出口的一句话」（见 internal/chat/thought.go）。
+    // 刻意不进 messages、不进 TTS 队列——它只在舞台上短暂浮现，说完就散，不留痕迹。
+    // id 单调递增：同文本连续两次出现时也能让 RoomView 重放入场动画。
+    const [thought, setThought] = useState<{id: number; text: string} | null>(null);
+    const thoughtSeqRef = useRef(0);
     const [isSending, setIsSending] = useState(false);
     const [isObservingScreen, setIsObservingScreen] = useState(false);
     const [error, setError] = useState('');
@@ -2293,6 +2298,14 @@ function App() {
                     setPerformanceHint(null);
                 }
                 break;
+            case 'thought':
+                // 内心独白：只上画面。不要在这里调用 handleStreamToken——那会把它推进 TTS
+                // 队列被念出来，"内心"就退化成了第二段台词。
+                if (event.content && event.content.trim()) {
+                    thoughtSeqRef.current += 1;
+                    setThought({id: thoughtSeqRef.current, text: event.content.trim()});
+                }
+                break;
             case 'error':
                 setError(event.content || '回复失败');
                 setProviderError(event.content || '');
@@ -3163,6 +3176,7 @@ function App() {
                             agentProvider={agentProvider}
                             messages={displayedMessages}
                             feedRef={feedRef}
+                            thought={thought}
                             composer={composer}
                             conversationCount={conversations.length}
                             firstConversationAt={earliestTimestamp(conversations.map((conv) => conv.created_at))}
