@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -113,4 +114,58 @@ func (r *MessageRepo) DeleteByConversation(ctx context.Context, convID string) e
 		return fmt.Errorf("delete messages: %w", err)
 	}
 	return nil
+}
+
+// DeleteMessages 按 id 批量删除消息（用于「打断后丢弃未播出的内容」）。
+// 传入空列表时直接返回，避免生成空的 IN 子句。
+func (r *MessageRepo) DeleteMessages(ctx context.Context, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, 0, len(ids))
+	args := make([]any, 0, len(ids))
+	for _, id := range ids {
+		placeholders = append(placeholders, "?")
+		args = append(args, id)
+	}
+	query := `DELETE FROM messages WHERE id IN (` + strings.Join(placeholders, ",") + `)`
+	if _, err := r.db.ExecContext(ctx, query, args...); err != nil {
+		return fmt.Errorf("delete messages by id: %w", err)
+	}
+	return nil
+}
+
+// TailAssistantMessages 返回会话末尾连续的 assistant 消息（按插入顺序，最早在前）。
+//
+// 用途：打断（barge-in）时判断「哪几句其实还没播出」。用 SQLite 的隐式 rowid 排序，
+// 因为同一轮回复的多条消息 created_at 相同，仅靠时间无法确定先后（见 REALISM-ANALYSIS P1-7）。
+// 从末尾往前扫，遇到第一条非 assistant 消息即停止——只处理"最后一段连续的助手发言"。
+func (r *MessageRepo) TailAssistantMessages(ctx context.Context, convID string) ([]*Message, error) {
+	rows, err := r.db.QueryContext(ctx,
+		`SELECT id, role, content FROM messages WHERE conversation_id = ? ORDER BY rowid DESC`, convID)
+	if err != nil {
+		return nil, fmt.Errorf("list tail assistant messages: %w", err)
+	}
+	defer rows.Close()
+
+	newestFirst := make([]*Message, 0, 4)
+	for rows.Next() {
+		var m Message
+		if err := rows.Scan(&m.ID, &m.Role, &m.Content); err != nil {
+			return nil, fmt.Errorf("scan tail message: %w", err)
+		}
+		if m.Role != "assistant" {
+			break // 只取末尾连续的一段助手发言
+		}
+		newestFirst = append(newestFirst, &m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// 反转为插入顺序（最早在前），便于调用方按「前 N 句已播出」截断。
+	ordered := make([]*Message, 0, len(newestFirst))
+	for i := len(newestFirst) - 1; i >= 0; i-- {
+		ordered = append(ordered, newestFirst[i])
+	}
+	return ordered, nil
 }

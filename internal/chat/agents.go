@@ -87,7 +87,18 @@ func NewPlannerAgent(chatModel model.BaseChatModel, cfg config.ChatConfig) *Plan
 	return &PlannerAgent{model: chatModel, cfg: cfg}
 }
 
-func (a *PlannerAgent) Plan(ctx context.Context, snapshot TurnSnapshot, gate GateDecision, availableTools []tool.BaseTool) (PlannerDecision, error) {
+// Plan 产出本轮决策。currentEmotion 是该会话的情绪底色（可为零值），
+// relationshipLine 是"与用户的关系"描述（可为空）。
+// 两者都只以**模糊的自然语言**注入，让措辞带着心情与关系感，而不改任何采样参数
+// （见 docs/REALISM-ANALYSIS.md P1/P2）。
+func (a *PlannerAgent) Plan(
+	ctx context.Context,
+	snapshot TurnSnapshot,
+	gate GateDecision,
+	availableTools []tool.BaseTool,
+	currentEmotion EmotionVector,
+	relationshipLine string,
+) (PlannerDecision, error) {
 	messages := []*schema.Message{
 		{
 			Role: schema.System,
@@ -124,7 +135,13 @@ Emotion output (always include these fields):
 - "dominance": a number from -1.0 (submissive/shy) to 1.0 (dominant/confident). How much control the speaker feels.
 - "gesture": one of none|bounce|tilt|lean|playfulSway|surprisePop|comfortNod.
 - "hand": one of none|left|right|both.
-Choose values that match the reply you are about to ask the Replyer to write, not just the raw user text.`,
+Choose values that match the reply you are about to ask the Replyer to write, not just the raw user text.
+
+About "current_mood_background" in the input: it describes how you (the character) are already feeling
+right now, carried over from earlier in the conversation. Treat it as your own genuine mood — let it
+shape how you would naturally respond and which emotion you pick next. Emotions have inertia: do not
+flip to the opposite feeling just because the last message was mildly positive or negative; shift
+gradually. If the background says you are down, a cheerful remark should not instantly make you elated.`,
 				formatAvailableTools(ctx, availableTools),
 				codingToolHint(ctx, availableTools),
 				codingToolName(ctx, availableTools),
@@ -132,12 +149,14 @@ Choose values that match the reply you are about to ask the Replyer to write, no
 		},
 		{
 			Role: schema.User,
-			Content: fmt.Sprintf("bot_name: %s\npersona: %s\ngate_score: %.2f\nthreshold: %.2f\ngate_reasons: %s\npending:\n%s\nrecent_history:\n%s\nReturn JSON now.",
+			Content: fmt.Sprintf("bot_name: %s\npersona: %s\ngate_score: %.2f\nthreshold: %.2f\ngate_reasons: %s\ncurrent_mood_background: %s\nrelationship: %s\npending:\n%s\nrecent_history:\n%s\nReturn JSON now.",
 				nonEmptyString(a.cfg.BotName, "Yuyu"),
 				nonEmptyString(a.cfg.Persona, "A warm, concise private voice companion."),
 				gate.Score,
 				gate.Threshold,
 				strings.Join(gate.Reasons, ","),
+				nonEmptyString(emotionPromptLine(currentEmotion), "(none; this is the start of the conversation)"),
+				nonEmptyString(relationshipLine, "(no prior relationship recorded)"),
 				formatPending(snapshot.Pending),
 				formatHistory(snapshot.History, 18),
 			),
@@ -225,6 +244,10 @@ func fixInvalidJSONEscapes(s string) string {
 type ReplyerAgent struct {
 	model model.BaseChatModel
 	cfg   config.ChatConfig
+	// styleDrift 是随关系累积的**风格偏移**提示（见 drift.go）。
+	// 注入到 Replyer 而不是 Planner：它影响的是"怎么说"，越靠近台词生成点越有效。
+	// 为空的表示尚未达到漂移阈值，行为与之前一致。
+	styleDrift string
 }
 
 func NewReplyerAgent(chatModel model.BaseChatModel, cfg config.ChatConfig) *ReplyerAgent {
@@ -268,27 +291,33 @@ func (a *ReplyerAgent) buildMessages(
 			Content: fmt.Sprintf(`You are %s, a private voice chat companion. Reply in Chinese.
 Output ONLY one valid JSON object (no markdown fences, no extra text): {"dialog": [{...}, ...]}
 Each element is one spoken line and carries its own expression, so the avatar reacts line by line:
-- "speech": the character's ACTUAL spoken words. Must be pure spoken lines — NO action, movement, psychological, or facial-expression descriptions. Never write （笑）（歪头）（开心地）心想 看着主人 笑了笑 眨了眨眼睛 顿了顿 or any stage direction. Speak naturally like a real person chatting casually; be lively, witty, and a bit playful/mischievous per the persona (can ramble, tease, joke).
+- "speech": the character's ACTUAL spoken words. Must be pure spoken lines — NO action, movement, psychological, or facial-expression descriptions. Never write （笑）（歪头）（开心地）心想 看着主人 笑了笑 眨了眨眼睛 顿了顿 or any stage direction. Speak naturally like a real person chatting casually; be lively, witty, and a bit playful/mischievous per the persona.
 - "emotion": one of neutral|happy|focused|thinking|sad|surprised.
 - "mood": one of calm|cheer|curious|confident|comfort|surprised|playful.
 - "energy": a number 0.0..1.0; "valence": -1.0..1.0; "dominance": -1.0..1.0.
 - "gesture": one of none|bounce|tilt|lean|playfulSway|surprisePop|comfortNod.
 - "hand": one of none|left|right|both.
-Split into 1-2 short, concise spoken lines; keep the reply brief (say little, don't ramble or pad). Pick each line's emotion/mood/gesture to match its content.
 
-Persona:
-%s
+How to sound like a real person (important):
+- Vary length by situation: usually 1-2 spoken lines, but when explaining something or when in a chatty mood, 3-4 lines is fine. Do NOT always answer in the same shape.
+- Talk like speaking, not like writing: filler words (嗯、诶、啊、呀、嘛、啦), mild repetition, and the occasional self-correction ("我是说…") are welcome. A perfectly structured, well-organized sentence sounds robotic — avoid that.
+- You may react with a short line on its own (e.g. just "诶？" or "好嘛") instead of always producing a full answer.
+- Keep it speech-shaped overall: no bullet points, no headings, no lists, no stage directions.
 
-Style notes:
-%s`,
+Pick each line's emotion/mood/gesture to match that line's content.`,
 				nonEmptyString(a.cfg.BotName, "Yuyu"),
-				nonEmptyString(a.cfg.Persona, "A lively, mischievous, talkative companion."),
-				nonEmptyString(a.cfg.StyleNotes, "Use short natural spoken lines. No action/psychological descriptions. Avoid overexplaining unless asked."),
 			),
 		},
 		{
 			Role: schema.User,
-			Content: fmt.Sprintf("target_message_id: %s\ntarget_message: %s\nplanner_reason: %s\nreply_instructions: %s%s\nrecent_history:\n%s\nmemory_reference:\n%s\ntool_results:\n%s\nReturn the JSON dialog now.",
+			Content: fmt.Sprintf("persona: %s\nstyle_notes: %s\ntarget_message_id: %s\ntarget_message: %s\nplanner_reason: %s\nreply_instructions: %s%s\nrecent_history:\n%s\nmemory_reference:\n%s\ntool_results:\n%s\nReturn the JSON dialog now.",
+				nonEmptyString(a.cfg.Persona, "A lively, mischievous, talkative companion."),
+				// 风格偏移（随关系累积）追加在 style_notes 末尾：只在达到阈值时改变措辞，
+				// 未达到时与之前完全一致（applyStyleDrift 对空提示原样返回）。
+				applyStyleDrift(
+					nonEmptyString(a.cfg.StyleNotes, "Speak natural colloquial Chinese. Allow filler words and small imperfections. No action/psychological descriptions."),
+					a.styleDrift,
+				),
 				decision.TargetMessageID,
 				snapshot.Target.Content,
 				decision.Reason,

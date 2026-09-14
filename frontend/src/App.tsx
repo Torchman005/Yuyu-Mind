@@ -21,6 +21,7 @@ import {
     ListPlugins,
     ObserveScreen,
     ProbeFishLive,
+    RecordInterruption,
     ReloadPlugins,
     SaveConfigJSON,
     SendAgentTaskControl,
@@ -232,6 +233,9 @@ function App() {
     const streamReplyActiveRef = useRef(false);
     const streamDoneRef = useRef(false);
     const sentencePlayingRef = useRef(false);
+    // 本次流式回复中**已经播完**的句子数。打断时回传给后端，让历史只保留用户真正听到的内容
+    // （未播出的句子由后端丢弃；见 docs/REALISM-ANALYSIS.md P1-7）。
+    const streamSpokenCountRef = useRef(0);
     // 逐句预合成：当前句播放时后台提前合成下一句，消除句间空档。
     const prefetchedSpeechRef = useRef<app.SpeechReply | null>(null);
     const prefetchedTextRef = useRef('');
@@ -417,6 +421,18 @@ function App() {
             }
             GenerateProactiveMessage(trigger)
                 .then((response: ChatResponse) => {
+                    // 后端可能判断"此刻不该开口"（没有合适话题、或距上次主动发言太近）
+                    // 并返回空回复。这是正常结果而非失败：不朗读、不更新表演，
+                    // 并**回滚本次占用的配额**——否则一次沉默会白白吃掉一次主动发言机会。
+                    const spoke = Boolean(
+                        response?.reply?.content?.trim()
+                        || response?.speechText?.trim(),
+                    );
+                    if (!spoke) {
+                        proactiveSpeechTimestampsRef.current =
+                            proactiveSpeechTimestampsRef.current.filter((at) => at !== now);
+                        return;
+                    }
                     setMessages(response.messages ?? []);
                     setEmotion(response.emotion || response.reply?.emotion || 'neutral');
                     setAgentStatus(response.agentStatus || 'offline');
@@ -787,6 +803,8 @@ function App() {
                     return;
                 }
                 if (voiceStatus === 'speaking') {
+                    // 用户主动打断正在朗读的回复：结算已播出的句子（与 barge-in 同一语义）。
+                    recordInterruptionIfNeeded();
                     audioRef.current?.pause();
                     window.speechSynthesis?.cancel?.();
                     setVoiceStatus('idle');
@@ -957,6 +975,11 @@ function App() {
     function finishSpeaking(playbackId?: number) {
         if (playbackId !== undefined && playbackId !== playbackIdRef.current) {
             return;
+        }
+        // 这一句真的播完了：计入「已播出」数（仅统计流式回复的句子，
+        // 供打断时回传后端截断未播出的内容）。
+        if (streamReplyActiveRef.current) {
+            streamSpokenCountRef.current += 1;
         }
         bargeRecognitionRef.current?.abort?.();
         bargeRecognitionRef.current = null;
@@ -1174,6 +1197,8 @@ function App() {
             elapsedMs: 0,
             detail: content,
         }]);
+        // 用户抢话 = 打断：结算已播出的句子，丢弃没播出的（模型不该记得它没说的话）。
+        recordInterruptionIfNeeded();
         stopCurrentAudio();
         clearRelistenTimer();
         setVoiceStatus('thinking');
@@ -1829,6 +1854,7 @@ function App() {
         streamReplyActiveRef.current = true;
         streamDoneRef.current = false;
         sentencePlayingRef.current = false;
+        streamSpokenCountRef.current = 0;
         prefetchedSpeechRef.current = null;
         discardPrefetchAudio();
         prefetchedTextRef.current = '';
@@ -2046,7 +2072,28 @@ function App() {
         }
     }
 
+    // recordInterruptionIfNeeded 在**真正被打断**时回传「已播出句子数」给后端，
+    // 让历史只保留用户听见的内容（未播出/未生成的句子由后端丢弃）。
+    //
+    // 只在流式回复**尚未结束**（streamDoneRef 为 false）时记录：
+    // 正常说完后的清理也会走 abortStreamReply/stopCurrentAudio，那种情况不该污染历史。
+    function recordInterruptionIfNeeded() {
+        if (!canUseWailsRuntime()) {
+            return;
+        }
+        if (!streamReplyActiveRef.current || streamDoneRef.current) {
+            return;
+        }
+        const conversationID = activeConversationId || DESKTOP_COMPANION_CONVERSATION_ID;
+        const played = Math.max(0, streamSpokenCountRef.current);
+        streamReplyActiveRef.current = false;
+        streamSpokenCountRef.current = 0;
+        void RecordInterruption(conversationID, played).catch(() => undefined);
+    }
+
     function abortStreamReply() {
+        // 先把「已播出」状态结算给后端，再清理本地状态（顺序不能颠倒：cleanup 会重置计数）。
+        recordInterruptionIfNeeded();
         streamReplyActiveRef.current = false;
         streamDoneRef.current = false;
         streamSentenceQueueRef.current = [];

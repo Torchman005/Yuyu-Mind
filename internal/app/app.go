@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -40,6 +41,9 @@ type App struct {
 	pluginFileStore *plugin.FileConfigStore
 	pluginsRoot     string
 	logHub          *loghub.Hub
+	// lastProactiveSpeechAt 记录上一次主动发言时间，用于避免"刚说完又搭话"的粘人感
+	// （由 chat.Service.GenerateProactive 判定时机）。
+	lastProactiveSpeechAt time.Time
 }
 
 // New 创建 App 实例。
@@ -249,6 +253,18 @@ func (a *App) StreamChat(req chat.ChatRequest) error {
 	}
 	emitter := &wailsEmitter{ctx: a.ctx}
 	return a.chatSvc.StreamChat(a.ctx, req, emitter)
+}
+
+// RecordInterruption 记录一次「用户打断」，并丢弃本次回复中尚未播出的句子。
+//
+// 前端在打断（barge-in / 手动停止）时调用：playedCount 是已经真正播出（TTS 播完）的句子数。
+// 这样历史里只保留"用户确实听到的内容"，模型不会以为它说过没播出的台词
+// （见 docs/REALISM-ANALYSIS.md P1-7）。
+func (a *App) RecordInterruption(conversationID string, playedCount int) error {
+	if err := a.ensureCompanionReady(); err != nil {
+		return err
+	}
+	return a.chatSvc.RecordInterruption(a.ctx, conversationID, playedCount)
 }
 
 // CreateConversation 创建新会话。

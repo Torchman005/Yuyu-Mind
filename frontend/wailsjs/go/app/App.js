@@ -142,6 +142,10 @@ export function RejectMemoryCandidate(arg1) {
   return window['go']['app']['App']['RejectMemoryCandidate'](arg1);
 }
 
+export function RecordInterruption(arg1, arg2) {
+  return window['go']['app']['App']['RecordInterruption'](arg1, arg2);
+}
+
 export function ReloadPlugins() {
   return window['go']['app']['App']['ReloadPlugins']();
 }

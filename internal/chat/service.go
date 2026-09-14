@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"strings"
 	"time"
 
@@ -37,6 +38,10 @@ type Service struct {
 	longMemory  *memory.ServiceMemory
 	runtimes    *RuntimeManager
 	taskSubmit  TaskSubmitter
+	// emotions 按会话保存情绪状态，使情绪具备惯性并随时间平复（见 emotion_state.go）。
+	emotions *emotionStateStore
+	// relations 保存"与用户的关系"（单用户场景，全局一份），长期累积且持久化（见 relationship.go）。
+	relations *relationshipStore
 }
 
 // SetTaskSubmitter 注入异步任务提交器（可选；未注入时 "task" 动作不可用）。
@@ -60,6 +65,8 @@ func NewService(
 		shortMemory: memStore,
 		longMemory:  longMemory,
 		runtimes:    NewRuntimeManager(memStore),
+		emotions:    newEmotionStateStore(),
+		relations:   newRelationshipStore(database.Settings),
 	}
 }
 
@@ -111,21 +118,32 @@ func (s *Service) StreamChat(ctx context.Context, req ChatRequest, emitter Emitt
 
 	rt.MarkRunning()
 
+	// 取当前情绪底色（上一轮延续下来的心情）与关系状态（长期累积），两者都会注入 Planner：
+	// 情绪让措辞带着此刻心情（并让本轮情绪判断有惯性），关系让语气符合相处程度。
+	// 关系在这里顺带记录一次交互（用客观信号更新，不额外调用模型）。
+	currentEmotion, _ := s.CurrentEmotion(snapshot.Target.ConversationID)
+	relationshipLine := s.ObserveUserTurn(ctx, snapshot.Target.Content)
+
 	// 简单闲聊走「快速通道」：跳过 Planner 这一整轮 LLM 决策，直接流式回复，
 	// 把「首字延迟」从 Planner(全文 JSON) + Replyer(首字) 压缩到只剩 Replyer(首字)。
 	// 复杂意图（记忆/工具/任务/追问）仍走 Planner 完整决策。
 	var decision PlannerDecision
 	if shouldSkipPlanner(snapshot.Target.Content) {
+		// 快速通道同样继承情绪惯性：优先沿用当前情绪底色，而不是只凭关键词重掷一个。
+		suggested := currentEmotion.Emotion
+		if suggested == "" {
+			suggested = InferEmotionFromText(snapshot.Target.Content)
+		}
 		decision = PlannerDecision{
 			Action:  "reply",
-			Emotion: InferEmotionFromText(snapshot.Target.Content),
-			Mood:    MoodCalm,
+			Emotion: suggested,
+			Mood:    currentEmotion.Mood,
 		}
 		s.persistTokenUsage(ctx, msg.ConversationID, providerID, modelName, "planner_skipped", collector, time.Since(startedAt), "success", nil)
 	} else {
 		planner := NewPlannerAgent(trackedModel, s.cfg.Chat)
 		var err error
-		decision, err = planner.Plan(ctx, snapshot, gate, s.toolReg.GetAll())
+		decision, err = planner.Plan(ctx, snapshot, gate, s.toolReg.GetAll(), currentEmotion, relationshipLine)
 		if err != nil {
 			rt.CompleteNoReply()
 			emitError(emitter, err)
@@ -142,14 +160,37 @@ func (s *Service) StreamChat(ctx context.Context, req ChatRequest, emitter Emitt
 	}
 
 	// 情绪在流式文本之前发出，前端据此在「逐句朗读」开始前就驱动表情。
+	//
+	// 发出前先经过情绪状态机（emotion_state.go）：让它继承上一轮的惯性、按经过时间平复，
+	// 并且不允许单轮翻转——否则会出现"上一秒难过、下一秒雀跃"的跳变，一眼假。
+	//
+	// 更新是**概率门控**的（稀疏更新，对标 MoFox）：只有当这条消息对情绪有足够触发强度时
+	// 才推进心情，否则心情延续、只按时间自然平复。这样情绪不会"每句话都在重新评估用户"。
+	// 触发强度用客观信号估计（长度/疑问/感叹/情绪词，纯应答词几乎不推动）。
+	//
+	// 平滑结果会**写回 decision**，使下游保持一致：Replyer 的表演指令与消息落库的情绪
+	// 都使用同一个值，避免"表情是平滑后的、台词却是另一套情绪"这种前后矛盾。
+	applied := EmotionVector{
+		Emotion:   decision.Emotion,
+		Mood:      decision.Mood,
+		Valence:   decision.Valence,
+		Arousal:   decision.Energy,
+		Dominance: decision.Dominance,
+	}
+	if s.emotions != nil {
+		interest := ExtractInterest(snapshot.Target.Content)
+		applied, _ = s.emotions.MaybeUpdate(
+			snapshot.Target.ConversationID, applied, interest, rand.Float64(), time.Now())
+		decision = decisionWithEmotion(decision, applied)
+	}
 	if emitter != nil {
 		emitter.Emit(ChatEvent{
 			Type:      EventTypeEmotion,
-			Emotion:   decision.Emotion,
-			Mood:      decision.Mood,
-			Energy:    decision.Energy,
-			Valence:   decision.Valence,
-			Dominance: decision.Dominance,
+			Emotion:   applied.Emotion,
+			Mood:      applied.Mood,
+			Energy:    applied.Arousal,
+			Valence:   applied.Valence,
+			Dominance: applied.Dominance,
 			Gesture:   decision.Gesture,
 			Hand:      decision.Hand,
 		})
@@ -205,6 +246,9 @@ func (s *Service) StreamChat(ctx context.Context, req ChatRequest, emitter Emitt
 	}
 
 	replyer := NewReplyerAgent(trackedModel, s.cfg.Chat)
+	// 风格随关系漂移（见 drift.go）：相处越久越放松、越省客套。
+	// 注入 Replyer 而非 Planner——它影响"怎么说"，越靠近台词生成点越有效。
+	replyer.styleDrift = s.StyleDriftLine(ctx)
 	// 流式回复：边生成边按完整句子 emit（EventTypeToken）+ 持久化，
 	// 使前端能「逐句」驱动 TTS 并行播放，而非等全文生成完毕（对齐 Shinsekai 的低延迟体验）。
 	if _, err := s.streamReply(ctx, replyer, snapshot, decision, memories, toolResults, emitter, rt); err != nil {

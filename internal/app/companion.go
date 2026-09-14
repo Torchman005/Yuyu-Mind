@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -317,6 +318,88 @@ func (a *App) GenerateProactiveMessage(trigger string) (ChatReply, error) {
 	if err != nil {
 		return ChatReply{}, err
 	}
+
+	// 主动搭话走「选话题 → 判时机 → 才生成」的两段式（见 internal/chat/proactive.go）。
+	// 这样它是一句真正生成的话，而不是先前那句固定模板——模板每次同句式，比不说话更伤真实感。
+	history, historyErr := a.memStore.GetHistory(a.ctx, defaultCompanionConversationID)
+	if historyErr != nil {
+		slog.Warn("proactive: load history failed, continue with empty history", "err", historyErr)
+	}
+	result, genErr := a.chatSvc.GenerateProactive(
+		a.ctx,
+		defaultCompanionConversationID,
+		trigger,
+		history,
+		a.lastProactiveSpeechAt,
+	)
+	if genErr != nil {
+		// 生成链路失败：退回模板兜底，保证"主动搭话"这个功能整体仍可用。
+		slog.Warn("proactive: generation failed, fall back to template", "err", genErr)
+		return a.proactiveFallback(trigger, messages)
+	}
+	if result.Skipped || strings.TrimSpace(result.Speech) == "" {
+		// 模型判断此刻不该开口（或没有可聊的话题）：安静地不打扰，这是特性而非失败。
+		slog.Info("[chat] proactive: decided not to speak", "trigger", trigger)
+		return ChatReply{
+			Messages:      messages,
+			AgentStatus:   "online",
+			AgentProvider: a.activeProviderName(),
+		}, nil
+	}
+
+	line := result.Speech
+	emotion := result.Emotion.Emotion
+	if emotion == "" {
+		emotion = inferEmotion(line)
+	}
+	reply := CompanionMessage{
+		ID:        uuid.New().String(),
+		Role:      "assistant",
+		Content:   line,
+		Emotion:   emotion,
+		Mood:      result.Emotion.Mood,
+		Energy:    result.Emotion.Arousal,
+		Valence:   result.Emotion.Valence,
+		Dominance: result.Emotion.Dominance,
+		CreatedAt: time.Now().Format(time.RFC3339),
+	}
+	if err := a.db.Messages.Create(a.ctx, &db.Message{
+		ID:             reply.ID,
+		ConversationID: defaultCompanionConversationID,
+		Role:           reply.Role,
+		Content:        reply.Content,
+		SourceKind:     "proactive",
+		Emotion:        reply.Emotion,
+		Mood:           reply.Mood,
+		Energy:         reply.Energy,
+		Valence:        reply.Valence,
+		Dominance:      reply.Dominance,
+		CreatedAt:      time.Now(),
+	}); err != nil {
+		return ChatReply{}, err
+	}
+	a.lastProactiveSpeechAt = time.Now()
+
+	messages, err = a.companionMessages()
+	if err != nil {
+		return ChatReply{}, err
+	}
+	return ChatReply{
+		Messages:      messages,
+		Reply:         reply,
+		SpeechText:    line,
+		Emotion:       reply.Emotion,
+		Mood:          reply.Mood,
+		Energy:        reply.Energy,
+		Valence:       reply.Valence,
+		Dominance:     reply.Dominance,
+		AgentStatus:   "online",
+		AgentProvider: a.activeProviderName(),
+	}, nil
+}
+
+// proactiveFallback 是主动搭话的模板兜底路径（仅在模型/网络不可用时使用）。
+func (a *App) proactiveFallback(trigger string, messages []CompanionMessage) (ChatReply, error) {
 	line := buildProactiveLine(trigger, messages)
 	reply := CompanionMessage{
 		ID:        uuid.New().String(),
@@ -330,11 +413,13 @@ func (a *App) GenerateProactiveMessage(trigger string) (ChatReply, error) {
 		ConversationID: defaultCompanionConversationID,
 		Role:           reply.Role,
 		Content:        reply.Content,
+		SourceKind:     "proactive_fallback",
 		CreatedAt:      time.Now(),
 	}); err != nil {
 		return ChatReply{}, err
 	}
-	messages, err = a.companionMessages()
+	a.lastProactiveSpeechAt = time.Now()
+	messages, err := a.companionMessages()
 	if err != nil {
 		return ChatReply{}, err
 	}

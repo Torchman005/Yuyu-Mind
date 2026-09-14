@@ -78,6 +78,8 @@ export function PromoteMemoryCandidate(arg1:string):Promise<db.UserMemory>;
 
 export function RejectMemoryCandidate(arg1:string):Promise<void>;
 
+export function RecordInterruption(arg1:string,arg2:number):Promise<void>;
+
 export function ReloadPlugins():Promise<app.PluginListReply>;
 
 export function SaveConfigJSON(arg1:Record<string, any>):Promise<void>;
