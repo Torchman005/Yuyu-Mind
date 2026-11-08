@@ -4,6 +4,7 @@ import {memory} from '../models';
 import {db} from '../models';
 import {app} from '../models';
 import {types} from '../models';
+import {study} from '../models';
 import {loghub} from '../models';
 import {chat} from '../models';
 import {agent} from '../models';
@@ -36,6 +37,8 @@ export function GetAgentTask(arg1:string):Promise<db.AgentTask>;
 
 export function GetConfigJSON():Promise<Record<string, any>>;
 
+export function GetCurrentStudySession():Promise<study.ActiveSession>;
+
 export function GetLogLevel():Promise<string>;
 
 export function GetLogs(arg1:string,arg2:number):Promise<Array<loghub.Entry>>;
@@ -46,9 +49,13 @@ export function GetPluginConfig(arg1:string):Promise<Record<string, any>>;
 
 export function GetProviders():Promise<Record<string, types.ProviderConfig>>;
 
+export function GetRecentStudyStats(arg1:number):Promise<Array<study.StudyRecord>>;
+
 export function GetSpeechStreamUrl(arg1:string,arg2:string):Promise<string>;
 
 export function GetState():Promise<app.AppState>;
+
+export function GetTodayStudyStats():Promise<study.StudyRecord>;
 
 export function GetTokenUsageByProviderModel():Promise<Array<db.TokenUsageSummary>>;
 
@@ -72,15 +79,19 @@ export function ListTokenUsageByConversation(arg1:string):Promise<Array<db.Token
 
 export function ObserveScreen(arg1:string):Promise<app.ChatReply>;
 
+export function PauseStudySession():Promise<void>;
+
 export function ProbeFishLive():Promise<app.FishLiveProbeResult>;
 
 export function PromoteMemoryCandidate(arg1:string):Promise<db.UserMemory>;
 
-export function RejectMemoryCandidate(arg1:string):Promise<void>;
-
 export function RecordInterruption(arg1:string,arg2:number):Promise<void>;
 
+export function RejectMemoryCandidate(arg1:string):Promise<void>;
+
 export function ReloadPlugins():Promise<app.PluginListReply>;
+
+export function ResumeStudySession():Promise<void>;
 
 export function SaveConfigJSON(arg1:Record<string, any>):Promise<void>;
 
@@ -98,7 +109,13 @@ export function SetPluginConfig(arg1:string,arg2:Record<string, any>):Promise<vo
 
 export function SetWorkspaceRoot(arg1:string):Promise<void>;
 
+export function StartBreak(arg1:boolean):Promise<study.StudySession>;
+
 export function StartRealtimeSpeech(arg1:string):Promise<app.SpeechStreamStart>;
+
+export function StartStudySession():Promise<study.StudySession>;
+
+export function StopStudySession():Promise<void>;
 
 export function StreamChat(arg1:chat.ChatRequest):Promise<void>;
 

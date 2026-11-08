@@ -58,6 +58,10 @@ export function GetConfigJSON() {
   return window['go']['app']['App']['GetConfigJSON']();
 }
 
+export function GetCurrentStudySession() {
+  return window['go']['app']['App']['GetCurrentStudySession']();
+}
+
 export function GetLogLevel() {
   return window['go']['app']['App']['GetLogLevel']();
 }
@@ -78,12 +82,20 @@ export function GetProviders() {
   return window['go']['app']['App']['GetProviders']();
 }
 
+export function GetRecentStudyStats(arg1) {
+  return window['go']['app']['App']['GetRecentStudyStats'](arg1);
+}
+
 export function GetSpeechStreamUrl(arg1, arg2) {
   return window['go']['app']['App']['GetSpeechStreamUrl'](arg1, arg2);
 }
 
 export function GetState() {
   return window['go']['app']['App']['GetState']();
+}
+
+export function GetTodayStudyStats() {
+  return window['go']['app']['App']['GetTodayStudyStats']();
 }
 
 export function GetTokenUsageByProviderModel() {
@@ -130,6 +142,10 @@ export function ObserveScreen(arg1) {
   return window['go']['app']['App']['ObserveScreen'](arg1);
 }
 
+export function PauseStudySession() {
+  return window['go']['app']['App']['PauseStudySession']();
+}
+
 export function ProbeFishLive() {
   return window['go']['app']['App']['ProbeFishLive']();
 }
@@ -138,16 +154,20 @@ export function PromoteMemoryCandidate(arg1) {
   return window['go']['app']['App']['PromoteMemoryCandidate'](arg1);
 }
 
-export function RejectMemoryCandidate(arg1) {
-  return window['go']['app']['App']['RejectMemoryCandidate'](arg1);
-}
-
 export function RecordInterruption(arg1, arg2) {
   return window['go']['app']['App']['RecordInterruption'](arg1, arg2);
 }
 
+export function RejectMemoryCandidate(arg1) {
+  return window['go']['app']['App']['RejectMemoryCandidate'](arg1);
+}
+
 export function ReloadPlugins() {
   return window['go']['app']['App']['ReloadPlugins']();
+}
+
+export function ResumeStudySession() {
+  return window['go']['app']['App']['ResumeStudySession']();
 }
 
 export function SaveConfigJSON(arg1) {
@@ -182,8 +202,20 @@ export function SetWorkspaceRoot(arg1) {
   return window['go']['app']['App']['SetWorkspaceRoot'](arg1);
 }
 
+export function StartBreak(arg1) {
+  return window['go']['app']['App']['StartBreak'](arg1);
+}
+
 export function StartRealtimeSpeech(arg1) {
   return window['go']['app']['App']['StartRealtimeSpeech'](arg1);
+}
+
+export function StartStudySession() {
+  return window['go']['app']['App']['StartStudySession']();
+}
+
+export function StopStudySession() {
+  return window['go']['app']['App']['StopStudySession']();
 }
 
 export function StreamChat(arg1) {

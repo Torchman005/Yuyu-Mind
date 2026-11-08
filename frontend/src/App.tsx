@@ -9,25 +9,33 @@ import {
     EnablePlugin,
     GenerateProactiveMessage,
     GetConfigJSON,
+    GetCurrentStudySession,
     GetLogLevel,
     GetLogs,
     GetMessages,
     GetPluginConfig,
+    GetRecentStudyStats,
     GetState,
     GetSpeechStreamUrl,
+    GetTodayStudyStats,
     InvokePluginAction,
     ListAgentTasks,
     ListConversations,
     ListPlugins,
     ObserveScreen,
+    PauseStudySession,
     ProbeFishLive,
     RecordInterruption,
     ReloadPlugins,
+    ResumeStudySession,
     SaveConfigJSON,
     SendAgentTaskControl,
     SetLogLevel,
     SetPluginConfig,
     SetWorkspaceRoot,
+    StartBreak,
+    StartStudySession,
+    StopStudySession,
     StreamChat,
     SynthesizeSpeech,
     SynthesizeSpeechStream,
@@ -336,19 +344,45 @@ function App() {
         });
     }, []);
 
-    // 学习服务事件监听（TODO: 等待 Wails 绑定生成后启用）
+    // 学习服务事件监听
     useEffect(() => {
         if (!canUseWailsRuntime()) {
             return;
         }
         return EventsOn('study:event', (event: any) => {
             if (!event) return;
-            console.log('Study event:', event);
+
             // 更新学习状态
             if (event.type === 'tick') {
                 setStudyRemainingSeconds(event.remainingSeconds || 0);
+            } else if (event.type === 'session_start' || event.type === 'session_end' || event.type === 'mode_change') {
+                // 获取最新的学习会话状态
+                GetCurrentStudySession()
+                    .then((session: any) => {
+                        if (session) {
+                            setStudyMode(session.mode || 'idle');
+                            setStudyRemainingSeconds(session.remainingSeconds || 0);
+                            setStudyTotalSeconds(session.totalSeconds || 0);
+                            setStudyPaused(session.isPaused || false);
+                            setStudySessionCount(session.sessionCount || 0);
+                        } else {
+                            setStudyMode('idle');
+                            setStudyRemainingSeconds(0);
+                            setStudyPaused(false);
+                        }
+                    })
+                    .catch((err: any) => console.error('Failed to get study session:', err));
+
+                // 更新统计数据
+                GetTodayStudyStats()
+                    .then((stats: any) => {
+                        if (stats) {
+                            setTodayStudyMinutes(stats.totalMinutes || 0);
+                            setStudyStreak(stats.streak || 0);
+                        }
+                    })
+                    .catch((err: any) => console.error('Failed to get today stats:', err));
             }
-            // TODO: 集成完整的学习状态更新逻辑
         });
     }, []);
 
@@ -3231,11 +3265,11 @@ function App() {
                                 weekMinutes: weekStudyMinutes,
                                 currentStreak: studyStreak,
                             }}
-                            onStartStudy={() => console.log('Start study - API not yet bound')}
-                            onStartBreak={(isLong) => console.log('Start break:', isLong)}
-                            onPause={() => console.log('Pause')}
-                            onResume={() => console.log('Resume')}
-                            onStop={() => console.log('Stop')}
+                            onStartStudy={() => StartStudySession().catch(console.error)}
+                            onStartBreak={(isLong) => StartBreak(isLong).catch(console.error)}
+                            onPause={() => PauseStudySession().catch(console.error)}
+                            onResume={() => ResumeStudySession().catch(console.error)}
+                            onStop={() => StopStudySession().catch(console.error)}
                         />
                     )}
 
