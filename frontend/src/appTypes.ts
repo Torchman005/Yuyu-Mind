@@ -60,7 +60,7 @@ export type PerformanceHint = {
     hand?: AvatarPerformance['hand'];
 };
 
-export type ViewKey = 'room' | 'chat' | 'skins' | 'model' | 'plugins' | 'tasks' | 'settings' | 'logs';
+export type ViewKey = 'room' | 'chat' | 'skins' | 'model' | 'plugins' | 'tasks' | 'settings' | 'logs' | 'study';
 
 export type PluginChange = {
     status?: string;

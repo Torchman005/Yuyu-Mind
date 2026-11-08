@@ -91,6 +91,7 @@ export const REVIEW_ACTION_NAMES = new Set(['show_diff', 'list_changes', 'open_c
 // （因此不含 chat / skins —— 聊天就在房间右侧的聊天岛里，形象就在房间舞台上）。
 export const WEB_NAV: { key: ViewKey; label: string; icon: string }[] = [
     {key: 'room', label: '房间', icon: '♥'},
+    {key: 'study', label: '学习', icon: '📚'},
     {key: 'model', label: '模型信息', icon: '◇'},
     {key: 'plugins', label: '插件管理', icon: '✧'},
     {key: 'tasks', label: '后台任务', icon: '▣'},

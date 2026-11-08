@@ -46,6 +46,7 @@ import {
 import {app, chat, db, loghub} from '../wailsjs/go/models';
 import {AvatarPerformance, Live2DStage} from './components/Live2DStage';
 import {ChatComposer, ChatView, ModelView, PetModeView, SkinsView, WebSidebar} from './components/AppShell';
+import {StudyMode, PomodoroState, StudyStats} from './components/StudyMode';
 import {normalizeMusicResult} from './musicTypes';
 import {RoomView} from './components/RoomView';
 import {
@@ -3213,6 +3214,28 @@ function App() {
                             onStageWheel={resizeRoomWithWheel}
                             onPickEmotion={setEmotion}
                             onToggleSidebar={() => setSidebarVisible((value) => !value)}
+                        />
+                    )}
+
+                    {activeView === 'study' && (
+                        <StudyMode
+                            pomodoro={{
+                                mode: studyMode,
+                                remainingSeconds: studyRemainingSeconds,
+                                totalSeconds: studyTotalSeconds,
+                                isPaused: studyPaused,
+                                sessionCount: studySessionCount,
+                            }}
+                            stats={{
+                                todayMinutes: todayStudyMinutes,
+                                weekMinutes: weekStudyMinutes,
+                                currentStreak: studyStreak,
+                            }}
+                            onStartStudy={() => console.log('Start study - API not yet bound')}
+                            onStartBreak={(isLong) => console.log('Start break:', isLong)}
+                            onPause={() => console.log('Pause')}
+                            onResume={() => console.log('Resume')}
+                            onStop={() => console.log('Stop')}
                         />
                     )}
 
