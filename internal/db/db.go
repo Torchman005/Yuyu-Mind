@@ -27,6 +27,7 @@ type DB struct {
 	AgentTasks    *AgentTaskRepo
 	AgentEvents   *AgentEventRepo
 	Memories      *MemoryRepo
+	Study         *StudyRepo
 }
 
 // New 打开 SQLite 数据库、执行迁移，并初始化所有仓储。
@@ -73,6 +74,7 @@ func New(dbPath string) (*DB, error) {
 		AgentTasks:    NewAgentTaskRepo(sqlDB),
 		AgentEvents:   NewAgentEventRepo(sqlDB),
 		Memories:      NewMemoryRepo(sqlDB),
+		Study:         NewStudyRepo(sqlDB),
 	}, nil
 }
 
