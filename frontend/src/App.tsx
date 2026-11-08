@@ -186,6 +186,16 @@ function App() {
     const [roomScale, setRoomScale] = useState(1);
     const [isPetControlsOpen, setIsPetControlsOpen] = useState(false);
     const [activeView, setActiveView] = useState<ViewKey>('room');
+    // 学习模式状态
+    const [studyMode, setStudyMode] = useState<'idle' | 'study' | 'break'>('idle');
+    const [studyRemainingSeconds, setStudyRemainingSeconds] = useState(0);
+    const [studyTotalSeconds, setStudyTotalSeconds] = useState(0);
+    const [studyPaused, setStudyPaused] = useState(false);
+    const [studySessionCount, setStudySessionCount] = useState(0);
+    const [studyStatsOpen, setStudyStatsOpen] = useState(false);
+    const [todayStudyMinutes, setTodayStudyMinutes] = useState(0);
+    const [weekStudyMinutes, setWeekStudyMinutes] = useState(0);
+    const [studyStreak, setStudyStreak] = useState(0);
     // Room 模式：侧栏收起为浮层，由「房间门廊」按钮呼出。
     const [sidebarVisible, setSidebarVisible] = useState(false);
     // 抽屉浮层：Room 常驻时，模型/插件/任务/日志/设置以右侧抽屉叠加展示，
@@ -322,6 +332,22 @@ function App() {
         }
         return EventsOn('chat:event', (event: ChatStreamEvent) => {
             chatEventHandlerRef.current(event);
+        });
+    }, []);
+
+    // 学习服务事件监听（TODO: 等待 Wails 绑定生成后启用）
+    useEffect(() => {
+        if (!canUseWailsRuntime()) {
+            return;
+        }
+        return EventsOn('study:event', (event: any) => {
+            if (!event) return;
+            console.log('Study event:', event);
+            // 更新学习状态
+            if (event.type === 'tick') {
+                setStudyRemainingSeconds(event.remainingSeconds || 0);
+            }
+            // TODO: 集成完整的学习状态更新逻辑
         });
     }, []);
 
