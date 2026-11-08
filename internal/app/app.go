@@ -20,6 +20,7 @@ import (
 	"github.com/yuyu-mind/backend/internal/loghub"
 	"github.com/yuyu-mind/backend/internal/memory"
 	"github.com/yuyu-mind/backend/internal/plugin"
+	"github.com/yuyu-mind/backend/internal/study"
 	pkgTypes "github.com/yuyu-mind/backend/pkg/types"
 )
 
@@ -41,6 +42,7 @@ type App struct {
 	pluginFileStore *plugin.FileConfigStore
 	pluginsRoot     string
 	logHub          *loghub.Hub
+	studySvc        *study.Service
 	// lastProactiveSpeechAt 记录上一次主动发言时间，用于避免"刚说完又搭话"的粘人感
 	// （由 chat.Service.GenerateProactive 判定时机）。
 	lastProactiveSpeechAt time.Time
@@ -133,6 +135,21 @@ func (a *App) Startup(ctx context.Context) {
 	a.memStore = memory.NewSQLiteStore(database.Messages, cfg.Memory.MaxTurns)
 	a.memorySvc = memory.NewServiceMemory(database.Memories)
 	a.chatSvc = chat.NewService(cfg, database, a.providerReg, a.toolReg, a.memStore, a.memorySvc)
+
+	// 初始化学习服务
+	studyRepo := study.NewRepository(database.Study.SQL())
+	studyConfig := study.PomodoroConfig{
+		StudyDuration:           25,
+		BreakDuration:           5,
+		LongBreakDuration:       15,
+		SessionsBeforeLongBreak: 4,
+	}
+	a.studySvc = study.NewService(studyRepo, studyConfig)
+
+	// 设置学习事件回调，通过 Wails 事件发送到前端
+	a.studySvc.SetCallbackHandler(func(event study.StudyEvent) {
+		runtime.EventsEmit(a.ctx, "study:event", event)
+	})
 
 	// Worker 执行器：有工作区时用真实 LLM 工具循环，否则回退默认（仅校验）。
 	executor := agent.Executor(agent.NewDefaultExecutor())
